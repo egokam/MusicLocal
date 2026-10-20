@@ -4,7 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import { File, Paths } from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
 import { PlaybackContext, RadioPlaybackStatusContext } from './src/contexts/PlaybackContext';
@@ -943,6 +943,27 @@ export default function App() {
     return importedTrack;
   }, []);
 
+  const importMusicFolder = useCallback(async () => {
+    let sourceDirectory: Directory;
+    try {
+      sourceDirectory = await Directory.pickDirectoryAsync();
+    } catch (error) {
+      if (error instanceof Error && /cancel/i.test(error.message)) return null;
+      throw error;
+    }
+    const result = await OfflineMusicService.importLocalFolder(sourceDirectory);
+    if (result.importedCount === 0) return result;
+    const localTracks = await OfflineMusicService.getDownloadedTracks();
+    downloadsRef.current = localTracks;
+    setDownloadedTracks(localTracks);
+    const favoriteIds = favoriteIdsRef.current;
+    const nextTracks = localTracks.map((track) => ({ ...track, isFavorite: favoriteIds.has(track.id) }));
+    tracksRef.current = nextTracks;
+    setTracks(nextTracks);
+    void NowPlayingWidgetService.initialize(nextTracks).catch(() => undefined);
+    return result;
+  }, []);
+
   const mostPlayedTracks = useMemo(() => tracks
     .map((track) => ({ ...track, playCount: playCounts[track.id] ?? 0 }))
     .filter((track) => track.playCount > 0)
@@ -976,6 +997,7 @@ export default function App() {
     deleteDownloadedTracks,
     importAudioToLibrary,
     importLocalFile,
+    importMusicFolder,
     updateTrack,
     deleteTrack,
     toggleFavorite,
@@ -998,6 +1020,7 @@ export default function App() {
     deleteTrack,
     importAudioToLibrary,
     importLocalFile,
+    importMusicFolder,
     downloadedTracks,
     favoriteTracks,
     checkTrackLyrics,

@@ -2,8 +2,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { parseLyrics } from './LyricsParser';
 import type { Track } from '../types';
 
-// This directory is inside the app's Documents container and is visible in
-// Files/iTunes when UIFileSharingEnabled is enabled in app.json.
+// This directory stays inside the app's private Documents container.
 const downloadsDirectory = new Directory(Paths.document, 'Musiqapp');
 const indexFile = new File(downloadsDirectory, 'downloads.json');
 
@@ -42,6 +41,15 @@ const writeTextFile = (file: File, text: string) => {
 
 const supportedAudio = /\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 
+const metadataFromFile = (fileName: string) => {
+  const baseName = fileName.replace(/\.[^.]+$/, '');
+  const [artistPart, ...titleParts] = baseName.split(' - ');
+  return {
+    artist: titleParts.length > 0 ? artistPart.trim() : 'Unknown artist',
+    title: (titleParts.length > 0 ? titleParts.join(' - ') : baseName).trim() || 'Untitled track',
+  };
+};
+
 const readIndexedTracks = async (): Promise<Track[]> => {
   if (!indexFile.exists) return [];
   try {
@@ -79,9 +87,7 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
   for (const item of downloadsDirectory.list()) {
     if (!(item instanceof File) || !supportedAudio.test(item.name) || knownUris.has(item.uri)) continue;
     const baseName = item.name.replace(/\.[^.]+$/, '');
-    const [artistPart, ...titleParts] = baseName.split(' - ');
-    const artist = titleParts.length > 0 ? artistPart.trim() : 'Unknown artist';
-    const title = (titleParts.length > 0 ? titleParts.join(' - ') : baseName).trim() || 'Untitled track';
+    const { title, artist } = metadataFromFile(item.name);
     const id = idForImport(item.uri, title, artist);
     const lrc = new File(downloadsDirectory, `${baseName}.lrc`);
     const txt = new File(downloadsDirectory, `${baseName}.txt`);
@@ -219,6 +225,85 @@ export const OfflineMusicService = {
     const current = await this.getDownloadedTracks();
     writeTextFile(indexFile, JSON.stringify([...current.filter((item) => item.id !== id), track]));
     return track;
+  },
+
+  /** Recursively copy supported audio and matching lyric sidecars into private storage. */
+  async importLocalFolder(sourceDirectory: Directory): Promise<{ importedCount: number; skippedCount: number }> {
+    ensureDirectory();
+    const current = await this.getDownloadedTracks();
+    const imported: Track[] = [];
+    let skippedCount = 0;
+
+    const visit = async (directory: Directory): Promise<void> => {
+      let entries: (Directory | File)[];
+      try {
+        entries = directory.list();
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry instanceof Directory) {
+          await visit(entry);
+          continue;
+        }
+        if (!supportedAudio.test(entry.name)) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const { title, artist } = metadataFromFile(entry.name);
+        const id = idForImport(entry.uri, title, artist);
+        const fileExtension = entry.extension || '.mp3';
+        const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
+        try {
+          if (audioFile.exists) audioFile.delete();
+          await entry.copy(audioFile);
+          const baseName = entry.name.replace(/\.[^.]+$/, '');
+          const sourceLrc = new File(entry.parentDirectory, `${baseName}.lrc`);
+          const sourceText = new File(entry.parentDirectory, `${baseName}.txt`);
+          let lyricsFileUri: string | undefined;
+          if (sourceLrc.exists) {
+            const destination = new File(downloadsDirectory, `${safeName(id)}.lrc`);
+            if (destination.exists) destination.delete();
+            await sourceLrc.copy(destination);
+            lyricsFileUri = destination.uri;
+          } else if (sourceText.exists) {
+            const destination = new File(downloadsDirectory, `${safeName(id)}.txt`);
+            if (destination.exists) destination.delete();
+            await sourceText.copy(destination);
+            lyricsFileUri = destination.uri;
+          }
+          imported.push({
+            id,
+            title,
+            artist,
+            album: '',
+            duration: '—',
+            artwork: '',
+            provider: 'local',
+            providerId: id,
+            fileExtension,
+            downloadAllowed: false,
+            localUri: audioFile.uri,
+            lyricsFileUri,
+            lyricsAvailable: Boolean(lyricsFileUri),
+            hasSyncedLyrics: Boolean(sourceLrc.exists),
+            hasPlainLyrics: Boolean(!sourceLrc.exists && sourceText.exists),
+            dateAdded: Date.now(),
+          });
+        } catch {
+          skippedCount += 1;
+        }
+      }
+    };
+
+    await visit(sourceDirectory);
+    if (imported.length > 0) {
+      const byId = new Map(current.map((track) => [track.id, track]));
+      imported.forEach((track) => byId.set(track.id, track));
+      writeTextFile(indexFile, JSON.stringify([...byId.values()]));
+    }
+    return { importedCount: imported.length, skippedCount };
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {

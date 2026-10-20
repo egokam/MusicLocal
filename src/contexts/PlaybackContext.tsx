@@ -35,6 +35,7 @@ type PlaybackActions = {
     onProgress: (progress: ImportProgress) => void,
   ) => Promise<Track>;
   importLocalFile: () => Promise<Track | null>;
+  importMusicFolder: () => Promise<{ importedCount: number; skippedCount: number } | null>;
   updateTrack: (track: Track, changes: TrackEditChanges) => Promise<Track>;
   deleteTrack: (track: Track) => Promise<void>;
   toggleFavorite: (track: Track) => Promise<Track>;

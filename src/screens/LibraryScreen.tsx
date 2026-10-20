@@ -112,6 +112,8 @@ const LibraryHomeScreen = ({
 const DeveloperProfileScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile'>) => {
+  const { importMusicFolder } = usePlaybackActions();
+  const [isImportingFolder, setIsImportingFolder] = useState(false);
   const links = [
     { title: 'GitHub', subtitle: 'github.com/egokam', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
     { title: 'Instagram', subtitle: '@kotmanii', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
@@ -165,6 +167,45 @@ const DeveloperProfileScreen = ({
             <Ionicons name="open-outline" size={18} color="#8E8E93" />
           </TouchableOpacity>
         ))}
+
+        <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginTop: 18, marginBottom: 12 }}>
+          YOUR MUSIC
+        </Text>
+        <TouchableOpacity
+          onPress={() => {
+            if (isImportingFolder) return;
+            setIsImportingFolder(true);
+            void importMusicFolder()
+              .then((result) => {
+                if (!result) return;
+                Alert.alert(
+                  result.importedCount > 0 ? 'Music imported' : 'No audio found',
+                  result.importedCount > 0
+                    ? `${result.importedCount} track${result.importedCount === 1 ? '' : 's'} copied into your private Musiqapp library.${result.skippedCount ? ` ${result.skippedCount} unsupported file${result.skippedCount === 1 ? '' : 's'} skipped.` : ''}`
+                    : 'Choose a folder containing MP3, M4A, AAC, WAV, FLAC, OGG, or OPUS files.',
+                );
+              })
+              .catch((error) => {
+                Alert.alert('Could not import folder', error instanceof Error ? error.message : 'Choose the music folder again.');
+              })
+              .finally(() => setIsImportingFolder(false));
+          }}
+          disabled={isImportingFolder}
+          accessibilityRole="button"
+          accessibilityLabel="Import a music folder"
+          style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#2A171C', borderWidth: 1, borderColor: '#5A2630', paddingHorizontal: 18, paddingVertical: 17, flexDirection: 'row', alignItems: 'center', opacity: isImportingFolder ? 0.65 : 1 }}
+        >
+          <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
+            {isImportingFolder ? <ActivityIndicator color="white" /> : <Ionicons name="folder-open" size={28} color="white" />}
+          </View>
+          <View style={{ flex: 1, marginLeft: 15 }}>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Import a music folder</Text>
+            <Text style={{ color: '#D2A9AF', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
+              Copy your audio and matching LRC files into Musiqapp’s private library.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={21} color="#FA5265" />
+        </TouchableOpacity>
 
         <Text style={{ color: '#65656B', fontSize: 12, textAlign: 'center', marginTop: 34 }}>
   {'© 2026 Egokam. All rights reserved.\nEnjoy, dont try to make it commercial, contact admin for support.'}
