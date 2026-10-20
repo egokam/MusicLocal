@@ -104,6 +104,34 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
   }
 };
 
+const lookupLyricsOnline = async (track: Track, local: Track, syncedOnly: boolean): Promise<Track> => {
+  if (!track.title.trim() || !track.artist.trim()) return local;
+  const params = new URLSearchParams({ track_name: track.title.trim(), artist_name: track.artist.trim() });
+  if (track.album.trim()) params.set('album_name', track.album.trim());
+  if (track.durationSeconds && track.durationSeconds > 0) params.set('duration', String(Math.round(track.durationSeconds)));
+  try {
+    const response = await fetch(`https://lrclib.net/api/get?${params.toString()}`);
+    if (!response.ok) return local;
+    const result = await response.json() as { syncedLyrics?: string | null; plainLyrics?: string | null };
+    const syncedLyrics = result.syncedLyrics?.trim() || undefined;
+    const plainLyrics = result.plainLyrics?.trim() || undefined;
+    if (!syncedLyrics && (!plainLyrics || syncedOnly)) return local;
+    return {
+      ...local,
+      syncedLyrics,
+      plainLyrics,
+      lyrics: parseLyrics(syncedLyrics, plainLyrics),
+      lyricsAvailable: Boolean(syncedLyrics || plainLyrics),
+      hasSyncedLyrics: Boolean(syncedLyrics),
+      hasPlainLyrics: Boolean(plainLyrics),
+      lyricsSource: 'lrclib',
+    };
+  } catch {
+    // Lyrics are optional; offline playback and local sidecars continue to work.
+    return local;
+  }
+};
+
 export { parseLyrics };
 
 export const MusicCatalogService = {
@@ -153,8 +181,8 @@ export const MusicCatalogService = {
 
   async getLyrics(track: Track, syncedOnly = false): Promise<Track> {
     const result = await readLyricsFile(track);
-    if (syncedOnly && !result.syncedLyrics?.trim()) return { ...result, syncedLyrics: undefined, lyrics: [] };
-    return result;
+    if (result.syncedLyrics?.trim() || (result.plainLyrics?.trim() && syncedOnly === false)) return result;
+    return lookupLyricsOnline(track, result, syncedOnly);
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<void> {
