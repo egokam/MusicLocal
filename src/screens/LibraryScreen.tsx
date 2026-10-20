@@ -27,7 +27,6 @@ type LibraryStackParamList = {
   Artists: undefined;
   AlbumTracks: { album: string; artist: string };
   ArtistTracks: { artist: string };
-  Downloaded: undefined;
   Favorites: undefined;
   Playlists: undefined;
   PlaylistTracks: { playlistId: string; title: string };
@@ -52,7 +51,6 @@ const LibraryHomeScreen = ({
             if (title === 'Songs') navigation.navigate('Songs');
             if (title === 'Albums') navigation.navigate('Albums');
             if (title === 'Artists') navigation.navigate('Artists');
-            if (title === 'Downloaded') navigation.navigate('Downloaded');
             if (title === 'Favorites') navigation.navigate('Favorites');
             if (title === 'Playlists') navigation.navigate('Playlists');
             if (title === 'Downloader') navigation.navigate('Downloader');
@@ -490,25 +488,6 @@ const ArtistTracksRoute = ({
   );
 };
 
-const DownloadedRoute = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'Downloaded'>) => {
-  const actions = usePlaybackActions();
-  return (
-    <SongCatalogRoute
-      navigation={navigation}
-      title="Downloaded"
-      tracks={actions.downloadedTracks}
-      apiConnected={actions.apiConnected}
-      apiInitializing={actions.apiInitializing}
-      isLoadingTracks={false}
-      loadError={null}
-      offlineMode
-      showTrackActions={false}
-      onDeleteDownloadedTracks={actions.deleteDownloadedTracks}
-      emptyMessage="Songs imported to this device will appear here for offline listening."
-    />
-  );
-};
-
 const FavoritesRoute = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'Favorites'>) => {
   const actions = usePlaybackActions();
   const { apiConnected, loadFavoriteTracks, favoriteTracks } = actions;
@@ -798,7 +777,6 @@ export const LibraryScreen = () => (
     <Stack.Screen name="Artists" component={ArtistsRoute} />
     <Stack.Screen name="AlbumTracks" component={AlbumTracksRoute} />
     <Stack.Screen name="ArtistTracks" component={ArtistTracksRoute} />
-    <Stack.Screen name="Downloaded" component={DownloadedRoute} />
     <Stack.Screen name="Favorites" component={FavoritesRoute} />
     <Stack.Screen name="Playlists" component={PlaylistsRoute} />
     <Stack.Screen name="PlaylistTracks" component={PlaylistTracksRoute} />
