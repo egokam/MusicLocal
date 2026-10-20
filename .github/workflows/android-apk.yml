@@ -76,7 +76,9 @@ jobs:
           ./gradlew assembleRelease --no-daemon
 
       - name: Collect APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk build/Musiqapp-android.apk
+        run: |
+          mkdir -p build
+          cp android/app/build/outputs/apk/release/app-release.apk build/Musiqapp-android.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
