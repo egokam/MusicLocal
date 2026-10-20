@@ -52,7 +52,29 @@ const readIndexedTracks = async (): Promise<Track[]> => {
 };
 
 const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
-  const knownUris = new Set(indexed.map((track) => track.localUri).filter(Boolean));
+  let indexChanged = false;
+  const refreshed = indexed.map((track) => {
+    if (!track.localUri) return track;
+    try {
+      const audioFile = new File(track.localUri);
+      const baseName = audioFile.name.replace(/\.[^.]+$/, '');
+      const lrc = new File(audioFile.parentDirectory, `${baseName}.lrc`);
+      const txt = new File(audioFile.parentDirectory, `${baseName}.txt`);
+      const lyricsFileUri = lrc.exists ? lrc.uri : txt.exists ? txt.uri : undefined;
+      const next = {
+        ...track,
+        lyricsFileUri,
+        lyricsAvailable: Boolean(track.lyricsAvailable || lyricsFileUri),
+        hasSyncedLyrics: Boolean(track.hasSyncedLyrics || lrc.exists),
+        hasPlainLyrics: Boolean(track.hasPlainLyrics || (!lrc.exists && txt.exists)),
+      };
+      if (next.lyricsFileUri !== track.lyricsFileUri || next.hasSyncedLyrics !== track.hasSyncedLyrics || next.hasPlainLyrics !== track.hasPlainLyrics) indexChanged = true;
+      return next;
+    } catch {
+      return track;
+    }
+  });
+  const knownUris = new Set(refreshed.map((track) => track.localUri).filter(Boolean));
   const discovered: Track[] = [];
   for (const item of downloadsDirectory.list()) {
     if (!(item instanceof File) || !supportedAudio.test(item.name) || knownUris.has(item.uri)) continue;
@@ -81,8 +103,11 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
       dateAdded: Date.now(),
     });
   }
-  if (discovered.length === 0) return indexed;
-  const merged = [...indexed, ...discovered];
+  if (discovered.length === 0) {
+    if (indexChanged) writeTextFile(indexFile, JSON.stringify(refreshed));
+    return refreshed;
+  }
+  const merged = [...refreshed, ...discovered];
   writeTextFile(indexFile, JSON.stringify(merged));
   return merged;
 };
