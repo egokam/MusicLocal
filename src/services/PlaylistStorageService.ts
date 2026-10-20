@@ -63,6 +63,35 @@ export const PlaylistStorageService = {
     return (await readState()).playlists;
   },
 
+  /** Remove stale remote playlist entries and keep only tracks present in the local library. */
+  async reconcileWithLocalTracks(localTracks: Track[]): Promise<PlaylistSummary[]> {
+    return updateState((state) => {
+      const localById = new Map(localTracks.map((track) => [track.id, track]));
+
+      state.playlists = state.playlists.map((playlist) => {
+        const seen = new Set<string>();
+        const localPlaylistTracks = (state.tracksByPlaylistId[playlist.id] ?? []).flatMap((storedTrack) => {
+          if (seen.has(storedTrack.id)) return [];
+          const localTrack = localById.get(storedTrack.id);
+          if (!localTrack) return [];
+          seen.add(storedTrack.id);
+          return [{ ...storedTrack, ...localTrack, localUri: localTrack.localUri }];
+        });
+
+        state.tracksByPlaylistId[playlist.id] = localPlaylistTracks;
+        return {
+          ...playlist,
+          trackCount: localPlaylistTracks.length,
+          // A local playlist may keep a local file URI, but never a VPS cover URL.
+          coverUrl: playlist.coverUrl?.startsWith('http') ? undefined : playlist.coverUrl,
+          coverCachedUrl: playlist.coverCachedUrl?.startsWith('http') ? undefined : playlist.coverCachedUrl,
+        };
+      });
+
+      return state.playlists;
+    });
+  },
+
   async mergeRemotePlaylists(remotePlaylists: PlaylistSummary[], headers: Record<string, string>): Promise<PlaylistSummary[]> {
     return updateState(async (state) => {
       const cachedById = new Map(state.playlists.map((playlist) => [playlist.id, playlist]));

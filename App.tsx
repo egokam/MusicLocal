@@ -290,12 +290,13 @@ export default function App() {
   }, [updatePlaybackQueue]);
 
   const loadPlaylists = useCallback(async () => {
-    const nextPlaylists = await PlaylistStorageService.getPlaylists();
+    const nextPlaylists = await PlaylistStorageService.reconcileWithLocalTracks(downloadsRef.current);
     setPlaylists(nextPlaylists);
     return nextPlaylists;
   }, []);
 
   const loadPlaylistTracks = useCallback(async (playlistId: string) => {
+    await PlaylistStorageService.reconcileWithLocalTracks(downloadsRef.current);
     const cachedTracks = await PlaylistStorageService.getPlaylistTracks(playlistId);
     const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
     return cachedTracks.map((track) => ({
@@ -317,10 +318,10 @@ export default function App() {
     let mounted = true;
     void Promise.all([
       OfflineMusicService.getDownloadedTracks(),
-      PlaylistStorageService.getPlaylists(),
       loadPlaybackCounts(),
-    ]).then(([savedTracks, savedPlaylists, savedPlayCounts]) => {
+    ]).then(async ([savedTracks, savedPlayCounts]) => {
       if (!mounted) return;
+      const savedPlaylists = await PlaylistStorageService.reconcileWithLocalTracks(savedTracks);
       playCountsRef.current = savedPlayCounts;
       setPlayCounts(savedPlayCounts);
       downloadsRef.current = savedTracks;
