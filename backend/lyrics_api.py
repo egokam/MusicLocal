@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api_common import (
     LRCLIB_GET_URL, LRC_TIMESTAMP_RE, LyricsSaveRequest, http_client,
-    require_api_token, search_synced_lyrics,
+    require_api_token, require_write_access, search_synced_lyrics,
 )
 from music_library import (
     _contains_timed_lyrics, _find_record, _write_embedded_synced_lyrics,
@@ -121,6 +121,7 @@ async def save_synced_lyrics(
     track_id: str,
     body: LyricsSaveRequest,
     _: None = Depends(require_api_token),
+    __: None = Depends(require_write_access),
 ) -> dict[str, Any]:
     record = _find_record(track_id)
     contents = body.syncedLyrics.strip()

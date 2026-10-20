@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 MUSIC_DIR = Path(os.environ.get("MUSIQAPP_MUSIC_DIR", "/home/ubuntu/musiqapp-api/music")).resolve()
 API_TOKEN = os.environ.get("MUSIQAPP_API_TOKEN", "").strip()
 PUBLIC_API_BASE = os.environ.get("MUSIQAPP_PUBLIC_API_BASE", "https://msc-api.egokam.site").rstrip("/")
+READ_ONLY_MODE = os.environ.get("MUSIQAPP_READ_ONLY", "0").strip().lower() in {"1", "true", "yes", "on"}
 LRCLIB_GET_URL = "https://lrclib.net/api/get"
 AUDIO_EXTENSIONS = {".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wav", ".aiff", ".alac"}
 HTTP_TIMEOUT = httpx.Timeout(18.0, connect=6.0)
@@ -51,3 +52,8 @@ def require_api_token(authorization: str | None = Header(default=None)) -> None:
     supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
     if not hmac.compare_digest(supplied, API_TOKEN):
         raise HTTPException(status_code=401, detail="A valid Musiqapp API token is required.")
+
+
+def require_write_access() -> None:
+    if READ_ONLY_MODE:
+        raise HTTPException(status_code=405, detail="This API is read-only; the app owns library changes.")

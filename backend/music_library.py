@@ -20,7 +20,7 @@ from mutagen.oggflac import OggFLAC
 from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
 
-from api_common import AUDIO_EXTENSIONS, LRC_TIMESTAMP_RE, MUSIC_DIR, PUBLIC_API_BASE
+from api_common import AUDIO_EXTENSIONS, LRC_TIMESTAMP_RE, MUSIC_DIR, PUBLIC_API_BASE, READ_ONLY_MODE
 
 track_cache: dict[str, dict[str, Any]] = {}
 cache_expires_at = 0.0
@@ -386,7 +386,10 @@ def _all_records() -> list[dict[str, Any]]:
     now = time.monotonic()
     if now < cache_expires_at:
         return list(track_cache.values())
-    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    if not MUSIC_DIR.is_dir():
+        if READ_ONLY_MODE:
+            return []
+        MUSIC_DIR.mkdir(parents=True, exist_ok=True)
     records: dict[str, dict[str, Any]] = {}
     for path in MUSIC_DIR.rglob("*"):
         if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS and not path.name.startswith("."):
