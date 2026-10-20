@@ -337,7 +337,7 @@ export const LrcCheckerScreen = ({
             <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
               <Text style={{ color: 'white', fontSize: 36, lineHeight: 42, fontWeight: '800' }}>LRC Checker</Text>
               <Text style={{ color: '#A1A1A6', fontSize: 15, lineHeight: 21, marginTop: 7 }}>
-                Scan your local audio files for existing LRC sidecars and review or apply synced lyrics without a server.
+                Scan your local audio files for existing LRC sidecars, then optionally review a LRCLIB match before saving it locally.
               </Text>
 
               <View style={{ marginTop: 18, padding: 15, borderRadius: 18, backgroundColor: '#1C1C1E' }}>
