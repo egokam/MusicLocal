@@ -41,3 +41,7 @@ youtube-cookies.txt
 # generated native folders
 /ios
 /android
+
+# Reference documentation exports are not app source files.
+How to implement iOS widgets in Expo apps — Expo blog.pdf
+How to implement iOS widgets in Expo apps — Expo blog_files/

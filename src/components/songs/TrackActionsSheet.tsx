@@ -260,8 +260,8 @@ export const TrackActionsSheet = ({
 
   const confirmDelete = () => {
     Alert.alert(
-      'Delete from VPS library?',
-      `“${track.title}” will be removed from the server library.`,
+      'Delete from this device?',
+      `“${track.title}” and its local audio file will be removed from this device.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -415,7 +415,7 @@ export const TrackActionsSheet = ({
                     <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
                     <ActionRow icon="list-outline" title="Add to playlist" onPress={() => transitionToPage('playlist')} showChevron />
                     <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
-                    <ActionRow icon="trash-outline" title="Delete from VPS library" onPress={confirmDelete} destructive disabled={busy} />
+                    <ActionRow icon="trash-outline" title="Delete from this device" onPress={confirmDelete} destructive disabled={busy} />
                   </>
                 )}
               </View>

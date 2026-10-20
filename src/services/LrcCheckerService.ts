@@ -1,11 +1,10 @@
 import * as BackgroundTask from 'expo-background-task';
 import { Directory, File, Paths } from 'expo-file-system';
-import * as SecureStore from 'expo-secure-store';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import type { LrcCheckState } from '../components/library/LrcCheckerRow';
 import type { Track } from '../types';
-import { MusicCatalogService, setMusicApiToken } from './MusicCatalogService';
+import { MusicCatalogService } from './MusicCatalogService';
 
 const BACKGROUND_TASK_NAME = 'musiqapp-lrc-scan';
 const BACKGROUND_BATCH_SIZE = 24;
@@ -73,6 +72,8 @@ const minimalTrack = (track: Track): Track => ({
   syncedLyrics: track.syncedLyrics,
   plainLyrics: track.plainLyrics,
   lyrics: track.lyrics,
+  localUri: track.localUri,
+  lyricsFileUri: track.lyricsFileUri,
 });
 
 const isCompleteRecord = (record: LrcCheckerRecord | undefined) => Boolean(
@@ -296,14 +297,6 @@ const runBackgroundBatch = async () => {
   await hydrate();
   if (!persistedState.isScanning || foregroundRun) return;
 
-  const token = await SecureStore.getItemAsync('musiqapp_api_token');
-  if (!token) {
-    await setScanStatus({ isScanning: false, scanError: 'Reconnect your library to resume the lyrics scan.' });
-    await unregisterBackgroundTask();
-    return;
-  }
-  setMusicApiToken(token);
-
   if (persistedState.scanTracks.length === 0) {
     await setSessionTracks(await MusicCatalogService.searchAllTracks());
   }
@@ -403,13 +396,6 @@ export const LrcCheckerService = {
   async resumeIfNeeded() {
     await hydrate();
     if (!persistedState.isScanning || foregroundRun) return;
-    const token = await SecureStore.getItemAsync('musiqapp_api_token');
-    if (!token) {
-      await setScanStatus({ isScanning: false, scanError: 'Reconnect your library to resume the lyrics scan.' });
-      await unregisterBackgroundTask();
-      return;
-    }
-    setMusicApiToken(token);
     const storedTracks = persistedState.scanTracks;
     await runForegroundScan({
       loadAllTracks: async () => {

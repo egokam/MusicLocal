@@ -249,7 +249,7 @@ export const LrcCheckerScreen = ({
       return;
     }
     if (track.provider !== 'local' || !track.providerId) {
-      Alert.alert('VPS track required', 'Custom LRC files are saved beside audio files in your VPS library.');
+      Alert.alert('Local track required', 'Custom LRC files are saved beside audio files in your local library.');
       return;
     }
     setCustomLrcTrack(track);
@@ -268,7 +268,7 @@ export const LrcCheckerScreen = ({
   const applyCustomLrc = async () => {
     if (!customLrcTrack) return;
     if (customLrcTrack.provider !== 'local' || !customLrcTrack.providerId) {
-      setCustomLrcError('This song is not a VPS library file, so its LRC cannot be saved beside the audio.');
+      setCustomLrcError('This song is not a local library file, so its LRC cannot be saved beside the audio.');
       setCustomLrcPreview(false);
       return;
     }
@@ -287,7 +287,7 @@ export const LrcCheckerScreen = ({
       setCustomLrcText('');
       setCustomLrcPreview(false);
     } catch (error) {
-      setCustomLrcError(error instanceof Error ? error.message : 'Could not save this LRC beside the VPS track.');
+      setCustomLrcError(error instanceof Error ? error.message : 'Could not save this LRC beside the local track.');
       setCustomLrcPreview(false);
     } finally {
       setIsSavingCustomLrc(false);
@@ -337,7 +337,7 @@ export const LrcCheckerScreen = ({
             <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
               <Text style={{ color: 'white', fontSize: 36, lineHeight: 42, fontWeight: '800' }}>LRC Checker</Text>
               <Text style={{ color: '#A1A1A6', fontSize: 15, lineHeight: 21, marginTop: 7 }}>
-              Search LRCLIB, Musixmatch, NetEase, and Megalobiz. Review alternate matches before saving; synced lyrics are embedded in VPS audio files and kept with offline downloads.
+                Scan your local audio files for existing LRC sidecars and review or apply synced lyrics without a server.
               </Text>
 
               <View style={{ marginTop: 18, padding: 15, borderRadius: 18, backgroundColor: '#1C1C1E' }}>
@@ -405,7 +405,7 @@ export const LrcCheckerScreen = ({
               {!apiConnected ? (
                 <TouchableOpacity onPress={onConnect} style={{ marginTop: 13, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, backgroundColor: '#161618', flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name="cloud-outline" size={18} color="#FA5265" />
-                  <Text style={{ color: '#B8B8BD', fontSize: 13, lineHeight: 18, marginLeft: 9, flex: 1 }}>Connect the VPS library to search lyrics databases and save LRC files with your tracks.</Text>
+                  <Text style={{ color: '#B8B8BD', fontSize: 13, lineHeight: 18, marginLeft: 9, flex: 1 }}>Local mode reads and saves LRC files beside the audio on this device.</Text>
                   <Ionicons name="chevron-forward" size={17} color="#77777C" />
                 </TouchableOpacity>
               ) : null}
@@ -526,7 +526,7 @@ export const LrcCheckerScreen = ({
             )}
 
             <Text style={{ color: '#8E8E93', fontSize: 12, lineHeight: 17, marginTop: 12 }}>
-              Paste LRC lines like [00:12.34]lyric text. Every lyric line must have a valid, ordered time tag. Applying embeds the synced lyrics in the audio file on your VPS.
+              Paste LRC lines like [00:12.34]lyric text. Every lyric line must have a valid, ordered time tag. Applying saves the LRC beside the local audio file.
             </Text>
             {customLrcError ? <Text style={{ color: '#FF6B5E', fontSize: 12, lineHeight: 17, marginTop: 9 }}>{customLrcError}</Text> : null}
 

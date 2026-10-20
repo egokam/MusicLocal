@@ -5,7 +5,6 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
-import * as SecureStore from 'expo-secure-store';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
 import { PlaybackContext, RadioPlaybackStatusContext } from './src/contexts/PlaybackContext';
@@ -16,7 +15,7 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { RadioScreen } from './src/screens/RadioScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
-import { MusicCatalogService, getMusicApiHeaders, parseLyrics, setMusicApiToken, type TrackEditChanges } from './src/services/MusicCatalogService';
+import { MusicCatalogService, getMusicApiHeaders, parseLyrics, type TrackEditChanges } from './src/services/MusicCatalogService';
 import { LrcCheckerService } from './src/services/LrcCheckerService';
 import { OfflineMusicService } from './src/services/OfflineMusicService';
 import { PlaylistStorageService } from './src/services/PlaylistStorageService';
@@ -59,11 +58,6 @@ const mergeOfflineTrack = (remoteTrack: Track, offlineTrack?: Track): Track => {
   };
 };
 
-const isMusicApiAuthenticationError = (error: unknown) => {
-  const message = error instanceof Error ? error.message.toLowerCase() : '';
-  return message.includes('valid musiqapp api token') || message.includes('music server returned 401');
-};
-
 const getWidgetLaunchTrackId = (url: string) => {
   const prefix = 'musiqapp://widget/play?trackId=';
   if (!url.startsWith(prefix)) return null;
@@ -84,7 +78,8 @@ export default function App() {
   const [favoriteTracks, setFavoriteTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
-  const [apiConnected, setApiConnected] = useState(false);
+  // Kept in the context for existing screens, but local mode is always ready.
+  const [apiConnected, setApiConnected] = useState(true);
   const [apiInitializing, setApiInitializing] = useState(true);
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
   const [isLoadingTracks, setIsLoadingTracks] = useState(true);
@@ -236,17 +231,8 @@ export default function App() {
       }
     } catch (error) {
       if (generation === searchGeneration.current) {
-        if (isMusicApiAuthenticationError(error)) {
-          setMusicApiToken('');
-          setApiConnected(false);
-          setTracks(downloadsRef.current);
-          void NowPlayingWidgetService.initialize(downloadsRef.current).catch(() => undefined);
-          setLoadError(null);
-          void SecureStore.deleteItemAsync('musiqapp_api_token').catch(() => undefined);
-        } else {
-          void NowPlayingWidgetService.initialize(downloadsRef.current).catch(() => undefined);
-          setLoadError(error instanceof Error ? error.message : 'Could not reach your music server.');
-        }
+        void NowPlayingWidgetService.initialize(downloadsRef.current).catch(() => undefined);
+        setLoadError(error instanceof Error ? error.message : 'Could not load the local music library.');
       }
     } finally {
       if (generation === searchGeneration.current) setIsLoadingTracks(false);
@@ -254,7 +240,6 @@ export default function App() {
   }, []);
 
   const loadAllTracks = useCallback(async () => {
-    if (!apiConnected) return tracksRef.current;
     const remoteTracks = await MusicCatalogService.searchAllTracks();
     const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
     const merged = remoteTracks.map((track) => ({
@@ -269,11 +254,11 @@ export default function App() {
     setTracks(merged);
     void NowPlayingWidgetService.initialize(merged).catch(() => undefined);
     return merged;
-  }, [apiConnected]);
+  }, []);
 
   const loadFavoriteTracks = useCallback(async () => {
-    const remoteFavorites = await MusicCatalogService.getFavoriteTracks();
-    const favorites = remoteFavorites.map((track) => ({
+    const localFavorites = await MusicCatalogService.getFavoriteTracks();
+    const favorites = localFavorites.map((track) => ({
       ...mergeOfflineTrack(track, downloadsRef.current.find((saved) => saved.id === track.id)),
       isFavorite: true,
     }));
@@ -305,45 +290,19 @@ export default function App() {
   }, [updatePlaybackQueue]);
 
   const loadPlaylists = useCallback(async () => {
-    try {
-      const remotePlaylists = await MusicCatalogService.getPlaylists();
-      const nextPlaylists = await PlaylistStorageService.mergeRemotePlaylists(remotePlaylists, getMusicApiHeaders());
-      setPlaylists(nextPlaylists);
-      return nextPlaylists;
-    } catch {
-      const cachedPlaylists = await PlaylistStorageService.getPlaylists();
-      setPlaylists(cachedPlaylists);
-      return cachedPlaylists;
-    }
+    const nextPlaylists = await PlaylistStorageService.getPlaylists();
+    setPlaylists(nextPlaylists);
+    return nextPlaylists;
   }, []);
 
   const loadPlaylistTracks = useCallback(async (playlistId: string) => {
-    if (!apiConnected) {
-      const cachedTracks = await PlaylistStorageService.getPlaylistTracks(playlistId);
-      const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
-      return cachedTracks.map((track) => ({
-        ...mergeOfflineTrack(track, offlineById.get(track.id)),
-        isFavorite: favoriteIdsRef.current.has(track.id),
-      }));
-    }
-    try {
-      const remoteTracks = await MusicCatalogService.getPlaylistTracks(playlistId);
-      const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
-      const tracksWithOfflineFiles = remoteTracks.map((track) => mergeOfflineTrack(track, offlineById.get(track.id)));
-      await PlaylistStorageService.savePlaylistTracks(playlistId, tracksWithOfflineFiles);
-      return tracksWithOfflineFiles.map((track) => ({
-        ...track,
-        isFavorite: favoriteIdsRef.current.has(track.id),
-      }));
-    } catch {
-      const cachedTracks = await PlaylistStorageService.getPlaylistTracks(playlistId);
-      const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
-      return cachedTracks.map((track) => ({
-        ...mergeOfflineTrack(track, offlineById.get(track.id)),
-        isFavorite: favoriteIdsRef.current.has(track.id),
-      }));
-    }
-  }, [apiConnected]);
+    const cachedTracks = await PlaylistStorageService.getPlaylistTracks(playlistId);
+    const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
+    return cachedTracks.map((track) => ({
+      ...mergeOfflineTrack(track, offlineById.get(track.id)),
+      isFavorite: favoriteIdsRef.current.has(track.id),
+    }));
+  }, []);
 
   useEffect(() => {
     // Register the widget layout as soon as the app starts. Keep this independent
@@ -359,9 +318,8 @@ export default function App() {
     void Promise.all([
       OfflineMusicService.getDownloadedTracks(),
       PlaylistStorageService.getPlaylists(),
-      SecureStore.getItemAsync('musiqapp_api_token'),
       loadPlaybackCounts(),
-    ]).then(([savedTracks, savedPlaylists, savedToken, savedPlayCounts]) => {
+    ]).then(([savedTracks, savedPlaylists, savedPlayCounts]) => {
       if (!mounted) return;
       playCountsRef.current = savedPlayCounts;
       setPlayCounts(savedPlayCounts);
@@ -370,18 +328,14 @@ export default function App() {
       favoriteIdsRef.current = new Set(savedTracks.filter((track) => track.isFavorite).map((track) => track.id));
       setTracks(savedTracks);
       setPlaylists(savedPlaylists);
-      if (savedToken) {
-        setMusicApiToken(savedToken);
-        setApiConnected(true);
-        void LrcCheckerService.resumeIfNeeded().catch(() => undefined);
-        void searchTracks();
-        void loadFavoriteTracks().catch(() => undefined);
-        void loadPlaylists();
-      } else {
-        favoriteStateLoaded.current = true;
-        setIsLoadingTracks(false);
-        void NowPlayingWidgetService.initialize(savedTracks).catch(() => undefined);
-      }
+      setApiConnected(true);
+      favoriteStateLoaded.current = true;
+      setIsLoadingTracks(false);
+      void searchTracks();
+      void loadFavoriteTracks().catch(() => undefined);
+      void loadPlaylists();
+      void LrcCheckerService.resumeIfNeeded().catch(() => undefined);
+      void NowPlayingWidgetService.initialize(savedTracks).catch(() => undefined);
       setApiInitializing(false);
     }).catch(() => {
       if (mounted) {
@@ -395,42 +349,17 @@ export default function App() {
   }, [loadFavoriteTracks, loadPlaylists, searchTracks]);
 
   const connectToLibrary = useCallback(async (value: string) => {
-    const token = value.trim();
-    if (!token) throw new Error('Paste the library pairing code to connect.');
-    setMusicApiToken(token);
-    try {
-      const remoteTracks = await MusicCatalogService.searchTracks();
-      await SecureStore.setItemAsync('musiqapp_api_token', token);
-      setApiConnected(true);
-      void LrcCheckerService.resumeIfNeeded().catch(() => undefined);
-      setLoadError(null);
-      setIsLoadingTracks(false);
-      const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
-      const merged = remoteTracks.map((track) => ({
-        ...mergeOfflineTrack(track, offlineById.get(track.id)),
-        isFavorite: favoriteIdsRef.current.has(track.id),
-      }));
-      const presentIds = new Set(merged.map((track) => track.id));
-      merged.push(...downloadsRef.current
-        .filter((track) => !presentIds.has(track.id))
-        .map((track) => ({ ...track, isFavorite: favoriteIdsRef.current.has(track.id) })));
-      tracksRef.current = merged;
-      setTracks(merged);
-      void NowPlayingWidgetService.initialize(merged).catch(() => undefined);
-      void loadFavoriteTracks().catch(() => undefined);
-      void loadPlaylists();
-    } catch (error) {
-      setMusicApiToken('');
-      throw error;
-    }
-  }, [loadFavoriteTracks, loadPlaylists]);
+    // Pairing is intentionally retired in local mode. Keep the callback so old
+    // screens can still invoke it while we refresh the local catalog.
+    if (value.trim()) setLoadError(null);
+    setApiConnected(true);
+    await searchTracks();
+  }, [searchTracks]);
 
   const disconnectFromLibrary = useCallback(async () => {
-    await SecureStore.deleteItemAsync('musiqapp_api_token');
-    setMusicApiToken('');
-    setApiConnected(false);
-    setTracks(downloadsRef.current);
-  }, []);
+    setApiConnected(true);
+    await searchTracks();
+  }, [searchTracks]);
 
   const playSelectedTrack = useCallback((track: Track, nextQueue: Track[]) => {
     const offlineTrack = downloadsRef.current.find((saved) => saved.id === track.id);
@@ -840,7 +769,7 @@ export default function App() {
     favoriteIdsRef.current.delete(track.id);
     await PlaylistStorageService.deleteTrack(track.id);
     updatePlaybackQueue(queueRef.current.filter((item) => item.id !== track.id));
-    if (activeTrackRef.current?.id === track.id && !activeTrackRef.current.localUri) {
+    if (activeTrackRef.current?.id === track.id) {
       player.pause();
       activeTrackRef.current = null;
       setActiveTrack(null);
@@ -1000,6 +929,20 @@ export default function App() {
     return importedTrack;
   }, []);
 
+  const importLocalFile = useCallback(async () => {
+    const picked = await File.pickFileAsync({ mimeTypes: 'audio/*' });
+    if (picked.canceled || !picked.result) return null;
+    const title = picked.result.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+    const importedTrack = await OfflineMusicService.importLocalFile(picked.result.uri, title, 'Unknown artist');
+    downloadsRef.current = [importedTrack, ...downloadsRef.current.filter((track) => track.id !== importedTrack.id)];
+    setDownloadedTracks(downloadsRef.current);
+    const nextTracks = [importedTrack, ...tracksRef.current.filter((track) => track.id !== importedTrack.id)];
+    tracksRef.current = nextTracks;
+    setTracks(nextTracks);
+    void NowPlayingWidgetService.initialize(nextTracks).catch(() => undefined);
+    return importedTrack;
+  }, []);
+
   const mostPlayedTracks = useMemo(() => tracks
     .map((track) => ({ ...track, playCount: playCounts[track.id] ?? 0 }))
     .filter((track) => track.playCount > 0)
@@ -1032,6 +975,7 @@ export default function App() {
     downloadTrack,
     deleteDownloadedTracks,
     importAudioToLibrary,
+    importLocalFile,
     updateTrack,
     deleteTrack,
     toggleFavorite,
@@ -1053,6 +997,7 @@ export default function App() {
     deletePlaylist,
     deleteTrack,
     importAudioToLibrary,
+    importLocalFile,
     downloadedTracks,
     favoriteTracks,
     checkTrackLyrics,

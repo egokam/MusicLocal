@@ -1,8 +1,10 @@
 import { Directory, File, Paths } from 'expo-file-system';
-import { getMusicApiHeaders, parseLyrics } from './MusicCatalogService';
+import { parseLyrics } from './LyricsParser';
 import type { Track } from '../types';
 
-const downloadsDirectory = new Directory(Paths.document, 'musiqapp-downloads');
+// This directory is inside the app's Documents container and is visible in
+// Files/iTunes when UIFileSharingEnabled is enabled in app.json.
+const downloadsDirectory = new Directory(Paths.document, 'Musiqapp');
 const indexFile = new File(downloadsDirectory, 'downloads.json');
 
 const ensureDirectory = () => {
@@ -13,22 +15,84 @@ const ensureDirectory = () => {
 
 const safeName = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
 
+const idForImport = (url: string, title: string, artist: string) => {
+  let hash = 2166136261;
+  for (const character of `${url}\u0000${title}\u0000${artist}`) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `local-${(hash >>> 0).toString(16)}`;
+};
+
+const extensionFromUrl = (url: string) => {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(/\.(mp3|m4a|aac|wav|flac|ogg|opus)(?:$|\?)/i);
+    return match ? `.${match[1].toLowerCase()}` : '.mp3';
+  } catch {
+    return '.mp3';
+  }
+};
+
 const writeTextFile = (file: File, text: string) => {
   if (file.exists) file.delete();
   file.create({ intermediates: true });
   file.write(text);
 };
 
+const supportedAudio = /\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i;
+
+const readIndexedTracks = async (): Promise<Track[]> => {
+  if (!indexFile.exists) return [];
+  try {
+    return JSON.parse(await indexFile.text()) as Track[];
+  } catch {
+    return [];
+  }
+};
+
+const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
+  const knownUris = new Set(indexed.map((track) => track.localUri).filter(Boolean));
+  const discovered: Track[] = [];
+  for (const item of downloadsDirectory.list()) {
+    if (!(item instanceof File) || !supportedAudio.test(item.name) || knownUris.has(item.uri)) continue;
+    const baseName = item.name.replace(/\.[^.]+$/, '');
+    const [artistPart, ...titleParts] = baseName.split(' - ');
+    const artist = titleParts.length > 0 ? artistPart.trim() : 'Unknown artist';
+    const title = (titleParts.length > 0 ? titleParts.join(' - ') : baseName).trim() || 'Untitled track';
+    const id = idForImport(item.uri, title, artist);
+    const lrc = new File(downloadsDirectory, `${baseName}.lrc`);
+    const txt = new File(downloadsDirectory, `${baseName}.txt`);
+    discovered.push({
+      id,
+      title,
+      artist,
+      album: '',
+      duration: '—',
+      artwork: '',
+      provider: 'local',
+      providerId: id,
+      fileExtension: item.extension,
+      localUri: item.uri,
+      lyricsFileUri: lrc.exists ? lrc.uri : txt.exists ? txt.uri : undefined,
+      lyricsAvailable: lrc.exists || txt.exists,
+      hasSyncedLyrics: lrc.exists,
+      hasPlainLyrics: !lrc.exists && txt.exists,
+      dateAdded: Date.now(),
+    });
+  }
+  if (discovered.length === 0) return indexed;
+  const merged = [...indexed, ...discovered];
+  writeTextFile(indexFile, JSON.stringify(merged));
+  return merged;
+};
+
 export const OfflineMusicService = {
   async getDownloadedTracks(): Promise<Track[]> {
     ensureDirectory();
-    if (!indexFile.exists) return [];
-    try {
-      const tracks = JSON.parse(await indexFile.text()) as Track[];
-      return tracks.filter((track) => track.localUri && new File(track.localUri).exists);
-    } catch {
-      return [];
-    }
+    const indexed = await readIndexedTracks();
+    const tracks = await scanLooseAudioFiles(indexed);
+    return tracks.filter((track) => track.localUri && new File(track.localUri).exists);
   },
 
   async downloadTrack(track: Track): Promise<Track> {
@@ -40,7 +104,6 @@ export const OfflineMusicService = {
     const fileName = `${safeName(track.id)}${fileExtension}`;
     const audioFile = new File(downloadsDirectory, fileName);
     await File.downloadFileAsync(track.downloadUrl, audioFile, {
-      headers: getMusicApiHeaders(),
       idempotent: true,
     });
 
@@ -60,6 +123,77 @@ export const OfflineMusicService = {
     const updated = [...current.filter((item) => item.id !== track.id), downloadedTrack];
     writeTextFile(indexFile, JSON.stringify(updated));
     return downloadedTrack;
+  },
+
+  /** Import a direct audio URL into the app's private Documents library. */
+  async importAudioUrl(
+    url: string,
+    title: string,
+    artist: string,
+    sourceUrl: string,
+    onProgress: (progress: { progress: number | null; message: string; bytesDownloaded: number; totalBytes: number | null }) => void,
+  ): Promise<Track> {
+    const normalizedUrl = url.trim();
+    if (!/^https?:\/\//i.test(normalizedUrl)) {
+      throw new Error('Only a direct HTTP audio URL can be imported locally.');
+    }
+    ensureDirectory();
+    const id = idForImport(normalizedUrl, title, artist);
+    const fileExtension = extensionFromUrl(normalizedUrl);
+    const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
+    onProgress({ progress: 0, message: 'Saving audio to this device…', bytesDownloaded: 0, totalBytes: null });
+    await File.downloadFileAsync(normalizedUrl, audioFile, { idempotent: true });
+    const track: Track = {
+      id,
+      title: title.trim() || 'Untitled track',
+      artist: artist.trim() || 'Unknown artist',
+      album: '',
+      duration: '—',
+      artwork: '',
+      provider: 'local',
+      providerId: id,
+      fileExtension,
+      downloadAllowed: false,
+      downloadUrl: null,
+      streamUrl: undefined,
+      shareUrl: sourceUrl || normalizedUrl,
+      localUri: audioFile.uri,
+      dateAdded: Date.now(),
+      lyricsAvailable: false,
+    };
+    const current = await this.getDownloadedTracks();
+    const updated = [...current.filter((item) => item.id !== id), track];
+    writeTextFile(indexFile, JSON.stringify(updated));
+    onProgress({ progress: 1, message: 'Saved to this device.', bytesDownloaded: audioFile.size ?? 0, totalBytes: audioFile.size ?? null });
+    return track;
+  },
+
+  /** Copy a file selected from the Files app into the private music library. */
+  async importLocalFile(sourceUri: string, title: string, artist: string, album = ''): Promise<Track> {
+    ensureDirectory();
+    const id = idForImport(sourceUri, title, artist);
+    const fileExtension = extensionFromUrl(sourceUri);
+    const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
+    if (audioFile.exists) audioFile.delete();
+    await new File(sourceUri).copy(audioFile);
+    const track: Track = {
+      id,
+      title: title.trim() || 'Untitled track',
+      artist: artist.trim() || 'Unknown artist',
+      album,
+      duration: '—',
+      artwork: '',
+      provider: 'local',
+      providerId: id,
+      fileExtension,
+      downloadAllowed: false,
+      localUri: audioFile.uri,
+      dateAdded: Date.now(),
+      lyricsAvailable: false,
+    };
+    const current = await this.getDownloadedTracks();
+    writeTextFile(indexFile, JSON.stringify([...current.filter((item) => item.id !== id), track]));
+    return track;
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {

@@ -108,7 +108,7 @@ export const PlaylistsScreen = ({
 
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 190 }}>
         <Text style={{ color: '#A1A1A6', fontSize: 15, lineHeight: 22, marginTop: 4, marginBottom: 20 }}>
-          Your playlists stay available on this phone and sync with your VPS library.
+          Your playlists and covers stay on this phone.
         </Text>
 
         {loading ? <ActivityIndicator color="#FA243C" style={{ marginTop: 20 }} /> : null}
@@ -209,7 +209,7 @@ export const PlaylistsScreen = ({
             </View>
 
             <Text style={{ color: '#8E8E93', fontSize: 13, lineHeight: 18, textAlign: 'center' }}>
-              The playlist and its cover are saved on this phone and your VPS library.
+              The playlist and its cover are saved on this phone.
             </Text>
           </View>
         </KeyboardAvoidingView>

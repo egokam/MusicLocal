@@ -240,9 +240,9 @@ export const SearchScreen = () => {
 
         if (actions.apiConnected) {
           try {
-            const serverTracks = await MusicCatalogService.searchTracks(trimmedQuery);
+            const libraryTracks = await MusicCatalogService.searchTracks(trimmedQuery);
             const cachedById = new Map(localTracks.map((track) => [track.id, track]));
-            const mergedServerTracks = serverTracks
+            const mergedLibraryTracks = libraryTracks
               .filter((track) => track.provider === 'local')
               .map((track) => {
                 const cached = cachedById.get(track.id);
@@ -254,8 +254,8 @@ export const SearchScreen = () => {
                   isFavorite: Boolean(track.isFavorite || favoriteIds.has(track.id)),
                 };
               });
-            const serverIds = new Set(mergedServerTracks.map((track) => track.id));
-            libraryMatches = [...mergedServerTracks, ...cachedMatches.filter((track) => !serverIds.has(track.id))];
+            const libraryIds = new Set(mergedLibraryTracks.map((track) => track.id));
+            libraryMatches = [...mergedLibraryTracks, ...cachedMatches.filter((track) => !libraryIds.has(track.id))];
           } catch {
             libraryFailed = true;
           }
@@ -277,8 +277,8 @@ export const SearchScreen = () => {
         setResults(uniqueResults);
         setSearchNotice(
           libraryFailed && audiusFailed ? 'Some sources could not be reached. Showing available results.'
-            : libraryFailed ? 'Your VPS library could not be reached. Showing cached tracks.'
-              : !actions.apiConnected && scope === 'library' ? 'Connect your VPS library to search all of its tracks.'
+            : libraryFailed ? 'Your local library could not be read. Showing cached tracks.'
+              : !actions.apiConnected && scope === 'library' ? 'Your local library is still loading.'
                 : audiusFailed && scope === 'universal' ? 'Audius search is temporarily unavailable.' : '',
         );
         setLoading(false);

@@ -86,6 +86,7 @@ export const DownloaderScreen = ({
   onSearch,
   onDownload,
   onImportAudioToLibrary,
+  onImportLocalFile,
   playlists,
   hasActiveTrack,
   onPlayNext,
@@ -113,6 +114,7 @@ export const DownloaderScreen = ({
     sourceUrl: string,
     onProgress: (progress: ImportProgress) => void,
   ) => Promise<Track>;
+  onImportLocalFile: () => Promise<Track | null>;
   playlists: PlaylistSummary[];
   hasActiveTrack: boolean;
   onPlayNext: (track: Track) => void;
@@ -128,7 +130,7 @@ export const DownloaderScreen = ({
   const [referenceUrl, setReferenceUrl] = useState('');
   const [trackName, setTrackName] = useState('');
   const [artistName, setArtistName] = useState('');
-  const [isImportingToVps, setIsImportingToVps] = useState(false);
+  const [isImportingToDevice, setIsImportingToDevice] = useState(false);
   const [isResolvingLink, setIsResolvingLink] = useState(false);
   const [linkMetadata, setLinkMetadata] = useState<MediaLinkMetadata | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
@@ -142,17 +144,16 @@ export const DownloaderScreen = ({
 
   const downloadedIds = useMemo(() => new Set(downloadedTrackIds), [downloadedTrackIds]);
   const downloadingIds = useMemo(() => new Set(downloadingTrackIds), [downloadingTrackIds]);
-  const platformLink = getPlatformFromLink(referenceUrl);
   const audioPlatformLink = getPlatformFromLink(audioUrl);
-  const canImportToVps = isHttpsLink(audioUrl) && audioPlatformLink !== 'Spotify';
+  const canImportToDevice = isHttpsLink(audioUrl) && audioPlatformLink !== 'Spotify';
 
   const resolvePlatformLink = async () => {
-    if (!platformLink || platformLink === 'YouTube') {
-      Alert.alert('Paste a supported track link', 'Link preview supports Spotify and SoundCloud track links.');
+    if (!isHttpsLink(referenceUrl)) {
+      Alert.alert('Paste a supported track link', 'Use an HTTPS track or direct audio URL.');
       return;
     }
     if (!apiConnected) {
-      Alert.alert('Connect your VPS library', 'Connect to your private VPS library before resolving track details.');
+      Alert.alert('Local library unavailable', 'The local library is still loading.');
       return;
     }
     setIsResolvingLink(true);
@@ -182,12 +183,8 @@ export const DownloaderScreen = ({
   };
 
   const handleAction = async () => {
-    if (canImportToVps) {
-      if (!apiConnected) {
-        Alert.alert('Connect your VPS library', 'Connect to your private VPS library before importing audio.');
-        return;
-      }
-      setIsImportingToVps(true);
+    if (canImportToDevice) {
+      setIsImportingToDevice(true);
       setImportProgress({ progress: 0, message: 'Starting import…', bytesDownloaded: 0, totalBytes: null });
       try {
         const imported = await onImportAudioToLibrary(
@@ -197,18 +194,18 @@ export const DownloaderScreen = ({
           referenceUrl.trim(),
           setImportProgress,
         );
-        setImportProgress({ progress: 1, message: 'Added to your VPS library', bytesDownloaded: 0, totalBytes: null });
-        Alert.alert('Added to VPS library', `${imported.title} is now in your music catalog. You can download it to this phone from the track list.`);
+        setImportProgress({ progress: 1, message: 'Saved to this device.', bytesDownloaded: 0, totalBytes: null });
+        Alert.alert('Saved locally', `${imported.title} is now in your local music folder.`);
         setAudioUrl('');
         setReferenceUrl('');
         setTrackName('');
         setArtistName('');
         setLinkMetadata(null);
       } catch (error) {
-        Alert.alert('Could not import audio', error instanceof Error ? error.message : 'Check the link and try again.');
+        Alert.alert('Could not save audio', error instanceof Error ? error.message : 'Check the direct audio URL and try again.');
         setImportProgress(null);
       } finally {
-        setIsImportingToVps(false);
+        setIsImportingToDevice(false);
       }
       return;
     }
@@ -223,8 +220,17 @@ export const DownloaderScreen = ({
 
     Alert.alert(
       'Use a supported HTTPS link',
-      'Paste a YouTube or TikTok video link, a SoundCloud track link, or a direct MP3/M4A file URL. The VPS will add the extracted audio to your library.',
+      'Paste a direct MP3, M4A, WAV, FLAC, or OGG file URL. The file will be saved to this device.',
     );
+  };
+
+  const handleLocalFileImport = async () => {
+    try {
+      const imported = await onImportLocalFile();
+      if (imported) Alert.alert('Added locally', `${imported.title} is now available in your library.`);
+    } catch (error) {
+      Alert.alert('Could not import file', error instanceof Error ? error.message : 'Choose a supported audio file and try again.');
+    }
   };
 
   const renderSearchContent = () => (
@@ -285,7 +291,7 @@ export const DownloaderScreen = ({
           ))}
         </ScrollView>
         <Text style={{ color: '#74747A', fontSize: 12, lineHeight: 17, marginTop: 10 }}>
-          Opens the service’s own search. Tracks you can save appear below from your private VPS library.
+          Opens the service’s own search. Direct audio files can be saved to this device below.
         </Text>
       </View>
 
@@ -295,7 +301,7 @@ export const DownloaderScreen = ({
       </View>
       {!apiConnected ? (
         <View style={{ marginTop: 9, padding: 18, borderRadius: 20, backgroundColor: '#1C1C1E' }}>
-          <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Connect your VPS music</Text>
+          <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Local music library</Text>
           <Text style={{ color: '#A1A1A6', fontSize: 14, lineHeight: 20, marginTop: 6, marginBottom: 14 }}>
             Search your own collection and save tracks for offline listening.
           </Text>
@@ -409,12 +415,20 @@ export const DownloaderScreen = ({
                   <Text style={{ color: '#8E8E93', fontSize: 13, fontWeight: '700', letterSpacing: 0.5, marginTop: 20, marginBottom: 9 }}>
                     AUDIO SOURCE LINK
                   </Text>
+                  <TouchableOpacity
+                    onPress={() => void handleLocalFileImport()}
+                    accessibilityRole="button"
+                    style={{ height: 48, borderRadius: 24, backgroundColor: '#29292D', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 10 }}
+                  >
+                    <Ionicons name="folder-open-outline" size={19} color="#FA5265" />
+                    <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Choose audio from Files</Text>
+                  </TouchableOpacity>
                   <View style={{ height: 54, paddingHorizontal: 15, borderRadius: 17, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center' }}>
                     <Ionicons name="cloud-download-outline" size={20} color="#A1A1A6" />
                     <TextInput
                       value={audioUrl}
                       onChangeText={setAudioUrl}
-                      placeholder="YouTube/TikTok video, SoundCloud, or MP3/M4A link"
+                      placeholder="Direct MP3, M4A, WAV, FLAC, or OGG link"
                       placeholderTextColor="#8E8E93"
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -423,7 +437,7 @@ export const DownloaderScreen = ({
                     />
                   </View>
                   <Text style={{ color: '#74747A', fontSize: 12, lineHeight: 17, marginTop: 7 }}>
-                    The VPS extracts audio from supported YouTube/TikTok videos or SoundCloud tracks and converts it to MP3. Direct MP3/M4A links are also accepted.
+                    Only direct audio file URLs are imported locally. Platform pages do not expose an audio file to the app.
                   </Text>
                   <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
                     <TextInput
@@ -444,17 +458,17 @@ export const DownloaderScreen = ({
 
                   <TouchableOpacity
                     onPress={() => void handleAction()}
-                    disabled={isImportingToVps || !audioUrl.trim()}
+                    disabled={isImportingToDevice || !audioUrl.trim()}
                     accessibilityRole="button"
-                    style={{ height: 52, marginTop: 17, borderRadius: 26, backgroundColor: '#FA243C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: isImportingToVps || !audioUrl.trim() ? 0.55 : 1 }}
+                    style={{ height: 52, marginTop: 17, borderRadius: 26, backgroundColor: '#FA243C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: isImportingToDevice || !audioUrl.trim() ? 0.55 : 1 }}
                   >
-                    {isImportingToVps ? <ActivityIndicator color="white" /> : <Ionicons name={canImportToVps ? 'cloud-download-outline' : audioPlatformLink === 'Spotify' ? 'alert-circle-outline' : 'arrow-down-circle-outline'} size={21} color="white" />}
+                    {isImportingToDevice ? <ActivityIndicator color="white" /> : <Ionicons name={canImportToDevice ? 'download-outline' : audioPlatformLink === 'Spotify' ? 'alert-circle-outline' : 'arrow-down-circle-outline'} size={21} color="white" />}
                     <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
-                      {isImportingToVps ? 'Importing to VPS…' : canImportToVps ? 'Add audio to VPS library' : audioPlatformLink === 'Spotify' ? 'Spotify links provide details only' : 'Import'}
+                      {isImportingToDevice ? 'Saving to this device…' : canImportToDevice ? 'Save to this device' : audioPlatformLink === 'Spotify' ? 'Spotify links provide details only' : 'Import'}
                     </Text>
                   </TouchableOpacity>
 
-                  {importProgress && (isImportingToVps || importProgress.progress === 1) ? (
+                  {importProgress && (isImportingToDevice || importProgress.progress === 1) ? (
                     <View style={{ marginTop: 14, padding: 14, borderRadius: 16, backgroundColor: '#151517' }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                         {importProgress.progress === null ? <ActivityIndicator color="#FA5265" size="small" /> : null}
@@ -477,7 +491,7 @@ export const DownloaderScreen = ({
                   <View style={{ marginTop: 17, padding: 15, borderRadius: 17, backgroundColor: '#151517', flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
                     <Ionicons name="information-circle-outline" size={20} color="#A1A1A6" />
                     <Text style={{ flex: 1, color: '#A1A1A6', fontSize: 13, lineHeight: 19 }}>
-                      Spotify and SoundCloud links can fill in the track title, artist, and cover preview. For audio, provide a supported YouTube or TikTok video link, a SoundCloud track link, or a direct MP3/M4A URL. Some platform links may not be available to extract. The VPS looks for synced lyrics during import, but a match is not guaranteed.
+                      Track details can be entered manually. Provide a direct audio file URL to save music locally; no server-side extraction or lyrics lookup is used.
                     </Text>
                   </View>
 
@@ -502,7 +516,7 @@ export const DownloaderScreen = ({
           )}
           ListEmptyComponent={mode === 'search' && apiConnected ? (
             <Text style={{ color: isLoadingTracks ? '#A1A1A6' : '#74747A', fontSize: 14, marginTop: 8 }}>
-              {isLoadingTracks ? 'Searching your VPS library…' : loadError ?? (searchQuery ? 'No matching tracks in your library.' : 'Your VPS tracks will appear here.')}
+              {isLoadingTracks ? 'Searching your local library…' : loadError ?? (searchQuery ? 'No matching tracks in your library.' : 'Your local tracks will appear here.')}
             </Text>
           ) : null}
         />

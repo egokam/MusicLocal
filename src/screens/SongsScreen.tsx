@@ -321,12 +321,12 @@ export const SongsScreen = ({
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 28, paddingBottom: 90 }}>
           <Text style={{ color: 'white', fontSize: 34, fontWeight: '800', marginBottom: 12 }}>{title}</Text>
           <Text style={{ color: '#A1A1A6', fontSize: 16, lineHeight: 23, marginBottom: 22 }}>
-            Connect to your private music folder on the VPS. Find the pairing code in the project’s .env.local file.
+            Your local music folder is still loading. No pairing code is needed.
           </Text>
           <TextInput
             value={pairingCode}
             onChangeText={setPairingCode}
-            placeholder="Library pairing code"
+            placeholder="No pairing code needed"
             placeholderTextColor="#8E8E93"
             autoCapitalize="none"
             autoCorrect={false}

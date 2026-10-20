@@ -463,7 +463,7 @@ const DownloadedRoute = ({ navigation }: NativeStackScreenProps<LibraryStackPara
       offlineMode
       showTrackActions={false}
       onDeleteDownloadedTracks={actions.deleteDownloadedTracks}
-      emptyMessage="Songs you download from your VPS library will appear here for offline listening."
+      emptyMessage="Songs imported to this device will appear here for offline listening."
     />
   );
 };
@@ -667,6 +667,7 @@ const DownloaderRoute = ({
     searchTracks,
     downloadTrack,
     importAudioToLibrary,
+    importLocalFile,
     playTrack,
     loadPlaylists,
     playNext,
@@ -695,6 +696,7 @@ const DownloaderRoute = ({
       onSearch={searchTracks}
       onDownload={downloadTrack}
       onImportAudioToLibrary={importAudioToLibrary}
+      onImportLocalFile={importLocalFile}
       playlists={playlists}
       hasActiveTrack={hasActiveTrack}
       onPlayNext={playNext}
