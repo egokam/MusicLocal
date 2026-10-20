@@ -1,5 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { parseLyrics } from './LyricsParser';
+import { cacheArtworkForTrack } from './ArtworkService';
 import type { Track } from '../types';
 
 // This directory stays inside the app's private Documents container.
@@ -61,27 +62,33 @@ const readIndexedTracks = async (): Promise<Track[]> => {
 
 const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
   let indexChanged = false;
-  const refreshed = indexed.map((track) => {
-    if (!track.localUri) return track;
+  const refreshed: Track[] = [];
+  for (const track of indexed) {
+    if (!track.localUri) {
+      refreshed.push(track);
+      continue;
+    }
     try {
       const audioFile = new File(track.localUri);
       const baseName = audioFile.name.replace(/\.[^.]+$/, '');
       const lrc = new File(audioFile.parentDirectory, `${baseName}.lrc`);
       const txt = new File(audioFile.parentDirectory, `${baseName}.txt`);
       const lyricsFileUri = lrc.exists ? lrc.uri : txt.exists ? txt.uri : undefined;
+      const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, track.id, track.artwork);
       const next = {
         ...track,
         lyricsFileUri,
+        ...(artwork ? { artwork } : {}),
         lyricsAvailable: Boolean(track.lyricsAvailable || lyricsFileUri),
         hasSyncedLyrics: Boolean(track.hasSyncedLyrics || lrc.exists),
         hasPlainLyrics: Boolean(track.hasPlainLyrics || (!lrc.exists && txt.exists)),
       };
-      if (next.lyricsFileUri !== track.lyricsFileUri || next.hasSyncedLyrics !== track.hasSyncedLyrics || next.hasPlainLyrics !== track.hasPlainLyrics) indexChanged = true;
-      return next;
+      if (next.lyricsFileUri !== track.lyricsFileUri || next.artwork !== track.artwork || next.hasSyncedLyrics !== track.hasSyncedLyrics || next.hasPlainLyrics !== track.hasPlainLyrics) indexChanged = true;
+      refreshed.push(next);
     } catch {
-      return track;
+      refreshed.push(track);
     }
-  });
+  }
   const knownUris = new Set(refreshed.map((track) => track.localUri).filter(Boolean));
   const discovered: Track[] = [];
   for (const item of downloadsDirectory.list()) {
@@ -91,13 +98,14 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
     const id = idForImport(item.uri, title, artist);
     const lrc = new File(downloadsDirectory, `${baseName}.lrc`);
     const txt = new File(downloadsDirectory, `${baseName}.txt`);
+    const artwork = await cacheArtworkForTrack(item, downloadsDirectory, id);
     discovered.push({
       id,
       title,
       artist,
       album: '',
       duration: '—',
-      artwork: '',
+      artwork: artwork ?? '',
       provider: 'local',
       providerId: id,
       fileExtension: item.extension,
@@ -137,6 +145,7 @@ export const OfflineMusicService = {
     await File.downloadFileAsync(track.downloadUrl, audioFile, {
       idempotent: true,
     });
+    const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, track.id, track.artwork);
 
     let lyricsFileUri: string | undefined;
     if (track.syncedLyrics?.trim()) {
@@ -149,7 +158,7 @@ export const OfflineMusicService = {
       lyricsFileUri = lyricsFile.uri;
     }
 
-    const downloadedTrack: Track = { ...track, localUri: audioFile.uri, lyricsFileUri };
+    const downloadedTrack: Track = { ...track, ...(artwork ? { artwork } : {}), localUri: audioFile.uri, lyricsFileUri };
     const current = await this.getDownloadedTracks();
     const updated = [...current.filter((item) => item.id !== track.id), downloadedTrack];
     writeTextFile(indexFile, JSON.stringify(updated));
@@ -174,13 +183,14 @@ export const OfflineMusicService = {
     const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
     onProgress({ progress: 0, message: 'Saving audio to this device…', bytesDownloaded: 0, totalBytes: null });
     await File.downloadFileAsync(normalizedUrl, audioFile, { idempotent: true });
+    const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, id);
     const track: Track = {
       id,
       title: title.trim() || 'Untitled track',
       artist: artist.trim() || 'Unknown artist',
       album: '',
       duration: '—',
-      artwork: '',
+      artwork: artwork ?? '',
       provider: 'local',
       providerId: id,
       fileExtension,
@@ -207,13 +217,14 @@ export const OfflineMusicService = {
     const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
     if (audioFile.exists) audioFile.delete();
     await new File(sourceUri).copy(audioFile);
+    const artwork = await cacheArtworkForTrack(new File(sourceUri), downloadsDirectory, id);
     const track: Track = {
       id,
       title: title.trim() || 'Untitled track',
       artist: artist.trim() || 'Unknown artist',
       album,
       duration: '—',
-      artwork: '',
+      artwork: artwork ?? '',
       provider: 'local',
       providerId: id,
       fileExtension,
@@ -258,6 +269,7 @@ export const OfflineMusicService = {
         try {
           if (audioFile.exists) audioFile.delete();
           await entry.copy(audioFile);
+          const artwork = await cacheArtworkForTrack(entry, downloadsDirectory, id);
           const baseName = entry.name.replace(/\.[^.]+$/, '');
           const sourceLrc = new File(entry.parentDirectory, `${baseName}.lrc`);
           const sourceText = new File(entry.parentDirectory, `${baseName}.txt`);
@@ -279,7 +291,7 @@ export const OfflineMusicService = {
             artist,
             album: '',
             duration: '—',
-            artwork: '',
+            artwork: artwork ?? '',
             provider: 'local',
             providerId: id,
             fileExtension,
