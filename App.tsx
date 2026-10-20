@@ -10,6 +10,7 @@ import { PlayerOverlay } from './src/components/player/PlayerOverlay';
 import { PlaybackContext, RadioPlaybackStatusContext } from './src/contexts/PlaybackContext';
 import { systemMediaControls } from './src/native/SystemMediaControls';
 import { NowPlayingWidgetService } from './src/services/NowPlayingWidgetService';
+import { AndroidUpdatePrompt } from './src/components/updates/AndroidUpdatePrompt';
 import { AUDIO_MIXES, AudiusCatalogService, type AudiusMixId } from './src/services/AudiusCatalogService';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { LibraryScreen } from './src/screens/LibraryScreen';
@@ -1053,6 +1054,7 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <AndroidUpdatePrompt />
       <PlaybackContext.Provider value={playbackActions}>
         <RadioPlaybackStatusContext.Provider value={playerStatus.playing}>
           <NavigationContainer>
