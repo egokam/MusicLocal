@@ -16,13 +16,13 @@ import { LrcCheckerRow, type LrcCheckState } from '../components/library/LrcChec
 import { LrcCheckerService } from '../services/LrcCheckerService';
 import type { Track } from '../types';
 
-const hasTimedLyrics = (track: Track) => Boolean(
-  track.syncedLyrics?.match(/^\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]\s*\S/m)
-  || track.lyrics?.some((line) => line.timeMs !== null && line.text.trim()),
-);
-
 const isTimedLrc = (value: string | undefined) => Boolean(
   value?.match(/^\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]\s*\S/m),
+);
+
+const hasTimedLyrics = (track: Track) => Boolean(
+  isTimedLrc(track.syncedLyrics)
+  || track.lyrics?.some((line) => line.timeMs !== null && line.text.trim()),
 );
 
 const LRC_TIMESTAMP = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
@@ -91,7 +91,7 @@ export const LrcCheckerScreen = ({
   apiConnected: boolean;
   isLoadingTracks: boolean;
   onLoadAllTracks: () => Promise<Track[]>;
-  onCheckTrack: (track: Track) => Promise<Track>;
+  onCheckTrack: (track: Track, forceOnline?: boolean) => Promise<Track>;
   onSaveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
 }) => {
   const [scanSnapshot, setScanSnapshot] = useState(() => LrcCheckerService.getSnapshot());

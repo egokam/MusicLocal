@@ -34,7 +34,7 @@ type PersistedLrcCheckerState = LrcCheckerSnapshot & {
 
 type ScanCallbacks = {
   loadAllTracks: () => Promise<Track[]>;
-  checkTrack: (track: Track) => Promise<Track>;
+  checkTrack: (track: Track, forceOnline?: boolean) => Promise<Track>;
 };
 
 const EMPTY_SNAPSHOT: LrcCheckerSnapshot = {
@@ -48,11 +48,6 @@ const EMPTY_SNAPSHOT: LrcCheckerSnapshot = {
 
 const isTimedLrc = (value: string | undefined) => Boolean(
   value?.match(/^\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]\s*\S/m),
-);
-
-const hasTimedLyrics = (track: Track) => Boolean(
-  isTimedLrc(track.syncedLyrics)
-  || track.lyrics?.some((line) => line.timeMs !== null && line.text.trim()),
 );
 
 const minimalTrack = (track: Track): Track => ({
@@ -186,8 +181,9 @@ const setSessionTracks = async (tracks: Track[]) => {
   const uniqueTracks = [...new Map(tracks.map((track) => [track.id, minimalTrack(track)])).values()];
   await updateState((state) => {
     state.scanTracks = uniqueTracks;
+    for (const track of uniqueTracks) state.records[track.id] = { state: 'unchecked' };
     state.progress.total = uniqueTracks.length;
-    state.progress.completed = uniqueTracks.filter((track) => isCompleteRecord(state.records[track.id])).length;
+    state.progress.completed = 0;
     state.isScanning = true;
     state.isLoadingCatalog = false;
     state.isStopping = false;
@@ -199,12 +195,6 @@ const setScanStatus = async (patch: Partial<Pick<LrcCheckerSnapshot, 'isScanning
   await updateState((state) => {
     Object.assign(state, patch);
   });
-};
-
-const getRecord = async (trackId: string) => {
-  await hydrate();
-  await writeQueue;
-  return persistedState.records[trackId];
 };
 
 const registerBackgroundTask = async () => {
@@ -263,15 +253,9 @@ const runForegroundScan = async (callbacks: ScanCallbacks) => {
 
       for (const track of tracks) {
         if (stopRequested) break;
-        const existing = await getRecord(track.id);
-        if (isCompleteRecord(existing)) continue;
-        if (hasTimedLyrics(track)) {
-          await setRecord(track.id, { state: 'synced' });
-          continue;
-        }
         await setRecord(track.id, { state: 'checking' });
         try {
-          const result = await callbacks.checkTrack(track);
+          const result = await callbacks.checkTrack(track, true);
           await setRecord(track.id, recordFromResult(result));
         } catch (error) {
           await setRecord(track.id, {
@@ -310,15 +294,9 @@ const runBackgroundBatch = async () => {
     let processed = 0;
     for (const track of persistedState.scanTracks) {
       if (expired || processed >= BACKGROUND_BATCH_SIZE) break;
-      const existing = await getRecord(track.id);
-      if (isCompleteRecord(existing)) continue;
-      if (hasTimedLyrics(track)) {
-        await setRecord(track.id, { state: 'synced' });
-        continue;
-      }
       await setRecord(track.id, { state: 'checking' });
       try {
-        const result = await MusicCatalogService.getLyrics(track, true);
+        const result = await MusicCatalogService.getLyrics(track, true, true);
         await setRecord(track.id, recordFromResult(result));
       } catch (error) {
         await setRecord(track.id, {
@@ -359,17 +337,17 @@ export const LrcCheckerService = {
     return () => listeners.delete(listener);
   },
 
-  async startScan(loadAllTracks: () => Promise<Track[]>, checkTrack: (track: Track) => Promise<Track>) {
+  async startScan(loadAllTracks: () => Promise<Track[]>, checkTrack: (track: Track, forceOnline?: boolean) => Promise<Track>) {
     await hydrate();
     if (foregroundRun) return foregroundRun;
     return runForegroundScan({ loadAllTracks, checkTrack });
   },
 
-  async checkTrack(track: Track, check: (track: Track) => Promise<Track>) {
+  async checkTrack(track: Track, check: (track: Track, forceOnline?: boolean) => Promise<Track>) {
     await hydrate();
     await setRecord(track.id, { state: 'checking' });
     try {
-      const result = await check(track);
+      const result = await check(track, true);
       const record = recordFromResult(result);
       await setRecord(track.id, record);
       return { ...record, result: record.result ?? result };

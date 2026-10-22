@@ -179,7 +179,8 @@ export const MusicCatalogService = {
     await OfflineMusicService.removeDownloadedTracks([track.id]);
   },
 
-  async getLyrics(track: Track, syncedOnly = false): Promise<Track> {
+  async getLyrics(track: Track, syncedOnly = false, forceOnline = false): Promise<Track> {
+    if (forceOnline) return lookupLyricsOnline(track, track, syncedOnly);
     const result = await readLyricsFile(track);
     if (result.syncedLyrics?.trim() || (result.plainLyrics?.trim() && syncedOnly === false)) return result;
     return lookupLyricsOnline(track, result, syncedOnly);

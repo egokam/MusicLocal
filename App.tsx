@@ -849,14 +849,11 @@ export default function App() {
     const timedLines = parseLyrics(syncedLyrics).filter((line) => line.timeMs !== null && line.text.trim());
     if (timedLines.length === 0) throw new Error('This result does not contain valid synced LRC lines.');
 
-    if (track.provider === 'local' && track.providerId) {
-      await MusicCatalogService.saveSyncedLyrics(track, syncedLyrics);
-    }
     return updateTrackWithLyrics({ ...track, lyricsSource: 'saved_lrc' }, syncedLyrics);
   }, [updateTrackWithLyrics]);
 
-  const checkTrackLyrics = useCallback(async (track: Track) => {
-    const result = await MusicCatalogService.getLyrics(track, true);
+  const checkTrackLyrics = useCallback(async (track: Track, forceOnline = false) => {
+    const result = await MusicCatalogService.getLyrics(track, true, forceOnline);
     if (!result.syncedLyrics?.trim()) return result;
 
     if (result.lyricsSource === 'local_lrc' || result.lyricsSource === 'embedded_lrc') {

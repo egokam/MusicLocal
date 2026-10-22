@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Directory } from 'expo-file-system';
 import { WebView } from 'react-native-webview';
 import { LibraryList } from '../components/library/LibraryList';
 import { TopBar } from '../components/library/TopBar';
@@ -11,6 +12,7 @@ import { usePlaybackActions } from '../contexts/PlaybackContext';
 import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
 import { getMusicApiHeaders } from '../services/MusicCatalogService';
+import { OfflineMusicService } from '../services/OfflineMusicService';
 import { DownloaderScreen } from './DownloaderScreen';
 import { LrcCheckerScreen } from './LrcCheckerScreen';
 import { PlaylistsScreen } from './PlaylistsScreen';
@@ -112,6 +114,7 @@ const DeveloperProfileScreen = ({
 }: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile'>) => {
   const { importMusicFolder, downloadedTracks, deleteDownloadedTracks } = usePlaybackActions();
   const [isImportingFolder, setIsImportingFolder] = useState(false);
+  const [isExportingLibrary, setIsExportingLibrary] = useState(false);
   const [isEmptyingLibrary, setIsEmptyingLibrary] = useState(false);
   const links = [
     { title: 'GitHub', subtitle: 'github.com/egokam', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
@@ -148,6 +151,31 @@ const DeveloperProfileScreen = ({
         },
       ],
     );
+  };
+
+  const exportLibrary = async () => {
+    if (isExportingLibrary) return;
+    if (downloadedTracks.length === 0) {
+      Alert.alert('Library is empty', 'There are no saved music tracks to export.');
+      return;
+    }
+
+    setIsExportingLibrary(true);
+    try {
+      const destinationDirectory = await Directory.pickDirectoryAsync();
+      const result = await OfflineMusicService.exportDownloadedTracks(destinationDirectory);
+      Alert.alert(
+        result.exportedCount > 0 ? 'Library exported' : 'No tracks exported',
+        result.exportedCount > 0
+          ? `${result.exportedCount} audio track${result.exportedCount === 1 ? '' : 's'} exported${result.lyricCount ? ` with ${result.lyricCount} lyric file${result.lyricCount === 1 ? '' : 's'}` : ''}${result.artworkCount ? ` and ${result.artworkCount} artwork file${result.artworkCount === 1 ? '' : 's'}` : ''}.`
+          : 'No saved audio files were available to export.',
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/cancel/i.test(message)) Alert.alert('Could not export library', message);
+    } finally {
+      setIsExportingLibrary(false);
+    }
   };
 
   return (
@@ -232,6 +260,25 @@ const DeveloperProfileScreen = ({
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Import a music folder</Text>
             <Text style={{ color: '#D2A9AF', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
               Copy your audio and matching LRC files into Musiqapp’s private library.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={21} color="#FA5265" />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => void exportLibrary()}
+          disabled={isExportingLibrary}
+          accessibilityRole="button"
+          accessibilityLabel="Export all saved music to a folder"
+          style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#3A3A3E', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isExportingLibrary ? 0.65 : 1 }}
+        >
+          <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
+            {isExportingLibrary ? <ActivityIndicator color="white" /> : <Ionicons name="download-outline" size={28} color="white" />}
+          </View>
+          <View style={{ flex: 1, marginLeft: 15 }}>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Export music</Text>
+            <Text style={{ color: '#A1A1A6', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
+              Save your tracks and available lyrics to a folder you choose.
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={21} color="#FA5265" />

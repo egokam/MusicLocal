@@ -1,6 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { parseBuffer } from 'music-metadata';
-import { parseLyrics } from './LyricsParser';
+import { deduplicateSyncedLyrics, parseLyrics } from './LyricsParser';
 import { cacheArtworkForTrack } from './ArtworkService';
 import type { Track } from '../types';
 
@@ -15,6 +15,10 @@ const ensureDirectory = () => {
 };
 
 const safeName = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+const safeExportName = (value: string) => value
+  .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+  .replace(/[. ]+$/g, '')
+  .trim() || 'Untitled';
 
 const idForImport = (url: string, title: string, artist: string) => {
   let hash = 2166136261;
@@ -281,6 +285,61 @@ export const OfflineMusicService = {
     return tracks.filter((track) => track.localUri && new File(track.localUri).exists);
   },
 
+  async exportDownloadedTracks(destinationDirectory: Directory): Promise<{ exportedCount: number; lyricCount: number; artworkCount: number }> {
+    const tracks = await this.getDownloadedTracks();
+    let exportedCount = 0;
+    let lyricCount = 0;
+    let artworkCount = 0;
+
+    for (const track of tracks) {
+      if (!track.localUri) continue;
+      const audioFile = new File(track.localUri);
+      if (!audioFile.exists) continue;
+
+      const baseName = `${safeExportName(track.artist)} - ${safeExportName(track.title)}`;
+      const extension = audioFile.extension || track.fileExtension || '.mp3';
+      let exportBaseName = baseName;
+      let suffix = 2;
+      while (new File(destinationDirectory, `${exportBaseName}${extension}`).exists) {
+        exportBaseName = `${baseName} (${suffix})`;
+        suffix += 1;
+      }
+      const exportedAudio = new File(destinationDirectory, `${exportBaseName}${extension}`);
+      await audioFile.copy(exportedAudio);
+      exportedCount += 1;
+
+      if (track.lyricsFileUri) {
+        const lyricsFile = new File(track.lyricsFileUri);
+        if (lyricsFile.exists) {
+          const lyricsExtension = lyricsFile.extension || (track.hasSyncedLyrics ? '.lrc' : '.txt');
+          await lyricsFile.copy(new File(destinationDirectory, `${exportBaseName}${lyricsExtension}`), { overwrite: true });
+          lyricCount += 1;
+        }
+      } else {
+        const lyricsText = track.syncedLyrics?.trim() ? track.syncedLyrics : track.plainLyrics;
+        if (lyricsText?.trim()) {
+          const lyricsExtension = track.syncedLyrics?.trim() || track.hasSyncedLyrics ? '.lrc' : '.txt';
+          const exportedLyrics = new File(destinationDirectory, `${exportBaseName}${lyricsExtension}`);
+          exportedLyrics.create({ overwrite: true });
+          exportedLyrics.write(lyricsText);
+          lyricCount += 1;
+        }
+      }
+
+      const artworkUri = track.artworkFileUri || (track.artwork.startsWith('file://') ? track.artwork : undefined);
+      if (artworkUri) {
+        const artworkFile = new File(artworkUri);
+        if (artworkFile.exists) {
+          const artworkExtension = artworkFile.extension || '.jpg';
+          await artworkFile.copy(new File(destinationDirectory, `${exportBaseName}${artworkExtension}`), { overwrite: true });
+          artworkCount += 1;
+        }
+      }
+    }
+
+    return { exportedCount, lyricCount, artworkCount };
+  },
+
   async downloadTrack(track: Track): Promise<Track> {
     if (!track.downloadAllowed || !track.downloadUrl) {
       throw new Error('This track is not available for download.');
@@ -491,10 +550,11 @@ export const OfflineMusicService = {
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {
+    const replacementLyrics = deduplicateSyncedLyrics(syncedLyrics);
     const trackWithLyrics: Track = {
       ...track,
-      syncedLyrics,
-      lyrics: parseLyrics(syncedLyrics),
+      syncedLyrics: replacementLyrics,
+      lyrics: parseLyrics(replacementLyrics),
       lyricsAvailable: true,
       hasSyncedLyrics: true,
     };
@@ -504,7 +564,7 @@ export const OfflineMusicService = {
 
     ensureDirectory();
     const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.lrc`);
-    writeTextFile(lyricsFile, syncedLyrics);
+    writeTextFile(lyricsFile, replacementLyrics);
     const textFile = new File(downloadsDirectory, `${safeName(track.id)}.txt`);
     if (textFile.exists) textFile.delete();
 
