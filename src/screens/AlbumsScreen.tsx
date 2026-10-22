@@ -159,6 +159,7 @@ export const AlbumsScreen = ({
         onBack={onBack}
         onToggleSort={() => setAscending((current) => !current)}
         sortAccessibilityLabel="Toggle album order"
+        liquidGlass
         moreMenuItems={[
           { label: 'Sort by Album Title', icon: 'albums-outline', onPress: () => setSortBy('album') },
           { label: 'Sort by Artist', icon: 'person-outline', onPress: () => setSortBy('artist') },

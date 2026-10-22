@@ -17,6 +17,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { GlassSurface } from '../../../glass';
 import type { PlaylistSummary, Track } from '../../types';
 import type { TrackEditChanges } from '../../services/MusicCatalogService';
 import { MusicCatalogService } from '../../services/MusicCatalogService';
@@ -61,15 +62,15 @@ const ActionRow = ({
     disabled={disabled}
     accessibilityRole="button"
     style={{
-      minHeight: 44,
+      minHeight: 42,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 12,
+      paddingHorizontal: 10,
       opacity: disabled ? 0.4 : 1,
     }}
   >
     <Ionicons name={icon} size={19} color={destructive ? '#FA5265' : '#F5F5F7'} />
-    <Text style={{ flex: 1, color: destructive ? '#FA5265' : '#F5F5F7', fontSize: 15, fontWeight: '500', marginLeft: 12 }} numberOfLines={1}>
+    <Text style={{ flex: 1, color: destructive ? '#FA5265' : '#F5F5F7', fontSize: 14, fontWeight: '500', marginLeft: 10 }} numberOfLines={1}>
       {title}
     </Text>
     {showChevron ? <Ionicons name="chevron-forward" size={15} color="#8E8E93" /> : null}
@@ -143,21 +144,24 @@ export const TrackActionsSheet = ({
   const [playlistName, setPlaylistName] = useState('');
   const [busy, setBusy] = useState(false);
   const [cardOpacity] = useState(() => new Animated.Value(0));
-  const [cardScale] = useState(() => new Animated.Value(0.95));
-  const [cardTranslateY] = useState(() => new Animated.Value(-7));
+  const [cardScale] = useState(() => new Animated.Value(0.001));
   const [backdropOpacity] = useState(() => new Animated.Value(0));
   const [backdropDimOpacity] = useState(() => Animated.multiply(backdropOpacity, 0.32));
   const [pageOpacity] = useState(() => new Animated.Value(1));
   const dismissing = useRef(false);
-  const actionCardWidth = Math.min(windowWidth - 32, 300);
-  const actionMenuHeight = playlistMode ? 208 : 296;
+  const actionCardWidth = Math.min(windowWidth - 40, 190);
+  const actionMenuHeight = playlistMode ? 188 : 246;
   const expandedMenuHeight = Math.round(windowHeight * 0.76);
+  const expandedMenuTop = Math.max(54, (windowHeight - expandedMenuHeight) / 2);
   const preferredTop = anchor.y + anchor.height + 8;
   const actionMenuTop = Math.max(54, Math.min(
     preferredTop + actionMenuHeight <= windowHeight - 24 ? preferredTop : anchor.y - actionMenuHeight - 8,
     windowHeight - actionMenuHeight - 24,
   ));
-  const actionMenuLeft = Math.max(16, Math.min(anchor.x + anchor.width - actionCardWidth, windowWidth - actionCardWidth - 16));
+  const actionMenuLeft = Math.max(20, Math.min(anchor.x + anchor.width - actionCardWidth, windowWidth - actionCardWidth - 20));
+  const cardTransformOrigin = page === 'actions'
+    ? [anchor.x + anchor.width / 2 - actionMenuLeft, anchor.y + anchor.height / 2 - actionMenuTop, 0]
+    : [anchor.x + anchor.width / 2 - 16, anchor.y + anchor.height / 2 - expandedMenuTop, 0];
   const [animatedTop] = useState(() => new Animated.Value(actionMenuTop));
   const [animatedLeft] = useState(() => new Animated.Value(actionMenuLeft));
   const [animatedWidth] = useState(() => new Animated.Value(actionCardWidth));
@@ -168,25 +172,22 @@ export const TrackActionsSheet = ({
     if (!visible) return;
     dismissing.current = false;
     cardOpacity.setValue(0);
-    cardScale.setValue(0.95);
-    cardTranslateY.setValue(-7);
+    cardScale.setValue(0.001);
     backdropOpacity.setValue(0);
     Animated.parallel([
       Animated.timing(cardOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-      Animated.spring(cardScale, { toValue: 1, damping: 18, stiffness: 250, mass: 0.75, useNativeDriver: true }),
-      Animated.spring(cardTranslateY, { toValue: 0, damping: 18, stiffness: 250, mass: 0.75, useNativeDriver: true }),
+      Animated.spring(cardScale, { toValue: 1, damping: 19, stiffness: 260, mass: 0.68, useNativeDriver: true }),
       Animated.timing(backdropOpacity, { toValue: 1, duration: 170, useNativeDriver: true }),
     ]).start();
-  }, [backdropOpacity, cardOpacity, cardScale, cardTranslateY, visible]);
+  }, [backdropOpacity, cardOpacity, cardScale, visible]);
 
   const dismiss = () => {
     if (dismissing.current) return;
     dismissing.current = true;
     Animated.parallel([
-      Animated.timing(cardOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
-      Animated.spring(cardScale, { toValue: 0.97, damping: 20, stiffness: 260, mass: 0.75, useNativeDriver: true }),
-      Animated.timing(cardTranslateY, { toValue: -4, duration: 150, useNativeDriver: true }),
-      Animated.timing(backdropOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
+      Animated.timing(cardOpacity, { toValue: 0, duration: 165, useNativeDriver: true }),
+      Animated.spring(cardScale, { toValue: 0.001, damping: 22, stiffness: 300, mass: 0.55, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 0, duration: 165, useNativeDriver: true }),
     ]).start(() => {
       onClose();
     });
@@ -204,7 +205,7 @@ export const TrackActionsSheet = ({
       const isActions = nextPage === 'actions';
       const nextHeight = isActions ? actionMenuHeight : expandedMenuHeight;
       const nextWidth = isActions ? actionCardWidth : windowWidth - 32;
-      const nextTop = isActions ? actionMenuTop : Math.max(54, (windowHeight - expandedMenuHeight) / 2);
+      const nextTop = isActions ? actionMenuTop : expandedMenuTop;
       const nextLeft = isActions ? actionMenuLeft : 16;
       Animated.parallel([
         Animated.spring(animatedTop, { toValue: nextTop, damping: 22, stiffness: 210, mass: 0.9, useNativeDriver: false }),
@@ -321,7 +322,7 @@ export const TrackActionsSheet = ({
               height: '100%',
               borderRadius: 22,
               overflow: 'hidden',
-              backgroundColor: 'rgba(31,31,34,0.98)',
+              backgroundColor: 'transparent',
               borderWidth: 1,
               borderColor: 'rgba(255,255,255,0.13)',
               shadowColor: '#000000',
@@ -329,11 +330,20 @@ export const TrackActionsSheet = ({
               shadowRadius: 24,
               shadowOffset: { width: 0, height: 12 },
               elevation: 28,
-              opacity: cardOpacity,
-              transform: [{ scale: cardScale }, { translateY: cardTranslateY }],
+      transformOrigin: cardTransformOrigin,
+      transform: [{ scale: cardScale }],
             }}
           >
-          <View style={{ minHeight: 56, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center' }}>
+          <GlassSurface
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }}
+            fallbackColor="rgba(31,31,34,0.98)"
+          />
+          <View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(31,31,34,0.56)' }]}
+          />
+          <Animated.View style={{ flex: 1, opacity: cardOpacity }}>
+          <View style={{ minHeight: 48, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center' }}>
             {page === 'actions' ? (
               track.artwork ? (
                 <Image source={{ uri: track.artwork }} style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: '#29292D' }} />
@@ -347,7 +357,7 @@ export const TrackActionsSheet = ({
                 <Ionicons name="chevron-back" size={22} color="white" />
               </TouchableOpacity>
             )}
-            <View style={{ flex: 1, minWidth: 0, marginLeft: 11 }}>
+            <View style={{ flex: 1, minWidth: 0, marginLeft: 9 }}>
               <Text numberOfLines={1} style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>{heading}</Text>
               <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 12, marginTop: 2 }}>
                 {page === 'actions' ? track.artist : `${track.title} · ${track.artist}`}
@@ -394,14 +404,28 @@ export const TrackActionsSheet = ({
                   </>
                 ) : (
                   <>
-                    <ActionRow icon="create-outline" title="Edit track details" onPress={() => transitionToPage('edit')} />
+                    <View style={{ height: 58, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => transitionToPage('edit')}
+                        disabled={busy}
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit track details"
+                        style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}
+                      >
+                        <Ionicons name="create-outline" size={29} color="#F5F5F7" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => void runAction(() => onToggleFavorite(track), 'Could not update favorite')}
+                        disabled={busy}
+                        accessibilityRole="button"
+                        accessibilityLabel={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                        style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}
+                      >
+                        <Ionicons name={track.isFavorite ? 'star' : 'star-outline'} size={29} color="#F5F5F7" />
+                      </TouchableOpacity>
+                    </View>
                     <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
-                    <ActionRow
-                      icon={track.isFavorite ? 'star' : 'star-outline'}
-                      title={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                      onPress={() => void runAction(() => onToggleFavorite(track), 'Could not update favorite')}
-                      disabled={busy}
-                    />
+                    <ActionRow icon="list-outline" title="Add to playlist" onPress={() => transitionToPage('playlist')} showChevron />
                     <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
                     <ActionRow
                       icon="play-skip-forward-outline"
@@ -413,9 +437,7 @@ export const TrackActionsSheet = ({
                       }}
                     />
                     <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
-                    <ActionRow icon="list-outline" title="Add to playlist" onPress={() => transitionToPage('playlist')} showChevron />
-                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
-                    <ActionRow icon="trash-outline" title="Delete from this device" onPress={confirmDelete} destructive disabled={busy} />
+                    <ActionRow icon="trash-outline" title="Delete" onPress={confirmDelete} destructive disabled={busy} />
                   </>
                 )}
               </View>
@@ -494,6 +516,7 @@ export const TrackActionsSheet = ({
                 </View>
               </ScrollView>
             ) : null}
+          </Animated.View>
           </Animated.View>
           </Animated.View>
         </Animated.View>

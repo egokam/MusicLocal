@@ -406,7 +406,7 @@ export const SongsScreen = ({
   if ((!apiConnected || showPairingForm) && !offlineMode) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
-        <SongsHeader onBack={onBack} onToggleSort={() => undefined} />
+        <SongsHeader onBack={onBack} onToggleSort={() => undefined} liquidGlass />
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 28, paddingBottom: 90 }}>
           <Text style={{ color: 'white', fontSize: 34, fontWeight: '800', marginBottom: 12 }}>{title}</Text>
           <Text style={{ color: '#A1A1A6', fontSize: 16, lineHeight: 23, marginBottom: 22 }}>
@@ -596,6 +596,7 @@ export const SongsScreen = ({
           onBack={onBack}
           onToggleSort={() => setAscending((value) => !value)}
           sortAccessibilityLabel="Reverse song order"
+          liquidGlass
           moreMenuItems={[
             ...(title === 'Songs' ? [
               {
