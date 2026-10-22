@@ -1,19 +1,39 @@
+import { useContext } from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  useAnimatedStyle,
+} from 'react-native-reanimated';
+import { LibrarySelectionBarContext } from '../../contexts/PlaybackContext';
 
 export const SongsControls = ({
   search,
   onSearchChange,
   onPlay,
   onShuffle,
+  selectionMode = false,
 }: {
   search: string;
   onSearchChange: (value: string) => void;
   onPlay: () => void;
   onShuffle: () => void;
-}) => (
-  <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 }}>
-    <View style={{ height: 46 }} />
+  selectionMode?: boolean;
+}) => {
+  const actionsProgress = useContext(LibrarySelectionBarContext)!.transitionProgress;
+
+  const actionsStyle = useAnimatedStyle(() => ({
+    height: interpolate(actionsProgress.value, [0, 1], [70, 0], Extrapolation.CLAMP),
+    opacity: 1 - actionsProgress.value,
+    transform: [
+      { translateY: interpolate(actionsProgress.value, [0, 1], [0, 8], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  return (
+    <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 }}>
+      <View style={{ height: 46 }} />
 
     <View
       style={{
@@ -47,9 +67,11 @@ export const SongsControls = ({
       <Ionicons name="mic" size={22} color="white" />
     </View>
 
-    <View style={{ flexDirection: 'row', gap: 14, marginTop: 24 }}>
+      <Animated.View style={[{ overflow: 'hidden' }, actionsStyle]}>
+        <View style={{ flexDirection: 'row', gap: 14, marginTop: 24 }}>
       <TouchableOpacity
         onPress={onPlay}
+        disabled={selectionMode}
         accessibilityRole="button"
         accessibilityLabel="Play all songs"
         style={{
@@ -68,6 +90,7 @@ export const SongsControls = ({
       </TouchableOpacity>
       <TouchableOpacity
         onPress={onShuffle}
+        disabled={selectionMode}
         accessibilityRole="button"
         accessibilityLabel="Shuffle songs"
         style={{
@@ -84,6 +107,8 @@ export const SongsControls = ({
         <Ionicons name="shuffle" size={22} color="#FA243C" />
         <Text style={{ color: '#FA243C', fontSize: 17, fontWeight: '700' }}>Shuffle</Text>
       </TouchableOpacity>
+        </View>
+      </Animated.View>
     </View>
-  </View>
-);
+  );
+};

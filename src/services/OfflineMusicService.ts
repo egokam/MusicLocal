@@ -1,4 +1,5 @@
 import { Directory, File, Paths } from 'expo-file-system';
+import { parseBuffer } from 'music-metadata';
 import { parseLyrics } from './LyricsParser';
 import { cacheArtworkForTrack } from './ArtworkService';
 import type { Track } from '../types';
@@ -49,6 +50,152 @@ const metadataFromFile = (fileName: string) => {
     artist: titleParts.length > 0 ? artistPart.trim() : 'Unknown artist',
     title: (titleParts.length > 0 ? titleParts.join(' - ') : baseName).trim() || 'Untitled track',
   };
+};
+
+const formatDuration = (seconds?: number) => {
+  if (!seconds || seconds <= 0) return '—';
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+};
+
+const audioMimeType = (extension: string) => ({
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/ogg',
+}[extension.toLowerCase()] || 'audio/mpeg');
+
+// Expo's Hermes TextDecoder intentionally supports UTF-8 only, while
+// music-metadata needs ISO-8859-1 for the legacy ID3v1 footer in MP3 files.
+// Supply the missing decoder label while keeping Expo's normal UTF-8 path.
+const installLegacyTextDecoderSupport = () => {
+  const NativeTextDecoder = globalThis.TextDecoder;
+  try {
+    new NativeTextDecoder('latin1');
+    new NativeTextDecoder('ascii');
+    return;
+  } catch {
+    // Hermes' UTF-8-only decoder rejects this label.
+  }
+
+  const windows1252 = [
+    0x20ac, 0x0081, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
+    0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008d, 0x017d, 0x008f,
+    0x0090, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+    0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x009d, 0x017e, 0x0178,
+  ];
+
+  class Latin1CompatibleTextDecoder extends NativeTextDecoder {
+    private readonly usesLatin1: boolean;
+
+    constructor(label = 'utf-8', options?: TextDecoderOptions) {
+      const normalized = label.trim().toLowerCase();
+      const needsSingleByteDecoder = ['latin1', 'iso-8859-1', 'iso8859-1', 'ascii', 'us-ascii'].includes(normalized);
+      super(needsSingleByteDecoder ? 'utf-8' : label, options);
+      this.usesLatin1 = needsSingleByteDecoder;
+    }
+
+    override decode(input?: AllowSharedBufferSource, options?: TextDecodeOptions): string {
+      if (!this.usesLatin1) return super.decode(input, options);
+      if (input === undefined) return '';
+      const bytes = ArrayBuffer.isView(input)
+        ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        : new Uint8Array(input as ArrayBuffer);
+      const chunks: string[] = [];
+      for (let offset = 0; offset < bytes.length; offset += 4096) {
+        const end = Math.min(offset + 4096, bytes.length);
+        const chars = new Array<number>(end - offset);
+        for (let index = offset; index < end; index += 1) {
+          const byte = bytes[index];
+          chars[index - offset] = byte >= 0x80 && byte <= 0x9f ? windows1252[byte - 0x80] : byte;
+        }
+        chunks.push(String.fromCharCode(...chars));
+      }
+      return chunks.join('');
+    }
+  }
+
+  Object.defineProperty(globalThis, 'TextDecoder', {
+    configurable: true,
+    writable: true,
+    value: Latin1CompatibleTextDecoder,
+  });
+};
+
+installLegacyTextDecoderSupport();
+
+const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { title: string; artist: string }) => {
+  let title = fallback.title;
+  let artist = fallback.artist;
+  let album = '';
+  let albumArtist: string | undefined;
+  let trackNumber: number | undefined;
+  let year: number | undefined;
+  let genre: string[] | undefined;
+  let composer: string[] | undefined;
+  let artwork: string | undefined;
+  let durationSeconds: number | undefined;
+  let lyricsFileUri: string | undefined;
+  let hasSyncedLyrics = false;
+  let hasPlainLyrics = false;
+  try {
+    const bytes = await audioFile.bytes();
+    const result = await parseBuffer(bytes, audioMimeType(audioFile.extension));
+    title = result.common.title?.trim() || title;
+    artist = result.common.artist?.trim() || result.common.albumartist?.trim() || artist;
+    album = result.common.album?.trim() || album;
+    albumArtist = result.common.albumartist?.trim() || undefined;
+    trackNumber = result.common.track.no ?? undefined;
+    year = result.common.year;
+    genre = result.common.genre;
+    composer = result.common.composer;
+    durationSeconds = result.format.duration ? Math.round(result.format.duration) : undefined;
+    // Prefer the explicitly marked front cover when files contain several
+    // pictures (booklets, artist photos, back covers, etc.).
+    const pictures = result.common.picture ?? [];
+    const picture = pictures.find((candidate) => /cover\s*\(front\)|front/i.test(candidate.type ?? ''))
+      ?? pictures.find((candidate) => candidate.data?.length > 0);
+    if (picture?.data?.length) {
+      const mimeType = picture.format.toLowerCase();
+      const extension = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : mimeType.includes('gif') ? 'gif' : 'jpg';
+      const artworkFile = new File(downloadsDirectory, `${safeName(id)}-artwork.${extension}`);
+      if (artworkFile.exists) artworkFile.delete();
+      artworkFile.create({ intermediates: true });
+      artworkFile.write(picture.data);
+      if (artworkFile.exists && (artworkFile.size ?? 0) > 0) artwork = artworkFile.uri;
+      else console.warn(`[Music import] Embedded artwork was parsed but not saved for ${audioFile.name}.`);
+    }
+    const lyricParts = (result.common.lyrics ?? []).flatMap((entry) => {
+      if (entry.text?.trim()) return [entry.text.trim()];
+      if (entry.syncText?.length) return [entry.syncText.map((line) => {
+        const rawTime = Math.max(0, line.timestamp ?? 0);
+        const time = entry.timeStampFormat === 1
+          ? rawTime * 1152 / (result.format.sampleRate || 44100) * 1000
+          : rawTime;
+        const minutes = Math.floor(time / 60000);
+        const seconds = (time % 60000) / 1000;
+        return `[${String(minutes).padStart(2, '0')}:${seconds.toFixed(2).padStart(5, '0')}]${line.text}`;
+      }).join('\n')];
+      return [];
+    });
+    const embeddedLyrics = lyricParts.join('\n\n').trim();
+    if (embeddedLyrics) {
+      hasSyncedLyrics = (result.common.lyrics ?? []).some((entry) => Boolean(entry.syncText?.length));
+      hasPlainLyrics = !hasSyncedLyrics;
+      const lyricsFile = new File(downloadsDirectory, `${safeName(id)}.${hasSyncedLyrics ? 'lrc' : 'txt'}`);
+      if (lyricsFile.exists) lyricsFile.delete();
+      writeTextFile(lyricsFile, embeddedLyrics);
+      lyricsFileUri = lyricsFile.uri;
+    }
+  } catch (error) {
+    // Keep importing the audio, but report the parser failure instead of
+    // silently making an embedded-cover failure impossible to diagnose.
+    console.warn(`[Music import] Could not read embedded metadata from ${audioFile.name}:`, error);
+  }
+  return { title, artist, album, albumArtist, trackNumber, year, genre, composer, artwork, artworkFileUri: artwork, durationSeconds, lyricsFileUri, hasSyncedLyrics, hasPlainLyrics };
 };
 
 const readIndexedTracks = async (): Promise<Track[]> => {
@@ -217,21 +364,32 @@ export const OfflineMusicService = {
     const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
     if (audioFile.exists) audioFile.delete();
     await new File(sourceUri).copy(audioFile);
-    const artwork = await cacheArtworkForTrack(new File(sourceUri), downloadsDirectory, id);
+    const embedded = await extractEmbeddedMetadata(audioFile, id, { title, artist });
+    const artwork = embedded.artwork || await cacheArtworkForTrack(new File(sourceUri), downloadsDirectory, id);
     const track: Track = {
       id,
-      title: title.trim() || 'Untitled track',
-      artist: artist.trim() || 'Unknown artist',
-      album,
-      duration: '—',
-      artwork: artwork ?? '',
+      title: embedded.title.trim() || 'Untitled track',
+      artist: embedded.artist.trim() || 'Unknown artist',
+      album: embedded.album || album,
+      albumArtist: embedded.albumArtist,
+      trackNumber: embedded.trackNumber,
+      year: embedded.year,
+      genre: embedded.genre,
+      composer: embedded.composer,
+      duration: formatDuration(embedded.durationSeconds),
+      durationSeconds: embedded.durationSeconds,
+      artwork: artwork || '',
+      artworkFileUri: embedded.artworkFileUri,
       provider: 'local',
       providerId: id,
       fileExtension,
       downloadAllowed: false,
       localUri: audioFile.uri,
       dateAdded: Date.now(),
-      lyricsAvailable: false,
+      lyricsFileUri: embedded.lyricsFileUri,
+      lyricsAvailable: Boolean(embedded.lyricsFileUri),
+      hasSyncedLyrics: embedded.hasSyncedLyrics,
+      hasPlainLyrics: embedded.hasPlainLyrics,
     };
     const current = await this.getDownloadedTracks();
     writeTextFile(indexFile, JSON.stringify([...current.filter((item) => item.id !== id), track]));
@@ -239,7 +397,7 @@ export const OfflineMusicService = {
   },
 
   /** Recursively copy supported audio and matching lyric sidecars into private storage. */
-  async importLocalFolder(sourceDirectory: Directory): Promise<{ importedCount: number; skippedCount: number }> {
+  async importLocalFolder(sourceDirectory: Directory): Promise<{ importedCount: number; skippedCount: number; artworkCount: number }> {
     ensureDirectory();
     const current = await this.getDownloadedTracks();
     const imported: Track[] = [];
@@ -269,29 +427,43 @@ export const OfflineMusicService = {
         try {
           if (audioFile.exists) audioFile.delete();
           await entry.copy(audioFile);
-          const artwork = await cacheArtworkForTrack(entry, downloadsDirectory, id);
+          const embedded = await extractEmbeddedMetadata(audioFile, id, { title, artist });
+          const artwork = embedded.artwork || await cacheArtworkForTrack(entry, downloadsDirectory, id);
           const baseName = entry.name.replace(/\.[^.]+$/, '');
           const sourceLrc = new File(entry.parentDirectory, `${baseName}.lrc`);
           const sourceText = new File(entry.parentDirectory, `${baseName}.txt`);
-          let lyricsFileUri: string | undefined;
+          let lyricsFileUri: string | undefined = embedded.lyricsFileUri;
+          let hasSyncedLyrics = embedded.hasSyncedLyrics;
+          let hasPlainLyrics = embedded.hasPlainLyrics;
           if (sourceLrc.exists) {
             const destination = new File(downloadsDirectory, `${safeName(id)}.lrc`);
             if (destination.exists) destination.delete();
             await sourceLrc.copy(destination);
             lyricsFileUri = destination.uri;
+            hasSyncedLyrics = true;
+            hasPlainLyrics = false;
           } else if (sourceText.exists) {
             const destination = new File(downloadsDirectory, `${safeName(id)}.txt`);
             if (destination.exists) destination.delete();
             await sourceText.copy(destination);
             lyricsFileUri = destination.uri;
+            hasSyncedLyrics = false;
+            hasPlainLyrics = true;
           }
           imported.push({
             id,
-            title,
-            artist,
-            album: '',
-            duration: '—',
-            artwork: artwork ?? '',
+            title: embedded.title,
+            artist: embedded.artist,
+            album: embedded.album,
+            albumArtist: embedded.albumArtist,
+            trackNumber: embedded.trackNumber,
+            year: embedded.year,
+            genre: embedded.genre,
+            composer: embedded.composer,
+            duration: formatDuration(embedded.durationSeconds),
+            durationSeconds: embedded.durationSeconds,
+            artwork: artwork || '',
+            artworkFileUri: embedded.artworkFileUri,
             provider: 'local',
             providerId: id,
             fileExtension,
@@ -299,8 +471,8 @@ export const OfflineMusicService = {
             localUri: audioFile.uri,
             lyricsFileUri,
             lyricsAvailable: Boolean(lyricsFileUri),
-            hasSyncedLyrics: Boolean(sourceLrc.exists),
-            hasPlainLyrics: Boolean(!sourceLrc.exists && sourceText.exists),
+            hasSyncedLyrics,
+            hasPlainLyrics,
             dateAdded: Date.now(),
           });
         } catch {
@@ -315,7 +487,7 @@ export const OfflineMusicService = {
       imported.forEach((track) => byId.set(track.id, track));
       writeTextFile(indexFile, JSON.stringify([...byId.values()]));
     }
-    return { importedCount: imported.length, skippedCount };
+    return { importedCount: imported.length, skippedCount, artworkCount: imported.filter((track) => Boolean(track.artwork)).length };
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {
@@ -389,6 +561,18 @@ export const OfflineMusicService = {
             const lyricsBytes = lyricsFile.size;
             lyricsFile.delete();
             freedBytes += lyricsBytes;
+          } catch {
+            // The audio is already removed; keep the download removal successful.
+          }
+        }
+      }
+      if (track.artworkFileUri) {
+        const artworkFile = new File(track.artworkFileUri);
+        if (artworkFile.exists) {
+          try {
+            const artworkBytes = artworkFile.size;
+            artworkFile.delete();
+            freedBytes += artworkBytes;
           } catch {
             // The audio is already removed; keep the download removal successful.
           }

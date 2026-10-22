@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlphabetIndex } from '../components/songs/AlphabetIndex';
 import { SongListItem, type SongMenuAnchor } from '../components/songs/SongListItem';
@@ -10,6 +10,7 @@ import { SongsHeader } from '../components/songs/SongsHeader';
 import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
 import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
+import { LibrarySelectionBarContext } from '../contexts/PlaybackContext';
 
 type SongSection = { title: string; data: Track[] };
 type SongSortMode = 'name' | 'dateAdded' | 'artist';
@@ -122,10 +123,14 @@ export const SongsScreen = ({
   const [connecting, setConnecting] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [selectionType, setSelectionType] = useState<'songs' | 'downloads' | null>(null);
   const [selectedDownloadIds, setSelectedDownloadIds] = useState<Set<string>>(() => new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
   const [freedStorageMessage, setFreedStorageMessage] = useState<string | null>(null);
   const freedMessageTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectionToolbarActive = selectionMode && selectionType !== null;
+  const selectionBarContext = useContext(LibrarySelectionBarContext);
+  const setSelectionBar = selectionBarContext?.setBar;
 
   useEffect(() => () => {
     if (freedMessageTimeout.current) clearTimeout(freedMessageTimeout.current);
@@ -192,23 +197,24 @@ export const SongsScreen = ({
   const downloadingIds = useMemo(() => new Set(downloadingTrackIds), [downloadingTrackIds]);
   const addedPlaylistIds = useMemo(() => new Set(addedPlaylistTrackIds), [addedPlaylistTrackIds]);
   const addingPlaylistIds = useMemo(() => new Set(addingPlaylistTrackIds), [addingPlaylistTrackIds]);
-  const allDownloadsSelected = tracks.length > 0 && selectedDownloadIds.size === tracks.length;
+  const allTracksSelected = tracks.length > 0 && selectedDownloadIds.size === tracks.length;
   const canReplacePairingCode = Boolean(loadError && /valid.*musiqapp.*api.*token|api token.*required|\b401\b/i.test(loadError));
 
-  const toggleSelectAllDownloads = () => {
-    if (allDownloadsSelected) {
+  const toggleSelectAllTracks = useCallback(() => {
+    if (allTracksSelected) {
       setSelectedDownloadIds(new Set());
       return;
     }
     setSelectedDownloadIds(new Set(tracks.map((track) => track.id)));
-  };
+  }, [allTracksSelected, tracks]);
 
-  const deleteSelectedDownloads = async () => {
+  const deleteSelectedDownloads = useCallback(async () => {
     if (!onDeleteDownloadedTracks || selectedDownloadIds.size === 0 || deletingSelected) return;
     setDeletingSelected(true);
     try {
       const freedBytes = await onDeleteDownloadedTracks([...selectedDownloadIds]);
       setSelectionMode(false);
+      setSelectionType(null);
       setSelectedDownloadIds(new Set());
       setFreedStorageMessage(`${(freedBytes / (1024 * 1024)).toFixed(2)} MB has been freed`);
       if (freedMessageTimeout.current) clearTimeout(freedMessageTimeout.current);
@@ -218,12 +224,95 @@ export const SongsScreen = ({
     } finally {
       setDeletingSelected(false);
     }
-  };
+  }, [deletingSelected, onDeleteDownloadedTracks, selectedDownloadIds]);
 
-  const cancelDownloadSelection = () => {
+  const cancelDownloadSelection = useCallback(() => {
     setSelectionMode(false);
+    setSelectionType(null);
     setSelectedDownloadIds(new Set());
-  };
+  }, []);
+
+  const deleteSelectedSongs = useCallback(async () => {
+    if (selectedDownloadIds.size === 0 || deletingSelected) return;
+    setDeletingSelected(true);
+    const failedIds = new Set<string>();
+    const errors: string[] = [];
+    try {
+      for (const trackId of selectedDownloadIds) {
+        const track = tracks.find((item) => item.id === trackId);
+        if (!track) continue;
+        try {
+          await onDeleteTrack(track);
+        } catch (error) {
+          failedIds.add(trackId);
+          errors.push(`${track.title}: ${error instanceof Error ? error.message : 'Please try again.'}`);
+        }
+      }
+
+      setSelectedDownloadIds(failedIds);
+      if (failedIds.size === 0) {
+        setSelectionMode(false);
+        setSelectionType(null);
+      } else {
+        Alert.alert(
+          'Some songs could not be deleted',
+          `${selectedDownloadIds.size - failedIds.size} deleted.\n${errors.join('\n')}`,
+        );
+      }
+    } finally {
+      setDeletingSelected(false);
+    }
+  }, [deletingSelected, onDeleteTrack, selectedDownloadIds, tracks]);
+
+  const confirmDeleteSelectedSongs = useCallback(() => {
+    if (selectedDownloadIds.size === 0 || deletingSelected) return;
+    Alert.alert(
+      'Delete selected songs?',
+      `${selectedDownloadIds.size} ${selectedDownloadIds.size === 1 ? 'song' : 'songs'} will be deleted from your library. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => void deleteSelectedSongs() },
+      ],
+    );
+  }, [deleteSelectedSongs, deletingSelected, selectedDownloadIds]);
+
+  useEffect(() => {
+    if (!setSelectionBar) return;
+    if (!selectionToolbarActive || !selectionType) {
+      setSelectionBar(null);
+      return;
+    }
+
+    setSelectionBar({
+      selectionType,
+      selectedCount: selectedDownloadIds.size,
+      allSelected: allTracksSelected,
+      canSelectAll: tracks.length > 0,
+      deleting: deletingSelected,
+      onToggleSelectAll: toggleSelectAllTracks,
+      onCancel: cancelDownloadSelection,
+      onDelete: selectionType === 'songs' ? confirmDeleteSelectedSongs : () => { void deleteSelectedDownloads(); },
+    });
+  }, [
+    allTracksSelected,
+    cancelDownloadSelection,
+    confirmDeleteSelectedSongs,
+    deleteSelectedDownloads,
+    deletingSelected,
+    selectedDownloadIds.size,
+    selectionToolbarActive,
+    selectionType,
+    setSelectionBar,
+    toggleSelectAllTracks,
+    tracks.length,
+  ]);
+
+  useFocusEffect(useCallback(() => () => {
+    setSelectionBar?.(null);
+    setSelectionMode(false);
+    setSelectionType(null);
+    setSelectedDownloadIds(new Set());
+  }, [setSelectionBar]));
 
   const download = async (track: Track) => {
     try {
@@ -410,12 +499,15 @@ export const SongsScreen = ({
             </Text>
           )}
           ListHeaderComponent={
-            <SongsControls
-              search={search}
-              onSearchChange={setSearch}
-              onPlay={() => onPlayAll(playQueue)}
-              onShuffle={() => onShuffle(playQueue)}
-            />
+            <View>
+              <SongsControls
+                search={search}
+                onSearchChange={setSearch}
+                onPlay={() => onPlayAll(playQueue)}
+                onShuffle={() => onShuffle(playQueue)}
+                selectionMode={selectionMode}
+              />
+            </View>
           }
           ListEmptyComponent={
             <View style={{ paddingHorizontal: 20, paddingTop: 22 }}>
@@ -446,7 +538,7 @@ export const SongsScreen = ({
           onScrollToIndexFailed={recoverLetterScroll}
           scrollEventThrottle={16}
           style={StyleSheet.absoluteFill}
-          contentContainerStyle={{ paddingTop: 58, paddingBottom: selectionMode ? 276 : 190 }}
+          contentContainerStyle={{ paddingTop: 58, paddingBottom: 190 }}
           initialNumToRender={12}
           windowSize={7}
         />
@@ -507,6 +599,15 @@ export const SongsScreen = ({
           moreMenuItems={[
             ...(title === 'Songs' ? [
               {
+                label: selectionMode && selectionType === 'songs' ? 'Cancel Selection' : 'Select',
+                icon: selectionMode && selectionType === 'songs' ? 'close' as const : 'checkbox-outline' as const,
+                onPress: selectionMode && selectionType === 'songs' ? cancelDownloadSelection : () => {
+                  setSelectedDownloadIds(new Set());
+                  setSelectionType('songs');
+                  setSelectionMode(true);
+                },
+              },
+              {
                 label: 'Name A–Z–#',
                 icon: sortMode === 'name' && ascending ? 'checkmark' as const : 'radio-button-off' as const,
                 onPress: () => { setSortMode('name'); setAscending(true); },
@@ -529,101 +630,18 @@ export const SongsScreen = ({
             ] : []),
             ...(onOpenAddSongs ? [{ label: 'Add a Song', icon: 'add-circle-outline' as const, onPress: onOpenAddSongs }] : []),
             ...(onDeleteDownloadedTracks ? [{
-              label: selectionMode ? 'Cancel Selection' : 'Clear Storage',
-              icon: selectionMode ? 'close' as const : 'trash-outline' as const,
-              onPress: selectionMode ? cancelDownloadSelection : () => {
+              label: selectionMode && selectionType === 'downloads' ? 'Cancel Selection' : 'Clear Storage',
+              icon: selectionMode && selectionType === 'downloads' ? 'close' as const : 'trash-outline' as const,
+              onPress: selectionMode && selectionType === 'downloads' ? cancelDownloadSelection : () => {
                 setSelectedDownloadIds(new Set());
+                setSelectionType('downloads');
                 setSelectionMode(true);
               },
-              destructive: !selectionMode,
+              destructive: !(selectionMode && selectionType === 'downloads'),
             }] : []),
           ]}
         />
         <AlphabetIndex onSelectLetter={jumpToLetter} />
-
-        {selectionMode ? (
-          <View
-            style={{
-              position: 'absolute',
-              left: 20,
-              right: 20,
-              bottom: 174,
-              minHeight: 62,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              borderRadius: 22,
-              backgroundColor: '#1C1C1E',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.08)',
-              flexDirection: 'row',
-              alignItems: 'center',
-              zIndex: 30,
-              elevation: 30,
-            }}
-          >
-            <TouchableOpacity
-              onPress={toggleSelectAllDownloads}
-              disabled={tracks.length === 0 || deletingSelected}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: allDownloadsSelected }}
-              accessibilityLabel="Select all downloaded tracks"
-              style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', paddingVertical: 4 }}
-            >
-              <View
-                style={{
-                  width: 23,
-                  height: 23,
-                  borderRadius: 12,
-                  borderWidth: allDownloadsSelected ? 0 : 2,
-                  borderColor: '#8E8E93',
-                  backgroundColor: allDownloadsSelected ? '#FA243C' : 'transparent',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 9,
-                }}
-              >
-                {allDownloadsSelected ? <Ionicons name="checkmark" size={16} color="white" /> : null}
-              </View>
-              <View style={{ minWidth: 0 }}>
-                <Text numberOfLines={1} style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Select All</Text>
-                <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 12, marginTop: 2 }}>
-                  {selectedDownloadIds.size} selected
-                </Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={cancelDownloadSelection}
-              disabled={deletingSelected}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel selection"
-              style={{ minHeight: 40, paddingHorizontal: 10, justifyContent: 'center' }}
-            >
-              <Text style={{ color: '#D1D1D6', fontSize: 14, fontWeight: '600' }}>Cancel</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => void deleteSelectedDownloads()}
-              disabled={selectedDownloadIds.size === 0 || deletingSelected}
-              accessibilityRole="button"
-              accessibilityLabel={`Delete ${selectedDownloadIds.size} selected downloads`}
-              style={{
-                minWidth: 82,
-                minHeight: 40,
-                paddingHorizontal: 13,
-                borderRadius: 20,
-                backgroundColor: '#FA243C',
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: selectedDownloadIds.size === 0 || deletingSelected ? 0.42 : 1,
-              }}
-            >
-              {deletingSelected ? <ActivityIndicator size="small" color="white" /> : (
-                <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Delete</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        ) : null}
 
         {freedStorageMessage ? (
           <View

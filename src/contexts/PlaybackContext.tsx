@@ -1,4 +1,5 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, type Dispatch, type SetStateAction } from 'react';
+import type { SharedValue } from 'react-native-reanimated';
 import type { PlaylistCoverSelection, PlaylistSummary, Track } from '../types';
 import type { ImportProgress, TrackEditChanges } from '../services/MusicCatalogService';
 
@@ -35,7 +36,7 @@ type PlaybackActions = {
     onProgress: (progress: ImportProgress) => void,
   ) => Promise<Track>;
   importLocalFile: () => Promise<Track | null>;
-  importMusicFolder: () => Promise<{ importedCount: number; skippedCount: number } | null>;
+  importMusicFolder: () => Promise<{ importedCount: number; skippedCount: number; artworkCount: number } | null>;
   updateTrack: (track: Track, changes: TrackEditChanges) => Promise<Track>;
   deleteTrack: (track: Track) => Promise<void>;
   toggleFavorite: (track: Track) => Promise<Track>;
@@ -52,6 +53,23 @@ type PlaybackActions = {
 
 export const PlaybackContext = createContext<PlaybackActions | null>(null);
 export const RadioPlaybackStatusContext = createContext(false);
+
+export type LibrarySelectionBarState = {
+  selectionType: 'songs' | 'downloads';
+  selectedCount: number;
+  allSelected: boolean;
+  canSelectAll: boolean;
+  deleting: boolean;
+  onToggleSelectAll: () => void;
+  onCancel: () => void;
+  onDelete: () => void;
+};
+
+export const LibrarySelectionBarContext = createContext<{
+  bar: LibrarySelectionBarState | null;
+  setBar: Dispatch<SetStateAction<LibrarySelectionBarState | null>>;
+  transitionProgress: SharedValue<number>;
+} | null>(null);
 
 export const usePlaybackActions = () => {
   const actions = useContext(PlaybackContext);

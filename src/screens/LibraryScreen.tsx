@@ -74,7 +74,7 @@ const LibraryHomeScreen = ({
                   <View style={{ width: 148, height: 148, borderRadius: 15, overflow: 'hidden', backgroundColor: '#202024' }}>
                     {track.artwork ? (
                       <Image
-                        source={{ uri: track.artwork, headers: getMusicApiHeaders() }}
+                        source={{ uri: track.artwork, ...(track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
                         resizeMode="cover"
                         style={{ width: '100%', height: '100%' }}
                       />
@@ -110,13 +110,45 @@ const LibraryHomeScreen = ({
 const DeveloperProfileScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile'>) => {
-  const { importMusicFolder } = usePlaybackActions();
+  const { importMusicFolder, downloadedTracks, deleteDownloadedTracks } = usePlaybackActions();
   const [isImportingFolder, setIsImportingFolder] = useState(false);
+  const [isEmptyingLibrary, setIsEmptyingLibrary] = useState(false);
   const links = [
     { title: 'GitHub', subtitle: 'github.com/egokam', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
     { title: 'Instagram', subtitle: '@kotmanii', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
     { title: 'Portfolio', subtitle: 'portfolio.egokam.site', icon: 'globe-outline' as const, url: 'https://portfolio.egokam.site' },
   ];
+
+  const emptyLibrary = async () => {
+    if (downloadedTracks.length === 0) {
+      Alert.alert('Library is empty', 'There is no music saved in Musiqapp on this device.');
+      return;
+    }
+
+    Alert.alert(
+      'Empty your library?',
+      `This permanently deletes all ${downloadedTracks.length} saved audio files and their lyric files from this device. This cannot be undone. Songs available to stream remain in your catalog.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Empty Library',
+          style: 'destructive',
+          onPress: () => {
+            if (isEmptyingLibrary) return;
+            setIsEmptyingLibrary(true);
+            void deleteDownloadedTracks(downloadedTracks.map((track) => track.id))
+              .then((freedBytes) => {
+                Alert.alert('Library cleared', `${(freedBytes / (1024 * 1024)).toFixed(2)} MB of saved music was removed.`);
+              })
+              .catch((error) => {
+                Alert.alert('Could not empty library', error instanceof Error ? error.message : 'Please try again.');
+              })
+              .finally(() => setIsEmptyingLibrary(false));
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
@@ -134,7 +166,7 @@ const DeveloperProfileScreen = ({
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 26 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 160 }} showsVerticalScrollIndicator={false}>
         <View style={{ alignItems: 'center', marginTop: 30, marginBottom: 34 }}>
           <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#4A222A' }}>
             <Ionicons name="person" size={52} color="#FA5265" />
@@ -179,7 +211,7 @@ const DeveloperProfileScreen = ({
                 Alert.alert(
                   result.importedCount > 0 ? 'Music imported' : 'No audio found',
                   result.importedCount > 0
-                    ? `${result.importedCount} track${result.importedCount === 1 ? '' : 's'} copied into your private Musiqapp library.${result.skippedCount ? ` ${result.skippedCount} unsupported file${result.skippedCount === 1 ? '' : 's'} skipped.` : ''}`
+                    ? `${result.importedCount} track${result.importedCount === 1 ? '' : 's'} copied into your private Musiqapp library. Embedded artwork found on ${result.artworkCount} track${result.artworkCount === 1 ? '' : 's'}.${result.skippedCount ? ` ${result.skippedCount} unsupported file${result.skippedCount === 1 ? '' : 's'} skipped.` : ''}`
                     : 'Choose a folder containing MP3, M4A, AAC, WAV, FLAC, OGG, or OPUS files.',
                 );
               })
@@ -205,9 +237,28 @@ const DeveloperProfileScreen = ({
           <Ionicons name="chevron-forward" size={21} color="#FA5265" />
         </TouchableOpacity>
 
-        <Text style={{ color: '#65656B', fontSize: 12, textAlign: 'center', marginTop: 34 }}>
-  {'© 2026 Egokam. All rights reserved.\nEnjoy, dont try to make it commercial, contact admin for support.'}
-</Text>
+        <TouchableOpacity
+          onPress={() => void emptyLibrary()}
+          disabled={isEmptyingLibrary}
+          accessibilityRole="button"
+          accessibilityLabel="Empty library. Permanently delete all saved music from this device."
+          style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#201417', borderWidth: 1, borderColor: '#6A2731', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isEmptyingLibrary ? 0.65 : 1 }}
+        >
+          <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
+            {isEmptyingLibrary ? <ActivityIndicator color="white" /> : <Ionicons name="trash" size={27} color="white" />}
+          </View>
+          <View style={{ flex: 1, marginLeft: 15 }}>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Empty library</Text>
+            <Text style={{ color: '#E0A7AE', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
+              Warning: permanently remove all music saved on this device.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={21} color="#FA5265" />
+        </TouchableOpacity>
+
+        <Text style={{ color: '#65656B', fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 34 }}>
+          {'© 2026 Egokam. All rights reserved.\nEnjoy, dont try to make it commercial, contact admin for support.'}
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );

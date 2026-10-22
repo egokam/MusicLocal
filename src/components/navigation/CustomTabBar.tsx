@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { GlassContainer, GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
+import { useCallback, useContext, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { GlassContainer, GlassView, isLiquidGlassAvailable, type GlassEffectStyleConfig, type GlassStyle } from 'expo-glass-effect';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -9,6 +9,7 @@ import Animated, {
   Extrapolation,
   interpolate,
   interpolateColor,
+  useAnimatedProps,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -18,6 +19,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
+import { LibrarySelectionBarContext } from '../../contexts/PlaybackContext';
 
 const ACCENT = '#FA243C';
 const ACCENT_LABEL = '#FA5265';
@@ -25,6 +27,7 @@ const INACTIVE = '#A1A1A8';
 const BAR_HEIGHT = 68;
 const BAR_PADDING = 4;
 const HAS_GLASS = isLiquidGlassAvailable();
+const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
 
 // Spring presets
 const SETTLE = { damping: 17, stiffness: 210, mass: 0.8 };   // lens settling on a tab
@@ -100,6 +103,23 @@ const TabItem = ({ name, itemIndex, position, selected, onSelect }: TabItemProps
 };
 
 export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
+  const { width: windowWidth } = useWindowDimensions();
+  const selectionContext = useContext(LibrarySelectionBarContext)!;
+  const selectionBar = selectionContext.bar;
+  const selectionBarProgress = selectionContext.transitionProgress;
+  const selectionBarVisible = selectionBar !== null;
+  const [selectionUiVisible, setSelectionUiVisible] = useState(selectionBarVisible);
+  const [tabBarVisible, setTabBarVisible] = useState(!selectionBarVisible);
+  const [previousSelectionBarVisible, setPreviousSelectionBarVisible] = useState(selectionBarVisible);
+  const [lastSelectionBar, setLastSelectionBar] = useState(selectionBar);
+  if (selectionBar && selectionBar !== lastSelectionBar) setLastSelectionBar(selectionBar);
+  if (selectionBarVisible !== previousSelectionBarVisible) {
+    setPreviousSelectionBarVisible(selectionBarVisible);
+    if (selectionBarVisible) setSelectionUiVisible(true);
+    else setTabBarVisible(true);
+  }
+  const displayedSelectionBar = selectionBar ?? lastSelectionBar;
+  const selectionUiMounted = selectionBarVisible || selectionUiVisible;
   const mainRoutes = useMemo(
     () => state.routes.filter((route) => route.name !== 'Search'),
     [state.routes],
@@ -107,6 +127,53 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
   const searchRoute = state.routes.find((route) => route.name === 'Search');
   const activeMainIndex = mainRoutes.findIndex((r) => r.key === state.routes[state.index]?.key);
   const count = mainRoutes.length;
+  const islandWidth = windowWidth - 32;
+  const collapsedIslandWidth = islandWidth - BAR_HEIGHT - 12;
+
+  const finishSelectionExit = useCallback(() => setSelectionUiVisible(false), []);
+  const finishTabBarExit = useCallback(() => setTabBarVisible(false), []);
+
+  useAnimatedReaction(
+    () => selectionBarProgress.value,
+    (progress, previousProgress) => {
+      if (previousProgress === null) return;
+      if (progress >= 0.999 && previousProgress < 0.999) scheduleOnRN(finishTabBarExit);
+      if (progress <= 0.001 && previousProgress > 0.001) scheduleOnRN(finishSelectionExit);
+    },
+    [finishSelectionExit, finishTabBarExit],
+  );
+
+  const selectionVisibilityStyle = useAnimatedStyle(() => ({
+    width: interpolate(selectionBarProgress.value, [0, 1], [collapsedIslandWidth, islandWidth]),
+  }), [collapsedIslandWidth, islandWidth]);
+  const tabBarGlassProps = useAnimatedProps(() => ({
+    glassEffectStyle: {
+      style: (selectionBarProgress.value < 0.99 ? 'regular' : 'none') as GlassStyle,
+      animate: true,
+      animationDuration: 0.25,
+    } as GlassEffectStyleConfig,
+  }));
+  const tabBarContentVisibilityStyle = useAnimatedStyle(() => ({
+    opacity: 1 - selectionBarProgress.value,
+  }));
+  const tabBarFallbackStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(
+      selectionBarProgress.value,
+      [0, 1],
+      ['rgba(32,32,36,0.92)', 'rgba(32,32,36,0)'],
+    ),
+  }));
+  const selectionGlassProps = useAnimatedProps(() => ({
+    glassEffectStyle: {
+      style: (selectionBarProgress.value > 0.01 ? 'regular' : 'none') as GlassStyle,
+      animate: true,
+      animationDuration: 0.25,
+    } as GlassEffectStyleConfig,
+  }));
+  const selectionControlsVisibilityStyle = useAnimatedStyle(() => ({
+    opacity: selectionBarProgress.value,
+    transform: [{ scale: interpolate(selectionBarProgress.value, [0, 1], [0.94, 1], Extrapolation.CLAMP) }],
+  }));
 
   // Lens state (all UI-thread)
   const position = useSharedValue(Math.max(activeMainIndex, 0)); // where the lens is (fractional)
@@ -252,18 +319,22 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
 
   return (
     <View style={styles.root} pointerEvents="box-none">
-      <GlassContainer spacing={8} style={styles.row}>
+      {tabBarVisible ? <Animated.View
+        pointerEvents={selectionBarVisible ? 'none' : 'auto'}
+        style={StyleSheet.absoluteFill}
+      >
+        <GlassContainer spacing={8} style={styles.row}>
         {/* Main capsule */}
         <View style={styles.barWrap}>
-          <GlassView
-            glassEffectStyle="regular"
+          <AnimatedGlassView
+            animatedProps={tabBarGlassProps as ComponentProps<typeof AnimatedGlassView>['animatedProps']}
             colorScheme="dark"
-            style={[StyleSheet.absoluteFill, styles.capsule, !HAS_GLASS && styles.capsuleFallback]}
+            style={[StyleSheet.absoluteFill, styles.capsule, !HAS_GLASS && tabBarFallbackStyle]}
           />
 
           <GestureDetector gesture={gesture}>
-            <View
-              style={styles.track}
+            <Animated.View
+              style={[styles.track, tabBarContentVisibilityStyle]}
               onLayout={(e) => {
                 slotSV.value = e.nativeEvent.layout.width / Math.max(count, 1);
               }}
@@ -280,52 +351,123 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
                   onSelect={() => selectMainTab(mainIndex)}
                 />
               ))}
-            </View>
+            </Animated.View>
           </GestureDetector>
         </View>
 
         {/* Search bubble */}
         {searchRoute ? (
-          <GlassView
-            isInteractive
-            glassEffectStyle="regular"
-            colorScheme="dark"
-            style={[styles.searchGlass, !HAS_GLASS && styles.capsuleFallback]}
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Search"
-              accessibilityState={{ selected: state.routes[state.index]?.key === searchRoute.key }}
-              style={styles.center}
-              onPress={() => {
-                const focused = state.routes[state.index]?.key === searchRoute.key;
-                const event = navigation.emit({
-                  type: 'tabPress',
-                  target: searchRoute.key,
-                  canPreventDefault: true,
-                });
-                if (!focused && !event.defaultPrevented) navigation.navigate(searchRoute.name);
-              }}
+          <AnimatedGlassView
+              isInteractive
+              animatedProps={tabBarGlassProps as ComponentProps<typeof AnimatedGlassView>['animatedProps']}
+              colorScheme="dark"
+              style={[styles.searchGlass, !HAS_GLASS && tabBarFallbackStyle]}
             >
-              <Ionicons
-                name={state.routes[state.index]?.key === searchRoute.key ? 'search' : 'search-outline'}
-                size={26}
-                color={state.routes[state.index]?.key === searchRoute.key ? ACCENT_LABEL : '#FFFFFF'}
-              />
-            </Pressable>
-          </GlassView>
+              <Animated.View style={[StyleSheet.absoluteFill, tabBarContentVisibilityStyle]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Search"
+                  accessibilityState={{ selected: state.routes[state.index]?.key === searchRoute.key }}
+                  style={styles.center}
+                  onPress={() => {
+                    const focused = state.routes[state.index]?.key === searchRoute.key;
+                    const event = navigation.emit({
+                      type: 'tabPress',
+                      target: searchRoute.key,
+                      canPreventDefault: true,
+                    });
+                    if (!focused && !event.defaultPrevented) navigation.navigate(searchRoute.name);
+                  }}
+                >
+                  <Ionicons
+                    name={state.routes[state.index]?.key === searchRoute.key ? 'search' : 'search-outline'}
+                    size={26}
+                    color={state.routes[state.index]?.key === searchRoute.key ? ACCENT_LABEL : '#FFFFFF'}
+                  />
+                </Pressable>
+              </Animated.View>
+          </AnimatedGlassView>
         ) : null}
-      </GlassContainer>
+        </GlassContainer>
+      </Animated.View> : null}
+
+      {selectionUiMounted ? <Animated.View
+        pointerEvents={selectionBarVisible ? 'auto' : 'none'}
+        accessibilityElementsHidden={!selectionBarVisible}
+        importantForAccessibility={selectionBarVisible ? 'auto' : 'no-hide-descendants'}
+        style={[styles.selectionBar, selectionVisibilityStyle]}
+      >
+        {displayedSelectionBar ? (
+          <Animated.View style={styles.selectionIsland}>
+            <AnimatedGlassView
+              animatedProps={selectionGlassProps as ComponentProps<typeof AnimatedGlassView>['animatedProps']}
+              colorScheme="dark"
+              style={[StyleSheet.absoluteFill, styles.capsule, !HAS_GLASS && styles.capsuleFallback]}
+            />
+            <Animated.View style={[styles.selectionControls, selectionControlsVisibilityStyle]}>
+              <Pressable
+                onPress={displayedSelectionBar.onToggleSelectAll}
+                disabled={!selectionBarVisible || !displayedSelectionBar.canSelectAll || displayedSelectionBar.deleting}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: displayedSelectionBar.allSelected, disabled: !selectionBarVisible }}
+                accessibilityLabel={displayedSelectionBar.selectionType === 'songs' ? 'Select all songs' : 'Select all downloaded tracks'}
+                style={styles.selectionAll}
+              >
+                <View style={[styles.selectionCheck, displayedSelectionBar.allSelected && styles.selectionCheckActive]}>
+                  {displayedSelectionBar.allSelected ? <Ionicons name="checkmark" size={16} color="white" /> : null}
+                </View>
+                <View style={{ minWidth: 0 }}>
+                  <Text numberOfLines={1} style={styles.selectionAllTitle}>Select All</Text>
+                  <Text numberOfLines={1} style={styles.selectionCount}>{displayedSelectionBar.selectedCount} selected</Text>
+                </View>
+              </Pressable>
+              <Pressable
+                onPress={displayedSelectionBar.onCancel}
+                disabled={!selectionBarVisible || displayedSelectionBar.deleting}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel selection"
+                style={styles.selectionCancel}
+              >
+                <Text style={styles.selectionCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={displayedSelectionBar.onDelete}
+                disabled={!selectionBarVisible || displayedSelectionBar.selectedCount === 0 || displayedSelectionBar.deleting}
+                accessibilityRole="button"
+                accessibilityLabel={`Delete ${displayedSelectionBar.selectedCount} selected ${displayedSelectionBar.selectionType === 'songs' ? 'songs' : 'downloads'}`}
+                style={[styles.selectionDelete, (!selectionBarVisible || displayedSelectionBar.selectedCount === 0 || displayedSelectionBar.deleting) && styles.selectionDeleteDisabled]}
+              >
+                {displayedSelectionBar.deleting ? <ActivityIndicator size="small" color="white" /> : (
+                  <Text style={styles.selectionDeleteText}>Delete</Text>
+                )}
+              </Pressable>
+            </Animated.View>
+          </Animated.View>
+        ) : null}
+      </Animated.View> : null}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  root: { position: 'absolute', left: 16, right: 16, bottom: 24 },
+  root: { position: 'absolute', left: 16, right: 16, bottom: 24, height: BAR_HEIGHT },
   row: { height: BAR_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: 12 },
   barWrap: { flex: 1, height: BAR_HEIGHT }, // no overflow:hidden so the lifted lens can extend past the edges
   capsule: { borderRadius: BAR_HEIGHT / 2 },
   capsuleFallback: { backgroundColor: 'rgba(32,32,36,0.92)' },
+  selectionBar: { position: 'absolute', top: 0, bottom: 0, left: 0, justifyContent: 'center', alignItems: 'flex-start' },
+  selectionIsland: { width: '100%', height: BAR_HEIGHT, borderRadius: BAR_HEIGHT / 2, justifyContent: 'center', overflow: 'hidden' },
+  selectionControls: { flex: 1, width: '100%', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 8 },
+  selectionAll: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  selectionCheck: { width: 23, height: 23, borderRadius: 12, borderWidth: 2, borderColor: '#8E8E93', alignItems: 'center', justifyContent: 'center' },
+  selectionCheckActive: { borderWidth: 0, backgroundColor: ACCENT },
+  selectionAllTitle: { color: 'white', fontSize: 13, fontWeight: '700' },
+  selectionCount: { color: '#A1A1A6', fontSize: 11, marginTop: 2 },
+  selectionCancel: { minHeight: 40, paddingHorizontal: 8, justifyContent: 'center' },
+  selectionCancelText: { color: '#D1D1D6', fontSize: 14, fontWeight: '600' },
+  selectionDelete: { minWidth: 70, minHeight: 40, paddingHorizontal: 14, borderRadius: 20, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' },
+  selectionDeleteDisabled: { opacity: 0.42 },
+  selectionDeleteText: { color: 'white', fontSize: 14, fontWeight: '700' },
   track: { flex: 1, flexDirection: 'row', margin: BAR_PADDING },
   lens: {
     position: 'absolute',

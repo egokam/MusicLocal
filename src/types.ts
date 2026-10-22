@@ -8,10 +8,16 @@ export type Track = {
   title: string;
   artist: string;
   album: string;
+  albumArtist?: string;
+  trackNumber?: number;
+  year?: number;
+  genre?: string[];
+  composer?: string[];
   duration: string;
   durationSeconds?: number;
   dateAdded?: number | string;
   artwork: string;
+  artworkFileUri?: string;
   provider?: string;
   providerId?: string;
   mixId?: string;

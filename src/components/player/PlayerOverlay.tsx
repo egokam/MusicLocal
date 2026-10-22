@@ -1,13 +1,13 @@
 // Reanimated shared-value writes and worklet callbacks are intentional in this component.
 /* eslint-disable react-hooks/immutability, react-hooks/refs */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Pressable, Text, TouchableOpacity, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
-import ReanimatedAnimated, { cancelAnimation, interpolate, interpolateColor, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import ReanimatedAnimated, { cancelAnimation, Easing, interpolate, interpolateColor, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
 import { PlayerLyrics } from './PlayerLyrics';
 import { PlayerOutputRouteButton } from './PlayerOutputRouteButton';
@@ -16,6 +16,15 @@ import { PlayerSlider } from './PlayerSlider';
 import type { Track } from '../../types';
 
 const HAS_LIQUID_GLASS = isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
+const TRACK_DETAILS_FADE_DURATION = 240;
+const TRACK_DETAILS_OVERLAP_GAP = 100;
+const TRACK_DETAILS_FADE_EASING = Easing.bezier(0.4, 0, 0.2, 1);
+const getArtworkSource = (track: Track) => track.artwork
+  ? {
+      uri: track.artwork,
+      headers: track.provider === 'local' ? getMusicApiHeaders() : undefined,
+    }
+  : undefined;
 
 const PlayerOverlayView = ({
   visible,
@@ -79,6 +88,7 @@ const PlayerOverlayView = ({
   const sheetPanAllowed = useSharedValue(true);
   const trackTransition = useSharedValue(1);
   const trackTransitionGeneration = useRef(0);
+  const trackTransitionCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onOpenRef = useRef(onOpen);
   const onCloseRef = useRef(onClose);
   const skipNextOpenAnimation = useRef(false);
@@ -113,13 +123,9 @@ const PlayerOverlayView = ({
     ? queue.slice(activeQueueIndex + 1)
     : queue.filter((item) => item.id !== renderedTrack.id),
   [activeQueueIndex, queue, renderedTrack.id]);
-  const artworkSource = useMemo(() => renderedTrack.artwork
-    ? {
-        uri: renderedTrack.artwork,
-        headers: renderedTrack.provider === 'local' ? getMusicApiHeaders() : undefined,
-      }
-    : undefined,
-  [renderedTrack.artwork, renderedTrack.provider]);
+  const displayArtworkSource = useMemo(() => getArtworkSource(displayTrack), [displayTrack]);
+  const incomingArtworkSource = useMemo(() => getArtworkSource(track), [track]);
+  const isTrackTransitioning = displayTrack.id !== track.id;
 
   const miniTop = Math.max(0, windowHeight - 160);
   const miniBottom = Math.max(0, windowHeight - miniTop - 58);
@@ -145,23 +151,39 @@ const PlayerOverlayView = ({
 
   const commitTrackChange = useCallback((nextTrack: Track, generation: number) => {
     if (generation !== trackTransitionGeneration.current) return;
-    setDisplayTrack(nextTrack);
+    trackTransitionCommitTimer.current = setTimeout(() => {
+      trackTransitionCommitTimer.current = null;
+      if (generation === trackTransitionGeneration.current) setDisplayTrack(nextTrack);
+    }, TRACK_DETAILS_OVERLAP_GAP);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (trackTransitionCommitTimer.current) {
+      clearTimeout(trackTransitionCommitTimer.current);
+      trackTransitionCommitTimer.current = null;
+    }
+
     if (displayTrack.id === track.id) {
       trackTransitionGeneration.current += 1;
       cancelAnimation(trackTransition);
-      trackTransition.value = withTiming(1, { duration: 180 });
+      trackTransition.value = 1;
       return;
     }
 
     const generation = ++trackTransitionGeneration.current;
     cancelAnimation(trackTransition);
-    trackTransition.value = withTiming(0, { duration: 150 }, (finished) => {
-      if (finished) scheduleOnRN(commitTrackChange, track, generation);
-    });
+    trackTransition.value = 0;
+    trackTransition.value = withDelay(
+      TRACK_DETAILS_OVERLAP_GAP,
+      withTiming(1, { duration: TRACK_DETAILS_FADE_DURATION * 2, easing: TRACK_DETAILS_FADE_EASING }, (finished) => {
+        if (finished) scheduleOnRN(commitTrackChange, track, generation);
+      }),
+    );
   }, [commitTrackChange, displayTrack.id, track, trackTransition]);
+
+  useEffect(() => () => {
+    if (trackTransitionCommitTimer.current) clearTimeout(trackTransitionCommitTimer.current);
+  }, []);
 
   useEffect(() => {
     if (!visible) {
@@ -421,14 +443,17 @@ const PlayerOverlayView = ({
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: interpolate(progress.value, [0, 1], [0, 0.42]),
   }));
-  const artworkBackgroundStyle = useAnimatedStyle(() => ({
-    opacity: progress.value * trackTransition.value,
+  const oldArtworkBackgroundStyle = useAnimatedStyle(() => ({
+    opacity: progress.value * (isTrackTransitioning ? 1 - trackTransition.value : 1),
+  }));
+  const incomingArtworkBackgroundStyle = useAnimatedStyle(() => ({
+    opacity: progress.value * (isTrackTransitioning ? trackTransition.value : 0),
   }));
   const dimStyle = useAnimatedStyle(() => ({
     opacity: progress.value,
   }));
   const expandedContentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0, 1]) * trackTransition.value,
+    opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0, 1]),
   }));
   const artworkStyle = useAnimatedStyle(() => {
     const expandedLeft = interpolate(
@@ -445,7 +470,19 @@ const PlayerOverlayView = ({
       width: interpolate(progress.value, [0, 1], [40, expandedSize]),
       height: interpolate(progress.value, [0, 1], [40, expandedSize]),
       borderRadius: interpolate(progress.value, [0, 1], [8, 18]),
-      opacity: trackTransition.value,
+    };
+  });
+  const artworkImageFrameStyle = useAnimatedStyle(() => {
+    const expandedSize = interpolate(lyricsProgress.value, [0, 1], [artworkSize, 72]);
+    const frameSize = interpolate(progress.value, [0, 1], [40, expandedSize]);
+
+    return {
+      position: 'absolute' as const,
+      left: (frameSize - artworkSize) / 2,
+      top: (frameSize - artworkSize) / 2,
+      width: artworkSize,
+      height: artworkSize,
+      transform: [{ scale: frameSize / artworkSize }],
     };
   });
   const titleStyle = useAnimatedStyle(() => {
@@ -457,8 +494,23 @@ const PlayerOverlayView = ({
       left: interpolate(progress.value, [0, 1], [60, expandedLeft]),
       top: interpolate(progress.value, [0, 1], [12, expandedTop]),
       right: interpolate(progress.value, [0, 1], [112, expandedRight]),
-      opacity: trackTransition.value,
     };
+  });
+  const oldTrackDetailsStyle = useAnimatedStyle(() => ({
+    opacity: isTrackTransitioning ? 1 - trackTransition.value : 1,
+  }));
+  const incomingTrackDetailsStyle = useAnimatedStyle(() => ({
+    opacity: isTrackTransitioning ? trackTransition.value : 0,
+  }));
+  const blurredArtworkStyle = useAnimatedStyle(() => {
+    const value = trackTransition.value;
+    const blurEnvelope = 4 * value * (1 - value);
+    return { opacity: isTrackTransitioning ? 0.72 * blurEnvelope * (1 - value) : 0 };
+  });
+  const incomingBlurredArtworkStyle = useAnimatedStyle(() => {
+    const value = trackTransition.value;
+    const blurEnvelope = 4 * value * (1 - value);
+    return { opacity: isTrackTransitioning ? 0.72 * blurEnvelope * value : 0 };
   });
   const titleTextStyle = useAnimatedStyle(() => ({
     fontSize: interpolate(
@@ -486,7 +538,6 @@ const PlayerOverlayView = ({
       left: interpolate(progress.value, [0, 1], [windowWidth - 144, windowWidth / 2 - 26]),
       top: interpolate(progress.value, [0, 1], [3, fullCenter - 26]),
       width: interpolate(progress.value, [0, 1], [48, 52]),
-      opacity: trackTransition.value,
     };
   });
   const nextStyle = useAnimatedStyle(() => {
@@ -499,7 +550,6 @@ const PlayerOverlayView = ({
     return {
       left: interpolate(progress.value, [0, 1], [windowWidth - 88, windowWidth - 88]),
       top: interpolate(progress.value, [0, 1], [7, fullCenter - 22]),
-      opacity: trackTransition.value,
     };
   });
   const playIconStyle = useAnimatedStyle(() => ({
@@ -511,7 +561,7 @@ const PlayerOverlayView = ({
   const actionsStyle = useAnimatedStyle(() => ({
     top:
       interpolate(lyricsProgress.value, [0, 1], [titleTop + 4, lyricsTitleTop + 4]),
-    opacity: interpolate(progress.value, [0, 0.72, 1], [0, 0, 1]) * trackTransition.value,
+    opacity: interpolate(progress.value, [0, 0.72, 1], [0, 0, 1]),
   }));
 
   const expandedProgressStyle = useAnimatedStyle(() => ({
@@ -617,7 +667,7 @@ const PlayerOverlayView = ({
             ]}
           />
           <ReanimatedAnimated.Image
-            source={artworkSource}
+            source={displayArtworkSource}
             resizeMode="cover"
             blurRadius={20}
             style={[
@@ -628,9 +678,26 @@ const PlayerOverlayView = ({
                 right: 0,
                 bottom: 0,
               },
-              artworkBackgroundStyle,
+              oldArtworkBackgroundStyle,
             ]}
           />
+          {isTrackTransitioning ? (
+            <ReanimatedAnimated.Image
+              source={incomingArtworkSource}
+              resizeMode="cover"
+              blurRadius={20}
+              style={[
+                {
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                },
+                incomingArtworkBackgroundStyle,
+              ]}
+            />
+          ) : null}
           <ReanimatedAnimated.View
             pointerEvents="none"
             style={[
@@ -913,12 +980,64 @@ const PlayerOverlayView = ({
               accessibilityState={{ disabled: !visible || !hasLyrics, selected: lyricsExpanded }}
               style={{ width: '100%', height: '100%' }}
             >
-              <ReanimatedAnimated.Image
-                source={artworkSource}
-                resizeMode="cover"
-                accessibilityLabel={renderedTrack.album + ' album artwork'}
-                style={{ width: '100%', height: '100%' }}
-              />
+              <ReanimatedAnimated.View
+                pointerEvents="none"
+                style={[StyleSheet.absoluteFill, oldTrackDetailsStyle]}
+              >
+                <ReanimatedAnimated.View style={artworkImageFrameStyle}>
+                  <ReanimatedAnimated.Image
+                    source={displayArtworkSource}
+                    resizeMode="cover"
+                    accessibilityLabel={displayTrack.album + ' album artwork'}
+                    style={{ width: artworkSize, height: artworkSize }}
+                  />
+                </ReanimatedAnimated.View>
+              </ReanimatedAnimated.View>
+              <ReanimatedAnimated.View
+                pointerEvents="none"
+                style={[StyleSheet.absoluteFill, blurredArtworkStyle]}
+              >
+                <ReanimatedAnimated.View style={artworkImageFrameStyle}>
+                  <ReanimatedAnimated.Image
+                    source={displayArtworkSource}
+                    resizeMode="cover"
+                    blurRadius={18}
+                    accessibilityLabel={displayTrack.album + ' album artwork'}
+                    style={{ width: artworkSize, height: artworkSize }}
+                  />
+                </ReanimatedAnimated.View>
+              </ReanimatedAnimated.View>
+              {isTrackTransitioning ? (
+                <ReanimatedAnimated.View
+                  pointerEvents="none"
+                  style={[StyleSheet.absoluteFill, incomingTrackDetailsStyle]}
+                >
+                  <ReanimatedAnimated.View style={artworkImageFrameStyle}>
+                    <ReanimatedAnimated.Image
+                      source={incomingArtworkSource}
+                      resizeMode="cover"
+                      accessibilityLabel={track.album + ' album artwork'}
+                      style={{ width: artworkSize, height: artworkSize }}
+                    />
+                  </ReanimatedAnimated.View>
+                </ReanimatedAnimated.View>
+              ) : null}
+              {isTrackTransitioning ? (
+                <ReanimatedAnimated.View
+                  pointerEvents="none"
+                  style={[StyleSheet.absoluteFill, incomingBlurredArtworkStyle]}
+                >
+                  <ReanimatedAnimated.View style={artworkImageFrameStyle}>
+                    <ReanimatedAnimated.Image
+                      source={incomingArtworkSource}
+                      resizeMode="cover"
+                      blurRadius={18}
+                      accessibilityLabel={track.album + ' album artwork'}
+                      style={{ width: artworkSize, height: artworkSize }}
+                    />
+                  </ReanimatedAnimated.View>
+                </ReanimatedAnimated.View>
+              ) : null}
             </TouchableOpacity>
           </ReanimatedAnimated.View>
 
@@ -929,24 +1048,36 @@ const PlayerOverlayView = ({
               titleStyle,
             ]}
           >
-            <ReanimatedAnimated.Text
-              numberOfLines={1}
-              style={[
-                { color: 'white', fontWeight: '700' },
-                titleTextStyle,
-              ]}
-            >
-              {renderedTrack.title}
-            </ReanimatedAnimated.Text>
-            <ReanimatedAnimated.Text
-              numberOfLines={1}
-              style={[
-                { marginTop: 3 },
-                artistTextStyle,
-              ]}
-            >
-              {renderedTrack.artist}
-            </ReanimatedAnimated.Text>
+            <ReanimatedAnimated.View style={[{ position: 'absolute', left: 0, right: 0, top: 0 }, oldTrackDetailsStyle]}>
+              <ReanimatedAnimated.Text
+                numberOfLines={1}
+                style={[{ color: 'white', fontWeight: '700' }, titleTextStyle]}
+              >
+                {displayTrack.title}
+              </ReanimatedAnimated.Text>
+              <ReanimatedAnimated.Text
+                numberOfLines={1}
+                style={[{ marginTop: 3 }, artistTextStyle]}
+              >
+                {displayTrack.artist}
+              </ReanimatedAnimated.Text>
+            </ReanimatedAnimated.View>
+            {isTrackTransitioning ? (
+              <ReanimatedAnimated.View style={[{ position: 'absolute', left: 0, right: 0, top: 0 }, incomingTrackDetailsStyle]}>
+                <ReanimatedAnimated.Text
+                  numberOfLines={1}
+                  style={[{ color: 'white', fontWeight: '700' }, titleTextStyle]}
+                >
+                  {track.title}
+                </ReanimatedAnimated.Text>
+                <ReanimatedAnimated.Text
+                  numberOfLines={1}
+                  style={[{ marginTop: 3 }, artistTextStyle]}
+                >
+                  {track.artist}
+                </ReanimatedAnimated.Text>
+              </ReanimatedAnimated.View>
+            ) : null}
           </ReanimatedAnimated.View>
 
           <ReanimatedAnimated.View

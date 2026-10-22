@@ -49,7 +49,7 @@ export const SongListItem = ({
   >
     {track.artwork ? (
       <Image
-        source={{ uri: track.artwork, headers: getMusicApiHeaders() }}
+        source={{ uri: track.artwork, ...(track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
         resizeMode="cover"
         style={{ width: 50, height: 50, borderRadius: 7, backgroundColor: '#2C2C2E' }}
       />
@@ -60,7 +60,9 @@ export const SongListItem = ({
     )}
     <TouchableOpacity
       onPress={onPress}
+      disabled={selectionMode}
       accessibilityRole="button"
+      accessibilityState={{ disabled: selectionMode }}
       accessibilityLabel={`Play ${track.title} by ${track.artist}${track.isFavorite ? ', favorited' : ''}`}
       style={{
         flex: 1,
@@ -192,7 +194,7 @@ export const SongListItem = ({
           )}
         </TouchableOpacity>
       )}
-      {showMore ? (
+      {showMore && !selectionMode ? (
           <TouchableOpacity
             onPress={(event) => {
               const { pageX, pageY, locationX, locationY } = event.nativeEvent;

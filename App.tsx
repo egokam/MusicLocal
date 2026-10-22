@@ -3,11 +3,12 @@ import { Alert, Linking, NativeModules } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useSharedValue, withSpring } from 'react-native-reanimated';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Directory, File, Paths } from 'expo-file-system';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
-import { PlaybackContext, RadioPlaybackStatusContext } from './src/contexts/PlaybackContext';
+import { LibrarySelectionBarContext, PlaybackContext, RadioPlaybackStatusContext, type LibrarySelectionBarState } from './src/contexts/PlaybackContext';
 import { systemMediaControls } from './src/native/SystemMediaControls';
 import { NowPlayingWidgetService } from './src/services/NowPlayingWidgetService';
 import { AndroidUpdatePrompt } from './src/components/updates/AndroidUpdatePrompt';
@@ -79,6 +80,16 @@ export default function App() {
   const [favoriteTracks, setFavoriteTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
+  const [librarySelectionBar, setLibrarySelectionBar] = useState<LibrarySelectionBarState | null>(null);
+  const selectionTransitionProgress = useSharedValue(0);
+  const selectionBarVisible = librarySelectionBar !== null;
+  useEffect(() => {
+    selectionTransitionProgress.value = withSpring(selectionBarVisible ? 1 : 0, {
+      damping: 23,
+      stiffness: 190,
+      mass: 0.75,
+    });
+  }, [selectionBarVisible, selectionTransitionProgress]);
   // Kept in the context for existing screens, but local mode is always ready.
   const [apiConnected, setApiConnected] = useState(true);
   const [apiInitializing, setApiInitializing] = useState(true);
@@ -106,6 +117,14 @@ export default function App() {
   const handledFinishedTrack = useRef<string | null>(null);
   const loadingAudiusMixPages = useRef(new Set<string>());
   const systemVolumeManager = useRef<SystemVolumeManager | null>(null);
+  const librarySelectionBarContextValue = useMemo(
+    () => ({
+      bar: librarySelectionBar,
+      setBar: setLibrarySelectionBar,
+      transitionProgress: selectionTransitionProgress,
+    }),
+    [librarySelectionBar, selectionTransitionProgress],
+  );
 
   const updatePlaybackQueue = useCallback((nextQueue: Track[]) => {
     queueRef.current = nextQueue;
@@ -1056,22 +1075,24 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AndroidUpdatePrompt />
       <PlaybackContext.Provider value={playbackActions}>
-        <RadioPlaybackStatusContext.Provider value={playerStatus.playing}>
-          <NavigationContainer>
-            <Tab.Navigator
-              tabBar={(props) => <CustomTabBar {...props} />}
-              screenOptions={{ headerShown: false }}
-              initialRouteName="Library"
-            >
-              <Tab.Screen name="Home" component={HomeScreen} />
-              <Tab.Screen name="Radio" component={RadioScreen} />
-              <Tab.Screen name="Library" component={LibraryScreen} />
-              <Tab.Screen name="Search" component={SearchScreen} />
-            </Tab.Navigator>
-          </NavigationContainer>
-        </RadioPlaybackStatusContext.Provider>
+        <LibrarySelectionBarContext.Provider value={librarySelectionBarContextValue}>
+          <RadioPlaybackStatusContext.Provider value={playerStatus.playing}>
+            <NavigationContainer>
+              <Tab.Navigator
+                tabBar={(props) => <CustomTabBar {...props} />}
+                screenOptions={{ headerShown: false }}
+                initialRouteName="Library"
+              >
+                <Tab.Screen name="Home" component={HomeScreen} />
+                <Tab.Screen name="Radio" component={RadioScreen} />
+                <Tab.Screen name="Library" component={LibraryScreen} />
+                <Tab.Screen name="Search" component={SearchScreen} />
+              </Tab.Navigator>
+            </NavigationContainer>
+          </RadioPlaybackStatusContext.Provider>
+        </LibrarySelectionBarContext.Provider>
       </PlaybackContext.Provider>
-      {activeTrack ? (
+      {activeTrack && (librarySelectionBar === null || playerVisible) ? (
         <PlayerOverlay
           visible={playerVisible}
           track={activeTrack}
