@@ -16,7 +16,7 @@ import { PlayerSlider } from './PlayerSlider';
 import type { Track } from '../../types';
 
 const HAS_LIQUID_GLASS = isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
-const TRACK_DETAILS_FADE_DURATION = 240;
+const TRACK_DETAILS_FADE_DURATION = 290;
 const TRACK_DETAILS_OVERLAP_GAP = 100;
 const TRACK_DETAILS_FADE_EASING = Easing.bezier(0.4, 0, 0.2, 1);
 const getArtworkSource = (track: Track) => track.artwork
@@ -29,6 +29,7 @@ const getArtworkSource = (track: Track) => track.artwork
 const PlayerOverlayView = ({
   visible,
   track,
+  lyricsLoadingTrackId,
   isFavorite,
   isPlaying,
   currentTime,
@@ -54,6 +55,7 @@ const PlayerOverlayView = ({
 }: {
   visible: boolean;
   track: Track;
+  lyricsLoadingTrackId: string | null;
   isFavorite: boolean;
   isPlaying: boolean;
   currentTime: number;
@@ -93,16 +95,48 @@ const PlayerOverlayView = ({
   const onCloseRef = useRef(onClose);
   const skipNextOpenAnimation = useRef(false);
   const [displayTrack, setDisplayTrack] = useState(track);
+  const [trackTransitionSettling, setTrackTransitionSettling] = useState(false);
+  const trackTransitionSettlingRef = useRef(false);
+  const updateTrackTransitionSettling = useCallback((settling: boolean) => {
+    trackTransitionSettlingRef.current = settling;
+    setTrackTransitionSettling(settling);
+  }, []);
   const renderedTrack = displayTrack.id === track.id ? track : displayTrack;
+  const isTrackTransitioning = displayTrack.id !== track.id || trackTransitionSettling;
   const [lyricsView, setLyricsView] = useState({ trackId: track.id, expanded: false });
+  const lyricsViewRef = useRef(lyricsView);
+  const setTrackedLyricsView = useCallback((nextView: typeof lyricsView) => {
+    lyricsViewRef.current = nextView;
+    setLyricsView(nextView);
+  }, []);
   const [queueView, setQueueView] = useState({ trackId: track.id, expanded: false });
-  const lyricsExpanded = lyricsView.trackId === renderedTrack.id && lyricsView.expanded;
+  const queueViewRef = useRef(queueView);
+  const setTrackedQueueView = useCallback((nextView: typeof queueView) => {
+    queueViewRef.current = nextView;
+    setQueueView(nextView);
+  }, []);
   const queueExpanded = queueView.trackId === renderedTrack.id && queueView.expanded;
+  const queuePageActiveRef = useRef(queueExpanded);
   const lyrics = useMemo(() => renderedTrack.lyrics ?? [], [renderedTrack.lyrics]);
   const hasLyrics = useMemo(() => lyrics.some((line) => line.text.trim().length > 0), [lyrics]);
+  const isLyricsLoading = lyricsLoadingTrackId === renderedTrack.id;
+  const canShowLyrics = hasLyrics || isLyricsLoading;
+  const lyricsExpanded = lyricsView.trackId === renderedTrack.id && lyricsView.expanded && canShowLyrics;
+  const incomingLyrics = useMemo(() => track.lyrics ?? [], [track.lyrics]);
+  const incomingHasLyrics = useMemo(
+    () => incomingLyrics.some((line) => line.text.trim().length > 0),
+    [incomingLyrics],
+  );
+  const incomingIsLyricsLoading = lyricsLoadingTrackId === track.id;
+  const canShowIncomingLyrics = incomingHasLyrics || incomingIsLyricsLoading;
+  const incomingLyricsExpanded = canShowIncomingLyrics && (
+    (isTrackTransitioning && lyricsExpanded) ||
+    (lyricsView.trackId === track.id && lyricsView.expanded)
+  );
+  const lyricsPageActiveRef = useRef(lyricsExpanded);
   const isLiveRadio = renderedTrack.provider === 'radio';
   const canFavoriteTrack = renderedTrack.provider === 'local';
-  const detailsExpanded = (lyricsExpanded && hasLyrics) || queueExpanded;
+  const detailsExpanded = (lyricsExpanded && canShowLyrics) || queueExpanded;
   const elapsedSeconds = Math.max(0, currentTime);
   const totalSeconds = Math.max(0, durationSeconds);
   const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
@@ -115,6 +149,14 @@ const PlayerOverlayView = ({
         : activeIndex,
     -1);
   }, [elapsedSeconds, hasLyrics, lyrics, lyricsExpanded]);
+  const incomingActiveLyricIndex = useMemo(() => {
+    if (!incomingHasLyrics) return -1;
+    return incomingLyrics.reduce((activeIndex, line, index) =>
+      line.text.trim().length > 0 && line.timeMs !== null && line.timeMs <= elapsedSeconds * 1000
+        ? index
+        : activeIndex,
+    -1);
+  }, [elapsedSeconds, incomingHasLyrics, incomingLyrics]);
   const activeQueueIndex = useMemo(
     () => queue.findIndex((item) => item.id === renderedTrack.id),
     [queue, renderedTrack.id],
@@ -123,9 +165,29 @@ const PlayerOverlayView = ({
     ? queue.slice(activeQueueIndex + 1)
     : queue.filter((item) => item.id !== renderedTrack.id),
   [activeQueueIndex, queue, renderedTrack.id]);
+  const incomingQueueIndex = useMemo(
+    () => queue.findIndex((item) => item.id === track.id),
+    [queue, track.id],
+  );
+  const incomingUpcomingTracks = useMemo(() => incomingQueueIndex >= 0
+    ? queue.slice(incomingQueueIndex + 1)
+    : queue.filter((item) => item.id !== track.id),
+  [incomingQueueIndex, queue, track.id]);
   const displayArtworkSource = useMemo(() => getArtworkSource(displayTrack), [displayTrack]);
   const incomingArtworkSource = useMemo(() => getArtworkSource(track), [track]);
-  const isTrackTransitioning = displayTrack.id !== track.id;
+  const lyricsLoadingTrackIdRef = useRef(lyricsLoadingTrackId);
+
+  useEffect(() => {
+    lyricsLoadingTrackIdRef.current = lyricsLoadingTrackId;
+  }, [lyricsLoadingTrackId]);
+
+  useEffect(() => {
+    lyricsPageActiveRef.current = lyricsExpanded;
+  }, [lyricsExpanded]);
+
+  useEffect(() => {
+    queuePageActiveRef.current = queueExpanded;
+  }, [queueExpanded]);
 
   const miniTop = Math.max(0, windowHeight - 160);
   const miniBottom = Math.max(0, windowHeight - miniTop - 58);
@@ -149,21 +211,44 @@ const PlayerOverlayView = ({
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  const commitTrackChange = useCallback((nextTrack: Track, generation: number) => {
+  const commitTrackChange = useCallback((nextTrack: Track, generation: number, previousTrackId: string) => {
     if (generation !== trackTransitionGeneration.current) return;
+    const currentLyricsView = lyricsViewRef.current;
+    if (
+      lyricsPageActiveRef.current &&
+      currentLyricsView.trackId === previousTrackId &&
+      currentLyricsView.expanded
+    ) {
+      const nextTrackHasLyrics = Boolean(nextTrack.lyrics?.some((line) => line.text.trim()));
+      const nextTrackIsLoadingLyrics = lyricsLoadingTrackIdRef.current === nextTrack.id;
+      setTrackedLyricsView({
+        trackId: nextTrack.id,
+        expanded: nextTrackHasLyrics || nextTrackIsLoadingLyrics,
+      });
+    }
+    const currentQueueView = queueViewRef.current;
+    if (
+      queuePageActiveRef.current &&
+      currentQueueView.trackId === previousTrackId &&
+      currentQueueView.expanded
+    ) {
+      setTrackedQueueView({ trackId: nextTrack.id, expanded: true });
+    }
+    setDisplayTrack(nextTrack);
+    updateTrackTransitionSettling(true);
     trackTransitionCommitTimer.current = setTimeout(() => {
       trackTransitionCommitTimer.current = null;
-      if (generation === trackTransitionGeneration.current) setDisplayTrack(nextTrack);
+      updateTrackTransitionSettling(false);
     }, TRACK_DETAILS_OVERLAP_GAP);
-  }, []);
+  }, [setTrackedLyricsView, setTrackedQueueView, updateTrackTransitionSettling]);
 
   useLayoutEffect(() => {
-    if (trackTransitionCommitTimer.current) {
-      clearTimeout(trackTransitionCommitTimer.current);
-      trackTransitionCommitTimer.current = null;
-    }
-
     if (displayTrack.id === track.id) {
+      if (trackTransitionSettlingRef.current) return;
+      if (trackTransitionCommitTimer.current) {
+        clearTimeout(trackTransitionCommitTimer.current);
+        trackTransitionCommitTimer.current = null;
+      }
       trackTransitionGeneration.current += 1;
       cancelAnimation(trackTransition);
       trackTransition.value = 1;
@@ -176,10 +261,10 @@ const PlayerOverlayView = ({
     trackTransition.value = withDelay(
       TRACK_DETAILS_OVERLAP_GAP,
       withTiming(1, { duration: TRACK_DETAILS_FADE_DURATION * 2, easing: TRACK_DETAILS_FADE_EASING }, (finished) => {
-        if (finished) scheduleOnRN(commitTrackChange, track, generation);
+        if (finished) scheduleOnRN(commitTrackChange, track, generation, displayTrack.id);
       }),
     );
-  }, [commitTrackChange, displayTrack.id, track, trackTransition]);
+  }, [commitTrackChange, displayTrack.id, track, trackTransition, updateTrackTransitionSettling]);
 
   useEffect(() => () => {
     if (trackTransitionCommitTimer.current) clearTimeout(trackTransitionCommitTimer.current);
@@ -217,11 +302,6 @@ const PlayerOverlayView = ({
   useEffect(() => {
     detailsScrollOffset.value = 0;
   }, [detailsScrollOffset, lyricsExpanded, queueExpanded, renderedTrack.id]);
-
-  useEffect(() => {
-    lyricsProgress.value = withTiming(0, { duration: 0 });
-    queueContentProgress.value = withTiming(0, { duration: 0 });
-  }, [displayTrack.id, lyricsProgress, queueContentProgress]);
 
   const closeOnJS = useCallback(() => {
     onCloseRef.current();
@@ -586,7 +666,20 @@ const PlayerOverlayView = ({
       [0, 1],
                   [0, lyricsViewportHeight],
     ),
-    opacity: lyricsProgress.value * (1 - queueContentProgress.value),
+    opacity: lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
+      ? 1 - interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
+      : 0),
+  }));
+  const incomingLyricsPanelStyle = useAnimatedStyle(() => ({
+    top: lyricsTextTop,
+    height: interpolate(
+      lyricsProgress.value,
+      [0, 1],
+      [0, lyricsViewportHeight],
+    ),
+    opacity: lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
+      ? interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
+      : 1),
   }));
   const queuePanelStyle = useAnimatedStyle(() => ({
     top: lyricsTextTop,
@@ -595,19 +688,32 @@ const PlayerOverlayView = ({
       [0, 1],
       [0, lyricsViewportHeight],
     ),
-    opacity: lyricsProgress.value * queueContentProgress.value,
+    opacity: lyricsProgress.value * queueContentProgress.value * (isTrackTransitioning
+      ? 1 - interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
+      : 0),
+  }));
+  const incomingQueuePanelStyle = useAnimatedStyle(() => ({
+    top: lyricsTextTop,
+    height: interpolate(
+      lyricsProgress.value,
+      [0, 1],
+      [0, lyricsViewportHeight],
+    ),
+    opacity: lyricsProgress.value * queueContentProgress.value * (isTrackTransitioning
+      ? interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
+      : 1),
   }));
 
   const toggleLyrics = () => {
-    if (!hasLyrics) return;
+    if (!canShowLyrics) return;
     const nextExpanded = !lyricsExpanded;
-    setQueueView({ trackId: renderedTrack.id, expanded: false });
-    setLyricsView({ trackId: renderedTrack.id, expanded: nextExpanded });
+    setTrackedQueueView({ trackId: renderedTrack.id, expanded: false });
+    setTrackedLyricsView({ trackId: renderedTrack.id, expanded: nextExpanded });
   };
 
   const toggleQueue = () => {
-    setLyricsView({ trackId: renderedTrack.id, expanded: false });
-    setQueueView({ trackId: renderedTrack.id, expanded: !queueExpanded });
+    setTrackedLyricsView({ trackId: renderedTrack.id, expanded: false });
+    setTrackedQueueView({ trackId: renderedTrack.id, expanded: !queueExpanded });
   };
 
   return (
@@ -739,40 +845,72 @@ const PlayerOverlayView = ({
               expandedContentStyle,
             ]}
           >
-            <ReanimatedAnimated.View
-              pointerEvents={visible && lyricsExpanded && hasLyrics ? 'auto' : 'none'}
-              style={[
-                { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
-                lyricsPanelStyle,
-              ]}
-            >
-              {visible && lyricsExpanded && hasLyrics ? (
+            {visible && lyricsExpanded && isTrackTransitioning ? (
+              <ReanimatedAnimated.View
+                pointerEvents="none"
+                style={[
+                  { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
+                  lyricsPanelStyle,
+                ]}
+              >
+                {hasLyrics ? (
+                  <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
+                    <PlayerLyrics
+                      key={renderedTrack.id}
+                      trackId={renderedTrack.id}
+                      lyrics={lyrics}
+                      activeLineIndex={activeLyricIndex}
+                      viewportHeight={lyricsViewportHeight}
+                      scrollGesture={detailsScrollGesture}
+                      scrollOffset={detailsScrollOffset}
+                      onSeek={onSeek}
+                    />
+                  </ReanimatedAnimated.View>
+                ) : isLyricsLoading ? (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 15 }}>Checking for lyrics…</Text>
+                  </View>
+                ) : null}
+              </ReanimatedAnimated.View>
+            ) : null}
+            {/* Keep the incoming lyrics mounted as the active panel after handoff. */}
+            {incomingLyricsExpanded ? (
               <ReanimatedAnimated.View
                 pointerEvents="auto"
-                style={{ flex: 1 }}
+                style={[
+                  { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
+                  incomingLyricsPanelStyle,
+                ]}
               >
-                <PlayerLyrics
-                  key={renderedTrack.id}
-                  trackId={renderedTrack.id}
-                  lyrics={lyrics}
-                  activeLineIndex={activeLyricIndex}
-                  viewportHeight={lyricsViewportHeight}
-                  scrollGesture={detailsScrollGesture}
-                  scrollOffset={detailsScrollOffset}
-                  onSeek={onSeek}
-                />
+                {incomingHasLyrics ? (
+                  <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
+                    <PlayerLyrics
+                      key={track.id}
+                      trackId={track.id}
+                      lyrics={incomingLyrics}
+                      activeLineIndex={incomingActiveLyricIndex}
+                      viewportHeight={lyricsViewportHeight}
+                      scrollGesture={detailsScrollGesture}
+                      scrollOffset={detailsScrollOffset}
+                      onSeek={onSeek}
+                    />
+                  </ReanimatedAnimated.View>
+                ) : incomingIsLyricsLoading ? (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 15 }}>Checking for lyrics…</Text>
+                  </View>
+                ) : null}
               </ReanimatedAnimated.View>
-              ) : null}
-            </ReanimatedAnimated.View>
+            ) : null}
 
-            <ReanimatedAnimated.View
-              pointerEvents={visible && queueExpanded ? 'auto' : 'none'}
-              style={[
-                { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
-                queuePanelStyle,
-              ]}
-            >
-              {visible && queueExpanded ? (
+            {visible && queueExpanded && isTrackTransitioning ? (
+              <ReanimatedAnimated.View
+                pointerEvents="none"
+                style={[
+                  { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
+                  queuePanelStyle,
+                ]}
+              >
                 <PlayerQueuePanel
                   tracks={upcomingTracks}
                   height={lyricsViewportHeight}
@@ -787,8 +925,33 @@ const PlayerOverlayView = ({
                   onToggleAutoplay={onToggleAutoplay}
                   onClearQueue={onClearQueue}
                 />
-              ) : null}
-            </ReanimatedAnimated.View>
+              </ReanimatedAnimated.View>
+            ) : null}
+            {/* Keep this panel mounted as the active list after handoff to avoid a frame swap. */}
+            {visible && queueExpanded ? (
+              <ReanimatedAnimated.View
+                pointerEvents="auto"
+                style={[
+                  { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
+                  incomingQueuePanelStyle,
+                ]}
+              >
+                <PlayerQueuePanel
+                  tracks={incomingUpcomingTracks}
+                  height={lyricsViewportHeight}
+                  scrollGesture={detailsScrollGesture}
+                  scrollOffset={detailsScrollOffset}
+                  shuffleEnabled={shuffleEnabled}
+                  repeatMode={repeatMode}
+                  autoplayEnabled={autoplayEnabled}
+                  onPlayTrack={onPlayQueueTrack}
+                  onToggleShuffle={onToggleShuffle}
+                  onToggleRepeat={onToggleRepeat}
+                  onToggleAutoplay={onToggleAutoplay}
+                  onClearQueue={onClearQueue}
+                />
+              </ReanimatedAnimated.View>
+            ) : null}
 
             <ReanimatedAnimated.View
               style={[
@@ -898,16 +1061,16 @@ const PlayerOverlayView = ({
             >
                 <TouchableOpacity
                   onPress={toggleLyrics}
-                  disabled={!hasLyrics}
+                  disabled={!canShowLyrics}
                   accessibilityRole="button"
                   accessibilityLabel={lyricsExpanded ? 'Hide lyrics' : 'Show lyrics'}
-                  accessibilityState={{ disabled: !hasLyrics, selected: lyricsExpanded }}
+                  accessibilityState={{ disabled: !canShowLyrics, selected: lyricsExpanded }}
                   hitSlop={10}
                   style={{
                     padding: 8,
                     borderRadius: 28,
                     backgroundColor: lyricsExpanded ? 'rgba(255,255,255,0.78)' : 'transparent',
-                    opacity: hasLyrics ? 1 : 0.34,
+                    opacity: canShowLyrics ? 1 : 0.34,
                   }}
                 >
                   <Ionicons
@@ -965,7 +1128,7 @@ const PlayerOverlayView = ({
           </ReanimatedAnimated.View>
 
           <ReanimatedAnimated.View
-            pointerEvents={visible && hasLyrics ? 'auto' : 'none'}
+            pointerEvents={visible && canShowLyrics ? 'auto' : 'none'}
             style={[
               {
                 position: 'absolute',
@@ -977,11 +1140,11 @@ const PlayerOverlayView = ({
           >
             <TouchableOpacity
               onPress={toggleLyrics}
-              disabled={!visible || !hasLyrics}
+              disabled={!visible || !canShowLyrics}
               activeOpacity={1}
               accessibilityRole="button"
               accessibilityLabel={lyricsExpanded ? 'Hide lyrics' : 'Show lyrics'}
-              accessibilityState={{ disabled: !visible || !hasLyrics, selected: lyricsExpanded }}
+              accessibilityState={{ disabled: !visible || !canShowLyrics, selected: lyricsExpanded }}
               style={{ width: '100%', height: '100%' }}
             >
               <ReanimatedAnimated.View
@@ -1196,7 +1359,7 @@ const PlayerOverlayView = ({
             </Pressable>
           </ReanimatedAnimated.View>
 
-          {visible && ((lyricsExpanded && hasLyrics) || queueExpanded) ? (
+          {visible && ((lyricsExpanded && canShowLyrics) || queueExpanded) ? (
             <TouchableOpacity
               onPress={queueExpanded ? toggleQueue : toggleLyrics}
               activeOpacity={1}
@@ -1226,6 +1389,7 @@ const playerOverlayPropsAreEqual = (previous: PlayerOverlayProps, next: PlayerOv
   if (
     previous.visible !== next.visible ||
     previous.track !== next.track ||
+    previous.lyricsLoadingTrackId !== next.lyricsLoadingTrackId ||
     previous.isFavorite !== next.isFavorite ||
     previous.isPlaying !== next.isPlaying ||
     previous.onOpen !== next.onOpen ||

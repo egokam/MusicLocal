@@ -94,6 +94,7 @@ export default function App() {
   const [apiConnected, setApiConnected] = useState(true);
   const [apiInitializing, setApiInitializing] = useState(true);
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
+  const [lyricsLoadingTrackId, setLyricsLoadingTrackId] = useState<string | null>(null);
   const [isLoadingTracks, setIsLoadingTracks] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [downloadingTrackIds, setDownloadingTrackIds] = useState<string[]>([]);
@@ -397,6 +398,8 @@ export default function App() {
     setActiveTrack(selectedTrack);
     handledFinishedTrack.current = null;
     const isRadioTrack = selectedTrack.provider === 'radio';
+    const shouldLoadLyrics = !isRadioTrack && !selectedTrack.lyrics?.length;
+    setLyricsLoadingTrackId(shouldLoadLyrics ? selectedTrack.id : null);
     const musicApiHeaders = selectedTrack.provider === 'local' ? getMusicApiHeaders() : {};
     player.replace(
       selectedTrack.localUri
@@ -420,7 +423,7 @@ export default function App() {
     player.play();
     if (!isRadioTrack) incrementPlayCount(selectedTrack.id);
 
-    if (!isRadioTrack && !selectedTrack.lyrics?.length) {
+    if (shouldLoadLyrics) {
       void MusicCatalogService.getLyrics(selectedTrack)
         .then((trackWithLyrics) => {
           if (activeTrackRef.current?.id !== selectedTrack.id) return;
@@ -431,7 +434,12 @@ export default function App() {
           );
           setDownloadedTracks(downloadsRef.current);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          setLyricsLoadingTrackId((loadingTrackId) => (
+            loadingTrackId === selectedTrack.id ? null : loadingTrackId
+          ));
+        });
     }
   }, [incrementPlayCount, player, updatePlaybackQueue]);
 
@@ -795,6 +803,7 @@ export default function App() {
       player.pause();
       activeTrackRef.current = null;
       setActiveTrack(null);
+      setLyricsLoadingTrackId(null);
     }
   }, [player, updatePlaybackQueue]);
 
@@ -930,6 +939,7 @@ export default function App() {
       player.pause();
       activeTrackRef.current = null;
       setActiveTrack(null);
+      setLyricsLoadingTrackId(null);
     }
     return result.freedBytes;
   }, [player, updatePlaybackQueue]);
@@ -1103,6 +1113,7 @@ export default function App() {
         <PlayerOverlay
           visible={playerVisible}
           track={activeTrack}
+          lyricsLoadingTrackId={lyricsLoadingTrackId}
           isFavorite={Boolean(activeTrack.isFavorite)}
           isPlaying={playerStatus.playing}
           currentTime={playerStatus.currentTime}

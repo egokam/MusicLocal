@@ -3,25 +3,30 @@ import {
   ActivityIndicator,
   Animated,
   Alert,
+  FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Directory, File } from 'expo-file-system';
-import * as DocumentPicker from 'expo-document-picker';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { LinearGradient } from 'expo-linear-gradient';
 import { parseBuffer } from 'music-metadata';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassSurface } from '../../glass';
+import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { SongsHeader } from '../components/songs/SongsHeader';
 import { Id3SynchronizedLyricsService } from '../services/Id3SynchronizedLyricsService';
+import type { Track } from '../types';
 
 type ImportedMp3 = {
   uri: string;
@@ -30,6 +35,7 @@ type ImportedMp3 = {
   artist: string;
   lyrics: string | null;
   lyricsSource: 'embedded' | 'pasted';
+  hadSyncedLyrics: boolean;
   duration: number;
 };
 
@@ -39,34 +45,79 @@ type TimedLyricLine = {
   timeMs: number | null;
 };
 
-const getUnsynchronizedLyrics = (metadata: Awaited<ReturnType<typeof parseBuffer>>) => {
-  const lyrics = Object.values(metadata.native).flatMap((frames) => frames
-    .filter((frame) => frame.id === 'USLT')
-    .map((frame) => {
-      if (typeof frame.value !== 'object' || frame.value === null || !('text' in frame.value)) return '';
-      return typeof frame.value.text === 'string' ? frame.value.text.trim() : '';
-    })
-    .filter(Boolean));
-  return lyrics.length > 0 ? lyrics.join('\n\n') : null;
-};
-
 const splitLyricText = (lyrics: string) => lyrics
   .replace(/^\uFEFF/, '')
   .split(/\r\n|[\n\r\u0085\u2028\u2029]/);
 
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  typeof value === 'object' && value !== null
+);
+
+const lrcTimestampPattern = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g;
+const lrcTimestampPrefixPattern = /^(?:\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\])+/;
+const lrcMetadataPattern = /^\[(?:ar|al|ti|au|by|re|ve|offset|length|la|kana|id):/i;
+
+const clearEmbeddedTimestamps = (lyrics: string) => splitLyricText(lyrics)
+  .flatMap((line) => {
+    if (lrcMetadataPattern.test(line.trim())) return [];
+    const timestampPrefix = line.match(lrcTimestampPrefixPattern)?.[0];
+    if (!timestampPrefix) return [line];
+
+    const text = line.slice(timestampPrefix.length).trimStart();
+    if (!text.trim()) return [];
+    // LRC can put multiple timestamps on one line for repeated choruses.
+    // Keep each occurrence as a separate untimed lyric line for resyncing.
+    const occurrenceCount = [...timestampPrefix.matchAll(lrcTimestampPattern)].length;
+    return Array.from({ length: Math.max(occurrenceCount, 1) }, () => text);
+  })
+  .join('\n');
+
+const getEmbeddedLyrics = (metadata: Awaited<ReturnType<typeof parseBuffer>>) => {
+  const frames = Object.values(metadata.native).flat();
+  const usltLyrics = frames
+    .filter((frame) => frame.id === 'USLT')
+    .map((frame) => {
+      if (!isRecord(frame.value) || typeof frame.value.text !== 'string') return '';
+      return frame.value.text.trim();
+    })
+    .filter(Boolean);
+  const syltLyrics = frames
+    .filter((frame) => frame.id === 'SYLT')
+    .flatMap((frame) => {
+      if (!isRecord(frame.value) || !Array.isArray(frame.value.syncText)) return [];
+      return frame.value.syncText.flatMap((entry) => (
+        isRecord(entry) && typeof entry.text === 'string' && entry.text.trim()
+          ? [entry.text.trim()]
+          : []
+      ));
+    });
+
+  const hasLrcTimestamps = usltLyrics.some((lyrics) => (
+    splitLyricText(lyrics).some((line) => lrcTimestampPrefixPattern.test(line))
+  ));
+  const hadSyncedLyrics = syltLyrics.length > 0 || hasLrcTimestamps;
+  const rawLyrics = usltLyrics.length > 0 ? usltLyrics.join('\n\n') : syltLyrics.join('\n');
+  const lyrics = rawLyrics ? (hadSyncedLyrics ? clearEmbeddedTimestamps(rawLyrics) : rawLyrics) : null;
+
+  return { lyrics, hadSyncedLyrics };
+};
+
 const parseLyrics = (lyrics: string): TimedLyricLine[] => splitLyricText(lyrics)
   .map((text, index) => ({ id: `${index}-${text}`, text, timeMs: null }));
 
-const formatFileTitle = (fileName: string) => fileName.replace(/\.mp3$/i, '').replace(/[-_]+/g, ' ').trim() || 'Untitled track';
-
 export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
+  const { downloadedTracks, isLoadingTracks, apiInitializing } = usePlaybackActions();
   const scrollY = useMemo(() => new Animated.Value(0), []);
   const player = useAudioPlayer(null, { updateInterval: 200 });
   const playerStatus = useAudioPlayerStatus(player);
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const playerStatusRef = useRef(playerStatus);
+  const pickerWindowHeight = useRef(windowHeight);
   const topInsetCompensation = Math.max(0, insets.top - 24);
   const [selectedMp3, setSelectedMp3] = useState<ImportedMp3 | null>(null);
+  const [trackPickerVisible, setTrackPickerVisible] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState('');
   const [lyricLines, setLyricLines] = useState<TimedLyricLine[]>([]);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -79,6 +130,107 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   const [pasteModalVisible, setPasteModalVisible] = useState(false);
   const [pastedLyrics, setPastedLyrics] = useState('');
   const [lineEditor, setLineEditor] = useState<{ lineId: string | null; text: string } | null>(null);
+  const trackPickerTranslateY = useMemo(() => new Animated.Value(0), []);
+  const isDismissingTrackPicker = useRef(false);
+  const trackPickerListScrollOffset = useRef(0);
+  const availableMp3Tracks = useMemo(() => downloadedTracks.filter((track) => {
+    if (!track.localUri) return false;
+    const path = track.localUri.toLowerCase().split(/[?#]/, 1)[0];
+    const extensionFromUri = path.match(/\.([^.\\/]+)$/)?.[1];
+    const extension = extensionFromUri ?? track.fileExtension?.toLowerCase().replace(/^\./, '');
+    return extension === 'mp3';
+  }), [downloadedTracks]);
+  const filteredMp3Tracks = useMemo(() => {
+    const query = librarySearch.trim().toLocaleLowerCase();
+    if (!query) return availableMp3Tracks;
+    return availableMp3Tracks.filter((track) => (
+      `${track.title} ${track.artist} ${track.album}`.toLocaleLowerCase().includes(query)
+    ));
+  }, [availableMp3Tracks, librarySearch]);
+  const dismissTrackPicker = useCallback(() => {
+    if (isDismissingTrackPicker.current) return;
+    isDismissingTrackPicker.current = true;
+    Animated.timing(trackPickerTranslateY, {
+      toValue: pickerWindowHeight.current,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setTrackPickerVisible(false);
+      isDismissingTrackPicker.current = false;
+    });
+  }, [trackPickerTranslateY]);
+  // The responder is created once per callback set; its ref access runs only after a gesture begins.
+  // eslint-disable-next-line react-hooks/refs
+  const trackPickerPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => (
+      trackPickerListScrollOffset.current <= 0.5
+      && gesture.dy > 5
+      && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2
+    ),
+    onMoveShouldSetPanResponder: (_event, gesture) => (
+      trackPickerListScrollOffset.current <= 0.5
+      && gesture.dy > 5
+      && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2
+    ),
+    onPanResponderMove: (_event, gesture) => {
+      if (gesture.dy > 0) trackPickerTranslateY.setValue(gesture.dy);
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy > 110 || (gesture.dy > 45 && gesture.vy > 0.85)) {
+        dismissTrackPicker();
+      } else {
+        Animated.spring(trackPickerTranslateY, {
+          toValue: 0,
+          damping: 28,
+          stiffness: 260,
+          mass: 0.8,
+          useNativeDriver: true,
+        }).start();
+      }
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(trackPickerTranslateY, {
+        toValue: 0,
+        damping: 28,
+        stiffness: 260,
+        mass: 0.8,
+        useNativeDriver: true,
+      }).start();
+    },
+  }), [dismissTrackPicker, trackPickerTranslateY]);
+  // The responder callbacks read refs only after a gesture starts.
+  // eslint-disable-next-line react-hooks/refs
+  const trackPickerHeaderPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => (
+      gesture.dy > 5 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2
+    ),
+    onPanResponderMove: (_event, gesture) => {
+      if (gesture.dy > 0) trackPickerTranslateY.setValue(gesture.dy);
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy > 110 || (gesture.dy > 45 && gesture.vy > 0.85)) {
+        dismissTrackPicker();
+      } else {
+        Animated.spring(trackPickerTranslateY, {
+          toValue: 0,
+          damping: 28,
+          stiffness: 260,
+          mass: 0.8,
+          useNativeDriver: true,
+        }).start();
+      }
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(trackPickerTranslateY, {
+        toValue: 0,
+        damping: 28,
+        stiffness: 260,
+        mass: 0.8,
+        useNativeDriver: true,
+      }).start();
+    },
+  }), [dismissTrackPicker, trackPickerTranslateY]);
   const titleOffset = scrollY.interpolate({
     inputRange: [0, 22, 72, 204],
     outputRange: [22, 0, 0, -132],
@@ -91,6 +243,23 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   });
 
   useEffect(() => {
+    pickerWindowHeight.current = windowHeight;
+  }, [windowHeight]);
+
+  useEffect(() => {
+    if (!trackPickerVisible) return;
+    isDismissingTrackPicker.current = false;
+    trackPickerTranslateY.setValue(pickerWindowHeight.current);
+    Animated.spring(trackPickerTranslateY, {
+      toValue: 0,
+      damping: 30,
+      stiffness: 250,
+      mass: 0.85,
+      useNativeDriver: true,
+    }).start();
+  }, [trackPickerTranslateY, trackPickerVisible]);
+
+  useEffect(() => {
     playerStatusRef.current = playerStatus;
   }, [playerStatus]);
 
@@ -100,47 +269,40 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     setSelectedLineId(lines.find((line) => line.text.trim())?.id ?? null);
   }, []);
 
-  const chooseMp3 = async () => {
+  const chooseLibraryTrack = async (track: Track) => {
     setImportError(null);
     setIsImporting(true);
     try {
-      const selection = await DocumentPicker.getDocumentAsync({
-        type: ['audio/mpeg', 'audio/mp3'],
-        copyToCacheDirectory: true,
-      });
-      if (selection.canceled) return;
-
-      const asset = selection.assets[0];
-      if (!asset) throw new Error('No MP3 file was selected.');
-      if (!asset.name.toLocaleLowerCase().endsWith('.mp3')) {
-        throw new Error('Choose an MP3 file to continue.');
-      }
-      const file = new File(asset.uri);
+      if (!track.localUri) throw new Error('This track is not stored on this device.');
+      const file = new File(track.localUri);
       if (!file.exists || (file.size ?? 0) === 0) {
-        throw new Error('The selected MP3 is empty or no longer available.');
+        throw new Error('This library MP3 is empty or no longer available.');
       }
+      if (!file.name.toLocaleLowerCase().endsWith('.mp3')) throw new Error('Only local MP3 tracks can be synchronized.');
 
       const metadata = await parseBuffer(await file.bytes(), 'audio/mpeg');
-      const embeddedLyrics = getUnsynchronizedLyrics(metadata);
+      const { lyrics: embeddedLyrics, hadSyncedLyrics } = getEmbeddedLyrics(metadata);
       const imported: ImportedMp3 = {
-        uri: asset.uri,
-        fileName: asset.name,
-        title: metadata.common.title?.trim() || formatFileTitle(asset.name),
-        artist: metadata.common.artist?.trim() || metadata.common.albumartist?.trim() || 'Unknown artist',
+        uri: file.uri,
+        fileName: file.name,
+        title: metadata.common.title?.trim() || track.title,
+        artist: metadata.common.artist?.trim() || metadata.common.albumartist?.trim() || track.artist || 'Unknown artist',
         lyrics: embeddedLyrics,
         lyricsSource: 'embedded',
-        duration: metadata.format.duration ?? 0,
+        hadSyncedLyrics,
+        duration: metadata.format.duration ?? track.durationSeconds ?? 0,
       };
       player.pause();
       player.replace({ uri: imported.uri });
       await player.seekTo(0);
       setSelectedMp3(imported);
       loadLyrics(embeddedLyrics);
+      dismissTrackPicker();
       setPlaybackError(null);
       setExportError(null);
       setPastedLyrics('');
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : 'Could not read the selected MP3.');
+      setImportError(error instanceof Error ? error.message : 'Could not read this library MP3.');
     } finally {
       setIsImporting(false);
     }
@@ -148,7 +310,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
 
   const applyPastedLyrics = () => {
     if (!selectedMp3 || !pastedLyrics.trim()) return;
-    setSelectedMp3({ ...selectedMp3, lyrics: pastedLyrics, lyricsSource: 'pasted' });
+    setSelectedMp3({ ...selectedMp3, lyrics: pastedLyrics, lyricsSource: 'pasted', hadSyncedLyrics: false });
     loadLyrics(pastedLyrics);
     setPasteModalVisible(false);
   };
@@ -266,15 +428,12 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     && (trackDuration <= 0 || line.timestampMs <= trackDuration * 1000)
   ));
   const canSave = Boolean(selectedMp3 && hasChronologicalTimestamps && !isSaving);
+  const visiblePlaybackError = playbackError ?? playerStatus.error ?? null;
   const playingLineId = lyricLines.reduce<string | null>((currentId, line) => (
     line.text.trim() && line.timeMs !== null && line.timeMs <= playerStatus.currentTime * 1000
       ? line.id
       : currentId
   ), null);
-
-  useEffect(() => {
-    if (playerStatus.error) setPlaybackError(playerStatus.error);
-  }, [playerStatus.error]);
 
   const saveSynchronizedMp3 = async () => {
     if (!selectedMp3 || !canSave) return;
@@ -322,14 +481,17 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
         >
           <View style={{ paddingHorizontal: 20, paddingTop: 74 }}>
             <Text style={{ color: '#A1A1A6', fontSize: 15, lineHeight: 21, marginBottom: 22 }}>
-              Select an MP3 to view its embedded unsynchronized lyrics.
+              Choose an MP3 from your Musiqapp library to view and synchronize its lyrics.
             </Text>
 
             <TouchableOpacity
-              onPress={() => void chooseMp3()}
+              onPress={() => {
+                setImportError(null);
+                setTrackPickerVisible(true);
+              }}
               disabled={isImporting}
               accessibilityRole="button"
-              accessibilityLabel={selectedMp3 ? 'Choose another MP3 file' : 'Choose an MP3 file'}
+              accessibilityLabel={selectedMp3 ? 'Choose another track from your library' : 'Choose a track from your library'}
               style={{
                 minHeight: 58,
                 paddingHorizontal: 18,
@@ -345,12 +507,18 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               {isImporting ? (
                 <ActivityIndicator color="white" />
               ) : (
-                <Ionicons name="folder-open-outline" size={21} color="white" />
+                <Ionicons name="musical-notes-outline" size={21} color="white" />
               )}
               <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
-                {isImporting ? 'Reading MP3…' : selectedMp3 ? 'Choose another MP3' : 'Choose MP3 file'}
+                {isImporting ? 'Reading track…' : selectedMp3 ? 'Choose another track' : 'Browse your library'}
               </Text>
             </TouchableOpacity>
+
+            {!selectedMp3 && !isLoadingTracks && !apiInitializing && availableMp3Tracks.length === 0 ? (
+              <Text style={{ color: '#8E8E93', fontSize: 13, lineHeight: 19, marginTop: 12, textAlign: 'center' }}>
+                No local MP3 tracks are available. Add or download an MP3 to your library first.
+              </Text>
+            ) : null}
 
             {importError ? (
               <View
@@ -416,7 +584,9 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                       <View>
                         <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Lyrics</Text>
                         <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 3 }}>
-                          {selectedMp3.lyricsSource === 'embedded' ? 'From MP3 · ' : 'Pasted · '}
+                          {selectedMp3.hadSyncedLyrics
+                            ? 'From MP3 · previous timings cleared · '
+                            : selectedMp3.lyricsSource === 'embedded' ? 'From MP3 · ' : 'Pasted · '}
                           {lyricLines.filter((line) => line.text.trim()).length} lines
                         </Text>
                       </View>
@@ -635,7 +805,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
         <View
           style={{
             position: 'absolute',
-            left: -0.6,
+            left: -0.5,
             right: -0.5,
             bottom: -2,
             overflow: 'hidden',
@@ -802,9 +972,9 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               </Text>
             </TouchableOpacity>
           </View>
-          {playbackError ? (
+          {visiblePlaybackError ? (
             <Text accessibilityRole="alert" numberOfLines={2} style={{ color: '#FA7A89', fontSize: 11, lineHeight: 15, textAlign: 'center', marginTop: 5 }}>
-              {playbackError}
+              {visiblePlaybackError}
             </Text>
           ) : null}
           <TouchableOpacity
@@ -848,6 +1018,161 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
           ) : null}
         </View>
       </View>
+
+      <Modal
+        visible={trackPickerVisible}
+        transparent
+        animationType="none"
+        onRequestClose={dismissTrackPicker}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }}
+        >
+          <Animated.View
+            {...trackPickerPanResponder.panHandlers}
+            accessibilityHint="Swipe down to close the track library"
+            style={{
+              height: '88%',
+              paddingHorizontal: 20,
+              paddingTop: 22,
+              paddingBottom: Math.max(insets.bottom, 20),
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              backgroundColor: '#1C1C1E',
+              transform: [{ translateY: trackPickerTranslateY }],
+            }}
+          >
+            <View {...trackPickerHeaderPanResponder.panHandlers}>
+              <View
+                style={{
+                  alignSelf: 'center',
+                  width: 38,
+                  height: 5,
+                  marginBottom: 17,
+                  borderRadius: 3,
+                  backgroundColor: '#636366',
+                }}
+              />
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <View>
+                  <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Choose a track</Text>
+                  <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 4 }}>Local MP3s in your library</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={dismissTrackPicker}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close track library"
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <Ionicons name="close" size={21} color="white" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View
+              style={{
+                minHeight: 50,
+                marginBottom: 12,
+                paddingHorizontal: 14,
+                borderRadius: 15,
+                backgroundColor: '#111113',
+                flexDirection: 'row',
+                alignItems: 'center',
+              }}
+            >
+              <Ionicons name="search" size={19} color="#8E8E93" />
+              <TextInput
+                value={librarySearch}
+                onChangeText={setLibrarySearch}
+                placeholder="Search songs, artists, albums"
+                placeholderTextColor="#8E8E93"
+                accessibilityLabel="Search library tracks"
+                returnKeyType="search"
+                autoCorrect={false}
+                autoCapitalize="none"
+                style={{ flex: 1, marginLeft: 10, paddingVertical: 12, color: 'white', fontSize: 15 }}
+              />
+              {librarySearch.length > 0 ? (
+                <TouchableOpacity
+                  onPress={() => setLibrarySearch('')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear track search"
+                  style={{ padding: 5 }}
+                >
+                  <Ionicons name="close-circle" size={19} color="#8E8E93" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {importError ? (
+              <Text accessibilityRole="alert" style={{ color: '#FA7A89', fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
+                {importError}
+              </Text>
+            ) : null}
+
+            {isLoadingTracks || apiInitializing ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator color="#FA5265" />
+                <Text style={{ color: '#A1A1A6', fontSize: 13, marginTop: 10 }}>Loading your library…</Text>
+              </View>
+            ) : availableMp3Tracks.length === 0 ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 }}>
+                <Ionicons name="musical-notes-outline" size={34} color="#FA5265" />
+                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>No local MP3 tracks</Text>
+                <Text style={{ color: '#8E8E93', fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 6 }}>
+                  Add or download an MP3 to your library before synchronizing its lyrics.
+                </Text>
+              </View>
+            ) : filteredMp3Tracks.length === 0 ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#A1A1A6', fontSize: 14 }}>No tracks match “{librarySearch.trim()}”.</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredMp3Tracks}
+                style={{ flex: 1 }}
+                onScroll={(event) => {
+                  trackPickerListScrollOffset.current = Math.max(0, event.nativeEvent.contentOffset.y);
+                }}
+                scrollEventThrottle={16}
+                keyExtractor={(track) => track.id}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                initialNumToRender={12}
+                maxToRenderPerBatch={12}
+                windowSize={7}
+                ItemSeparatorComponent={() => <View style={{ height: 1, marginLeft: 62, backgroundColor: '#303034' }} />}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    onPress={() => void chooseLibraryTrack(item)}
+                    disabled={isImporting}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${item.title} by ${item.artist}`}
+                    style={{ minHeight: 72, flexDirection: 'row', alignItems: 'center', opacity: isImporting ? 0.55 : 1 }}
+                  >
+                    {item.artwork ? (
+                      <Image source={{ uri: item.artwork }} style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#303034' }} />
+                    ) : (
+                      <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#382027', alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="musical-note" size={21} color="#FA5265" />
+                      </View>
+                    )}
+                    <View style={{ flex: 1, minWidth: 0, marginLeft: 13 }}>
+                      <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>{item.title}</Text>
+                      <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 12, marginTop: 4 }}>
+                        {item.artist}{item.album ? ` · ${item.album}` : ''}
+                      </Text>
+                    </View>
+                    {selectedMp3?.uri === item.localUri ? <Ionicons name="checkmark-circle" size={21} color="#FA5265" /> : null}
+                    {isImporting ? <ActivityIndicator size="small" color="#FA5265" style={{ marginLeft: 10 }} /> : null}
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Modal
         visible={lineEditor !== null}

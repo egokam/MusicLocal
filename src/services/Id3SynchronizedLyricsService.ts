@@ -159,7 +159,10 @@ const createSyltFrame = (entries: SynchronizedLyricEntry[]) => {
 
 const createId3Tag = (sourceTag: Uint8Array, entries: SynchronizedLyricEntry[]) => {
   const { frames } = parseId3Frames(sourceTag);
-  const frameBytes = frames.map(({ id, payload }) => concatenate([
+  // The user is rebuilding synchronized lyrics. Keep every unrelated frame and
+  // the original USLT text, but replace old SYLT frames so players don't see
+  // conflicting lyric timelines after export.
+  const frameBytes = frames.filter(({ id }) => id !== 'SYLT').map(({ id, payload }) => concatenate([
     encodeUtf8(id),
     writeSynchsafeInteger(payload.length),
     new Uint8Array([0, 0]),
