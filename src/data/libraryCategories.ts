@@ -14,5 +14,6 @@ export const libraryCategories: LibraryCategory[] = [
   { id: '4', title: 'Songs', icon: 'musical-note' },
   { id: '5', title: 'Downloader', icon: 'cloud-download-outline' },
   { id: '6', title: 'LRC Checker', icon: 'time-outline' },
-  { id: '7', title: 'Favorites', icon: 'heart-outline' },
+  { id: '7', title: 'LRC Synchronizer', icon: 'sync-outline' },
+  { id: '8', title: 'Favorites', icon: 'heart-outline' },
 ];

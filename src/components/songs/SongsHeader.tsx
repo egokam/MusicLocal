@@ -7,6 +7,7 @@ export const SongsHeader = ({
   onBack,
   onToggleSort,
   moreMenuItems = [],
+  showSortButton = true,
   showMoreButton = true,
   sortAccessibilityLabel = 'Toggle sort order',
   liquidGlass = false,
@@ -20,6 +21,7 @@ export const SongsHeader = ({
     disabled?: boolean;
     destructive?: boolean;
   }[];
+  showSortButton?: boolean;
   showMoreButton?: boolean;
   sortAccessibilityLabel?: string;
   liquidGlass?: boolean;
@@ -103,52 +105,54 @@ export const SongsHeader = ({
           <Ionicons name="chevron-back" size={27} color="white" />
         </TouchableOpacity>
 
-        <View
-          style={{
-            position: 'relative',
-            overflow: 'hidden',
-            width: showMoreButton ? undefined : 44,
-            height: 44,
-            paddingHorizontal: showMoreButton ? 18 : 0,
-            borderRadius: 24,
-            backgroundColor: liquidGlass ? 'transparent' : 'rgba(28,28,30,0.84)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.10)',
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: showMoreButton ? 'flex-start' : 'center',
-          }}
-        >
-          {liquidGlass ? <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 24 }} /> : null}
-          <TouchableOpacity
-            onPress={onToggleSort}
-            accessibilityRole="button"
-            accessibilityLabel={sortAccessibilityLabel}
+        {showSortButton ? (
+          <View
             style={{
-              width: showMoreButton ? undefined : 42,
-              height: showMoreButton ? undefined : 42,
-              paddingVertical: showMoreButton ? 6 : 0,
+              position: 'relative',
+              overflow: 'hidden',
+              width: showMoreButton ? undefined : 44,
+              height: 44,
+              paddingHorizontal: showMoreButton ? 18 : 0,
+              borderRadius: 24,
+              backgroundColor: liquidGlass ? 'transparent' : 'rgba(28,28,30,0.84)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.10)',
+              flexDirection: 'row',
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: showMoreButton ? 'flex-start' : 'center',
             }}
           >
-            <Ionicons name="list" size={25} color="white" />
-          </TouchableOpacity>
-          {showMoreButton ? (
-            <>
-              <View style={{ width: 22 }} />
-              <TouchableOpacity
-                onPress={() => menuVisible ? closeMenu() : openMenu()}
-                accessibilityRole="button"
-                accessibilityLabel="More options"
-                accessibilityState={{ expanded: menuVisible }}
-                hitSlop={8}
-              >
-                <Ionicons name="ellipsis-horizontal" size={24} color="white" />
-              </TouchableOpacity>
-            </>
-          ) : null}
-        </View>
+            {liquidGlass ? <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 24 }} /> : null}
+            <TouchableOpacity
+              onPress={onToggleSort}
+              accessibilityRole="button"
+              accessibilityLabel={sortAccessibilityLabel}
+              style={{
+                width: showMoreButton ? undefined : 42,
+                height: showMoreButton ? undefined : 42,
+                paddingVertical: showMoreButton ? 6 : 0,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Ionicons name="list" size={25} color="white" />
+            </TouchableOpacity>
+            {showMoreButton ? (
+              <>
+                <View style={{ width: 22 }} />
+                <TouchableOpacity
+                  onPress={() => menuVisible ? closeMenu() : openMenu()}
+                  accessibilityRole="button"
+                  accessibilityLabel="More options"
+                  accessibilityState={{ expanded: menuVisible }}
+                  hitSlop={8}
+                >
+                  <Ionicons name="ellipsis-horizontal" size={24} color="white" />
+                </TouchableOpacity>
+              </>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
       {menuVisible ? (

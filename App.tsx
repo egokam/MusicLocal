@@ -98,6 +98,7 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [downloadingTrackIds, setDownloadingTrackIds] = useState<string[]>([]);
   const [playerVisible, setPlayerVisible] = useState(false);
+  const [isLrcSynchronizerActive, setIsLrcSynchronizerActive] = useState(false);
   const [widgetLaunchTrackId, setWidgetLaunchTrackId] = useState<string | null>(null);
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
   const [shuffleEnabled, setShuffleEnabled] = useState(false);
@@ -1074,7 +1075,16 @@ export default function App() {
       <PlaybackContext.Provider value={playbackActions}>
         <LibrarySelectionBarContext.Provider value={librarySelectionBarContextValue}>
           <RadioPlaybackStatusContext.Provider value={playerStatus.playing}>
-            <NavigationContainer>
+            <NavigationContainer
+              onStateChange={(navigationState) => {
+                const libraryRoute = navigationState?.routes.find((route) => route.name === 'Library');
+                const libraryState = libraryRoute?.state;
+                const libraryScreen = libraryState?.routes?.[libraryState.index ?? 0];
+                const active = libraryScreen?.name === 'LrcSynchronizer';
+                setIsLrcSynchronizerActive(active);
+                if (active) setPlayerVisible(false);
+              }}
+            >
               <Tab.Navigator
                 tabBar={(props) => <CustomTabBar {...props} />}
                 screenOptions={{ headerShown: false }}
@@ -1089,7 +1099,7 @@ export default function App() {
           </RadioPlaybackStatusContext.Provider>
         </LibrarySelectionBarContext.Provider>
       </PlaybackContext.Provider>
-      {activeTrack && (librarySelectionBar === null || playerVisible) ? (
+      {activeTrack && !isLrcSynchronizerActive && (librarySelectionBar === null || playerVisible) ? (
         <PlayerOverlay
           visible={playerVisible}
           track={activeTrack}

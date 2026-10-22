@@ -126,6 +126,10 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
   );
   const searchRoute = state.routes.find((route) => route.name === 'Search');
   const activeMainIndex = mainRoutes.findIndex((r) => r.key === state.routes[state.index]?.key);
+  const focusedRoute = state.routes[state.index];
+  const focusedNestedRoute = focusedRoute?.state?.routes?.[focusedRoute.state.index ?? 0];
+  const isLrcSynchronizerActive = focusedRoute?.name === 'Library'
+    && focusedNestedRoute?.name === 'LrcSynchronizer';
   const count = mainRoutes.length;
   const islandWidth = windowWidth - 32;
   const collapsedIslandWidth = islandWidth - BAR_HEIGHT - 12;
@@ -316,6 +320,8 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
       shadowOpacity: l * 0.35,
     };
   });
+
+  if (isLrcSynchronizerActive) return null;
 
   return (
     <View style={styles.root} pointerEvents="box-none">

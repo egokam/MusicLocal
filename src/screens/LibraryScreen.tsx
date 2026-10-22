@@ -15,6 +15,7 @@ import { getMusicApiHeaders } from '../services/MusicCatalogService';
 import { OfflineMusicService } from '../services/OfflineMusicService';
 import { DownloaderScreen } from './DownloaderScreen';
 import { LrcCheckerScreen } from './LrcCheckerScreen';
+import { LrcSynchronizerScreen } from './LrcSynchronizerScreen';
 import { PlaylistsScreen } from './PlaylistsScreen';
 import { SongsScreen } from './SongsScreen';
 import { AlbumsScreen } from './AlbumsScreen';
@@ -35,6 +36,7 @@ type LibraryStackParamList = {
   AddSongsToPlaylist: { playlistId: string; title: string };
   Downloader: undefined;
   LrcChecker: undefined;
+  LrcSynchronizer: undefined;
 };
 
 const Stack = createNativeStackNavigator<LibraryStackParamList>();
@@ -57,6 +59,7 @@ const LibraryHomeScreen = ({
             if (title === 'Playlists') navigation.navigate('Playlists');
             if (title === 'Downloader') navigation.navigate('Downloader');
             if (title === 'LRC Checker') navigation.navigate('LrcChecker');
+            if (title === 'LRC Synchronizer') navigation.navigate('LrcSynchronizer');
           }}
         />
         <View style={{ marginTop: 26, marginBottom: 12 }}>
@@ -853,6 +856,12 @@ const LrcCheckerRoute = ({
   );
 };
 
+const LrcSynchronizerRoute = ({
+  navigation,
+}: NativeStackScreenProps<LibraryStackParamList, 'LrcSynchronizer'>) => (
+  <LrcSynchronizerScreen onBack={navigation.goBack} />
+);
+
 export const LibraryScreen = () => (
   <Stack.Navigator
     initialRouteName="LibraryHome"
@@ -881,5 +890,6 @@ export const LibraryScreen = () => (
     <Stack.Screen name="AddSongsToPlaylist" component={AddSongsToPlaylistRoute} />
     <Stack.Screen name="Downloader" component={DownloaderRoute} />
     <Stack.Screen name="LrcChecker" component={LrcCheckerRoute} />
+    <Stack.Screen name="LrcSynchronizer" component={LrcSynchronizerRoute} />
   </Stack.Navigator>
 );
