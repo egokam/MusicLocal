@@ -8,9 +8,7 @@ const routeButtonStyle = {
   alignItems: 'center' as const,
   justifyContent: 'center' as const,
   borderRadius: 23,
-  borderWidth: 1,
-  borderColor: 'rgba(250,82,101,0.34)',
-  backgroundColor: 'rgba(250,82,101,0.10)',
+  backgroundColor: 'transparent',
 };
 
 const hasIOSRoutePicker = () => {
@@ -31,7 +29,7 @@ export const PlayerOutputRouteButton = () => {
       >
         <AVRoutePickerView
           color="rgba(255,255,255,0.68)"
-          activeColor="#FA5265"
+          activeColor="rgba(255,255,255,0.68)"
           style={{ width: 44, height: 44 }}
           accessibilityLabel="Choose an AirPlay audio output"
         />

@@ -925,11 +925,15 @@ const PlayerOverlayView = ({
                   hitSlop={10}
                   style={{
                     padding: 8,
-                    borderRadius: 24,
-                    backgroundColor: queueExpanded ? 'rgba(255,255,255,0.16)' : 'transparent',
+                    borderRadius: 28,
+                    backgroundColor: queueExpanded ? 'rgba(255,255,255,0.78)' : 'transparent',
                   }}
                 >
-                  <Ionicons name="list" size={28} color="rgba(255,255,255,0.68)" />
+                  <Ionicons
+                    name="list"
+                    size={28}
+                    color={queueExpanded ? '#34291C' : 'rgba(255,255,255,0.68)'}
+                  />
                 </TouchableOpacity>
             </ReanimatedAnimated.View>
 
