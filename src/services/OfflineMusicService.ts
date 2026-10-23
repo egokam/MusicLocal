@@ -579,6 +579,65 @@ export const OfflineMusicService = {
     return updatedTrack;
   },
 
+  async replaceTrackAudio(track: Track, replacementUri: string): Promise<void> {
+    const indexedTracks = await readIndexedTracks();
+    const savedTrack = indexedTracks.find((item) => item.id === track.id);
+    if (!savedTrack?.localUri) throw new Error('This track is no longer in your local library.');
+
+    ensureDirectory();
+    const original = new File(savedTrack.localUri);
+    const replacement = new File(replacementUri);
+    const staging = new File(downloadsDirectory, `${safeName(track.id)}.sync-pending`);
+    const backup = new File(downloadsDirectory, `${safeName(track.id)}.sync-backup`);
+
+    if (backup.exists) {
+      if (original.exists) original.delete();
+      try {
+        await backup.move(original);
+      } catch {
+        throw new Error(`Could not restore the original MP3. Its backup is at ${backup.uri}.`);
+      }
+    }
+    if (!original.exists) throw new Error('The original library MP3 is no longer available.');
+    if (!replacement.exists || (replacement.size ?? 0) <= 0) {
+      throw new Error('The synchronized MP3 could not be found. The library track was not changed.');
+    }
+    if (original.uri === replacement.uri) throw new Error('The synchronized copy must be separate from the library original.');
+
+    if (staging.exists) staging.delete();
+
+    const expectedSize = replacement.size ?? 0;
+    await replacement.copy(staging);
+    if (!staging.exists || (staging.size ?? 0) !== expectedSize) {
+      if (staging.exists) staging.delete();
+      throw new Error('Could not stage the synchronized MP3. The library track was not changed.');
+    }
+
+    try {
+      await original.move(backup);
+      try {
+        await staging.move(original);
+        if (!original.exists || (original.size ?? 0) !== expectedSize) {
+          throw new Error('The synchronized MP3 could not replace the original completely.');
+        }
+      } catch (error) {
+        if (original.exists) original.delete();
+        if (backup.exists) {
+          try {
+            await backup.move(original);
+          } catch {
+            throw new Error(`Could not restore the original MP3. Its backup is at ${backup.uri}.`);
+          }
+        }
+        throw error;
+      }
+    } finally {
+      if (staging.exists) staging.delete();
+    }
+
+    if (backup.exists) backup.delete();
+  },
+
   async updateTrack(track: Track): Promise<void> {
     const current = await this.getDownloadedTracks();
     if (!current.some((item) => item.id === track.id)) return;

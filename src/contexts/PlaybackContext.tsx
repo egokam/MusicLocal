@@ -24,6 +24,12 @@ type PlaybackActions = {
   loadPlaylistTracks: (playlistId: string) => Promise<Track[]>;
   checkTrackLyrics: (track: Track, forceOnline?: boolean) => Promise<Track>;
   saveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
+  saveSynchronizedTrack: (
+    track: Track,
+    preparedMp3Uri: string,
+    syncedLyrics: string,
+    mode: 'overwrite' | 'new',
+  ) => Promise<Track>;
   connectToLibrary: (token: string) => Promise<void>;
   disconnectFromLibrary: () => Promise<void>;
   downloadTrack: (track: Track) => Promise<Track>;

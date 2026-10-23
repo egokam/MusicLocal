@@ -17,7 +17,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Directory, File } from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { LinearGradient } from 'expo-linear-gradient';
 import { parseBuffer } from 'music-metadata';
@@ -29,6 +29,7 @@ import { Id3SynchronizedLyricsService } from '../services/Id3SynchronizedLyricsS
 import type { Track } from '../types';
 
 type ImportedMp3 = {
+  libraryTrack: Track;
   uri: string;
   fileName: string;
   title: string;
@@ -106,7 +107,7 @@ const parseLyrics = (lyrics: string): TimedLyricLine[] => splitLyricText(lyrics)
   .map((text, index) => ({ id: `${index}-${text}`, text, timeMs: null }));
 
 export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
-  const { downloadedTracks, isLoadingTracks, apiInitializing } = usePlaybackActions();
+  const { downloadedTracks, isLoadingTracks, apiInitializing, saveSynchronizedTrack } = usePlaybackActions();
   const scrollY = useMemo(() => new Animated.Value(0), []);
   const player = useAudioPlayer(null, { updateInterval: 200 });
   const playerStatus = useAudioPlayerStatus(player);
@@ -126,11 +127,12 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   const [isImporting, setIsImporting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [pasteModalVisible, setPasteModalVisible] = useState(false);
   const [pastedLyrics, setPastedLyrics] = useState('');
   const [lineEditor, setLineEditor] = useState<{ lineId: string | null; text: string } | null>(null);
   const trackPickerTranslateY = useMemo(() => new Animated.Value(0), []);
+  const saveChoiceDialogOpen = useRef(false);
   const isDismissingTrackPicker = useRef(false);
   const trackPickerListScrollOffset = useRef(0);
   const availableMp3Tracks = useMemo(() => downloadedTracks.filter((track) => {
@@ -283,6 +285,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       const metadata = await parseBuffer(await file.bytes(), 'audio/mpeg');
       const { lyrics: embeddedLyrics, hadSyncedLyrics } = getEmbeddedLyrics(metadata);
       const imported: ImportedMp3 = {
+        libraryTrack: track,
         uri: file.uri,
         fileName: file.name,
         title: metadata.common.title?.trim() || track.title,
@@ -299,7 +302,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       loadLyrics(embeddedLyrics);
       dismissTrackPicker();
       setPlaybackError(null);
-      setExportError(null);
+      setSaveError(null);
       setPastedLyrics('');
     } catch (error) {
       setImportError(error instanceof Error ? error.message : 'Could not read this library MP3.');
@@ -340,13 +343,13 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   };
 
   const assignTimestampToSelectedLine = useCallback(() => {
-    if (!playerStatus.playing) {
+    if (!player.playing) {
       setPlaybackError('Start playback before assigning a timestamp.');
       return;
     }
     if (!selectedLineId) return;
 
-    const timestampMs = Math.max(0, Math.round(playerStatusRef.current.currentTime * 1000));
+    const timestampMs = Math.max(0, Math.round(player.currentTime * 1000));
     const selectedIndex = lyricLines.findIndex((line) => line.id === selectedLineId);
     if (selectedIndex < 0) return;
     const updatedLines = lyricLines.map((line) => (
@@ -357,20 +360,20 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     setLyricLines(updatedLines);
     setSelectedLineId(nextLine?.id ?? null);
     setPlaybackError(null);
-  }, [lyricLines, playerStatus.playing, selectedLineId]);
+  }, [lyricLines, player, selectedLineId]);
 
   const retimeLine = useCallback((line: TimedLyricLine) => {
     setSelectedLineId(line.id);
-    if (!playerStatusRef.current.playing) {
+    if (!player.playing) {
       setPlaybackError('Play the track, then tap a lyric line to set its timestamp.');
       return;
     }
-    const timestampMs = Math.max(0, Math.round(playerStatusRef.current.currentTime * 1000));
+    const timestampMs = Math.max(0, Math.round(player.currentTime * 1000));
     setLyricLines((currentLines) => currentLines.map((currentLine) => (
       currentLine.id === line.id ? { ...currentLine, timeMs: timestampMs } : currentLine
     )));
     setPlaybackError(null);
-  }, []);
+  }, [player]);
 
   const restartSynchronization = () => {
     Alert.alert(
@@ -435,13 +438,13 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       : currentId
   ), null);
 
-  const saveSynchronizedMp3 = async () => {
+  const saveSynchronizedMp3 = async (mode: 'overwrite' | 'new') => {
     if (!selectedMp3 || !canSave) return;
     setIsSaving(true);
-    setExportError(null);
+    setSaveError(null);
     try {
       if (Platform.OS === 'web') {
-        throw new Error('Saving synchronized MP3 files is available on iOS and Android.');
+        throw new Error('Saving synchronized tracks to your library is available on iOS and Android.');
       }
       const entries = exportableLines.filter((line): line is NonNullable<typeof line> => line !== null);
       const verifiedMp3 = await Id3SynchronizedLyricsService.createVerifiedMp3(
@@ -450,20 +453,83 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
         entries,
         trackDuration * 1000,
       );
-      const destinationDirectory = await Directory.pickDirectoryAsync();
-      const savedMp3 = await Id3SynchronizedLyricsService.copyToDirectory(
-        verifiedMp3,
-        destinationDirectory,
-        selectedMp3.fileName,
-        entries,
+      const syncedLyrics = entries
+        .map((entry) => `[${formatLyricTime(entry.timestampMs)}] ${entry.text}`)
+        .join('\n');
+      const previewWasPlaying = playerStatusRef.current.playing;
+      const previewPosition = playerStatusRef.current.currentTime;
+      const savedTrack = await saveSynchronizedTrack(
+        selectedMp3.libraryTrack,
+        verifiedMp3.uri,
+        syncedLyrics,
+        mode,
       );
-      Alert.alert('MP3 saved', `${savedMp3.name} was saved. Your original MP3 was not changed.`);
+      if (!savedTrack.localUri) throw new Error('The saved library track has no audio file.');
+
+      player.pause();
+      try {
+        player.replace({ uri: savedTrack.localUri });
+        await player.seekTo(Math.min(previewPosition, trackDuration || previewPosition));
+        if (previewWasPlaying) player.play();
+      } catch {
+        if (previewWasPlaying) player.play();
+      }
+
+      const savedFile = new File(savedTrack.localUri);
+      const savedLyrics = {
+        ...selectedMp3,
+        libraryTrack: savedTrack,
+        uri: savedTrack.localUri,
+        fileName: savedFile.name,
+        title: savedTrack.title,
+        artist: savedTrack.artist,
+        lyrics: syncedLyrics,
+        lyricsSource: 'embedded' as const,
+        hadSyncedLyrics: true,
+      };
+      setSelectedMp3(savedLyrics);
+      Alert.alert(
+        mode === 'overwrite' ? 'Track updated' : 'Saved as new track',
+        mode === 'overwrite'
+          ? `${savedTrack.title} was updated in your library.`
+          : `${savedTrack.title} was added to your library.`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!/cancel/i.test(message)) setExportError(message);
+      setSaveError(message);
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const showSaveOptions = () => {
+    if (!selectedMp3 || !canSave || saveChoiceDialogOpen.current) return;
+    saveChoiceDialogOpen.current = true;
+    const beginSave = (mode: 'overwrite' | 'new') => {
+      saveChoiceDialogOpen.current = false;
+      void saveSynchronizedMp3(mode);
+    };
+    Alert.alert(
+      'Save synchronized track',
+      `Choose how to save “${selectedMp3.title}” to your library.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => {
+            saveChoiceDialogOpen.current = false;
+          },
+        },
+        { text: 'Overwrite old track', style: 'destructive', onPress: () => beginSave('overwrite') },
+        { text: 'Save as new track', onPress: () => beginSave('new') },
+      ],
+      {
+        cancelable: true,
+        onDismiss: () => {
+          saveChoiceDialogOpen.current = false;
+        },
+      },
+    );
   };
 
   return (
@@ -978,10 +1044,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             </Text>
           ) : null}
           <TouchableOpacity
-            onPress={() => void saveSynchronizedMp3()}
+            onPress={showSaveOptions}
             disabled={!canSave}
             accessibilityRole="button"
-            accessibilityLabel="Save synchronized MP3"
+            accessibilityLabel="Choose how to save synchronized track"
             style={{
               minHeight: 44,
               marginTop: 10,
@@ -1000,12 +1066,12 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               ? <ActivityIndicator size="small" color="#FA5265" />
               : <Ionicons name="save-outline" size={17} color="#FA5265" />}
             <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>
-              {isSaving ? 'Preparing MP3…' : 'Save synchronized MP3'}
+              {isSaving ? 'Saving to library…' : 'Save to library'}
             </Text>
           </TouchableOpacity>
-          {exportError ? (
+          {saveError ? (
             <Text accessibilityRole="alert" style={{ color: '#FA7A89', fontSize: 11, lineHeight: 15, textAlign: 'center', marginTop: 6 }}>
-              {exportError}
+              {saveError}
             </Text>
           ) : selectedMp3 && !hasAllTimestamps ? (
             <Text style={{ color: '#A1A1A6', fontSize: 11, lineHeight: 15, textAlign: 'center', marginTop: 6 }}>

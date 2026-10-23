@@ -889,6 +889,62 @@ export default function App() {
     return updateTrackWithLyrics({ ...track, lyricsSource: 'saved_lrc' }, syncedLyrics);
   }, [updateTrackWithLyrics]);
 
+  const saveSynchronizedTrack = useCallback(async (
+    track: Track,
+    preparedMp3Uri: string,
+    syncedLyrics: string,
+    mode: 'overwrite' | 'new',
+  ) => {
+    const timedLines = parseLyrics(syncedLyrics).filter((line) => line.timeMs !== null && line.text.trim());
+    if (timedLines.length === 0) throw new Error('This result does not contain valid synced LRC lines.');
+
+    if (mode === 'overwrite') {
+      const isActiveTrack = activeTrackRef.current?.id === track.id;
+      const wasPlaying = playerPlayingRef.current;
+      const playbackPosition = playerCurrentTimeRef.current;
+      if (isActiveTrack) player.pause();
+
+      try {
+        await OfflineMusicService.replaceTrackAudio(track, preparedMp3Uri);
+        return await updateTrackWithLyrics({ ...track, lyricsSource: 'saved_lrc' }, syncedLyrics);
+      } finally {
+        if (isActiveTrack && track.localUri) {
+          try {
+            player.replace({ uri: track.localUri });
+            await player.seekTo(playbackPosition);
+            if (wasPlaying) player.play();
+          } catch {
+            if (wasPlaying) player.play();
+          }
+        }
+      }
+    }
+
+    const importedTrack = await OfflineMusicService.importLocalFile(
+      preparedMp3Uri,
+      track.title,
+      track.artist,
+      track.album,
+    );
+    const namedTrack = { ...importedTrack, title: `${track.title} (Synced)` };
+    await OfflineMusicService.updateTrack(namedTrack);
+    const updated = await OfflineMusicService.saveSyncedLyrics(
+      { ...namedTrack, lyricsSource: 'saved_lrc' },
+      syncedLyrics,
+    );
+    const trackWithFavoriteState = {
+      ...updated,
+      isFavorite: favoriteIdsRef.current.has(updated.id),
+    };
+    downloadsRef.current = [trackWithFavoriteState, ...downloadsRef.current.filter((item) => item.id !== updated.id)];
+    setDownloadedTracks(downloadsRef.current);
+    const nextTracks = [trackWithFavoriteState, ...tracksRef.current.filter((item) => item.id !== updated.id)];
+    tracksRef.current = nextTracks;
+    setTracks(nextTracks);
+    void NowPlayingWidgetService.initialize(nextTracks).catch(() => undefined);
+    return trackWithFavoriteState;
+  }, [player, updateTrackWithLyrics]);
+
   const checkTrackLyrics = useCallback(async (track: Track, forceOnline = false) => {
     const result = await MusicCatalogService.getLyrics(track, true, forceOnline);
     if (!result.syncedLyrics?.trim()) return result;
@@ -1036,6 +1092,7 @@ export default function App() {
     loadPlaylistTracks,
     checkTrackLyrics,
     saveTrackLyrics,
+    saveSynchronizedTrack,
     connectToLibrary,
     disconnectFromLibrary,
     downloadTrack,
@@ -1080,6 +1137,7 @@ export default function App() {
     searchTracks,
     loadAllTracks,
     saveTrackLyrics,
+    saveSynchronizedTrack,
     shuffleSongs,
     connectToLibrary,
     disconnectFromLibrary,
