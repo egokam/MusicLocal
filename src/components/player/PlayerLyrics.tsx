@@ -4,33 +4,41 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { GestureDetector, type NativeGesture } from 'react-native-gesture-handler';
-import Animated, { useAnimatedScrollHandler, type SharedValue } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
+import Animated, { useAnimatedReaction, useAnimatedScrollHandler, type SharedValue } from 'react-native-reanimated';
+import { useAudioPlayerStatus } from 'expo-audio';
 import type { LyricLine } from '../../types';
 
 type PlayerLyricsProps = {
+  player: Parameters<typeof useAudioPlayerStatus>[0];
   trackId: string;
   lyrics: LyricLine[];
-  activeLineIndex: number;
+  pauseAutoScroll: SharedValue<boolean>;
   viewportHeight: number;
   scrollGesture: NativeGesture;
   scrollOffset: SharedValue<number>;
   onSeek: (seconds: number) => void;
 };
 
+type PlayerLyricsListProps = PlayerLyricsProps & { activeLineIndex: number };
+
 const PlayerLyricsView = ({
   trackId,
   lyrics,
   activeLineIndex,
+  pauseAutoScroll,
   viewportHeight,
   scrollGesture,
   scrollOffset,
   onSeek,
-}: PlayerLyricsProps) => {
+}: PlayerLyricsListProps) => {
   const scrollRef = useRef<ScrollView>(null);
   const lineLayouts = useRef(new Map<number, { y: number; height: number }>());
   const activeLineRef = useRef(activeLineIndex);
   const viewportHeightRef = useRef(viewportHeight);
   const isManuallyScrolling = useRef(false);
+  const pauseAutoScrollRef = useRef(false);
+  const autoScrollFrame = useRef<number | null>(null);
   const recenterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animatedScrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -61,21 +69,58 @@ const PlayerLyricsView = ({
     });
   }, []);
 
+  const scheduleCenterLine = useCallback((lineIndex = activeLineRef.current) => {
+    if (autoScrollFrame.current !== null) cancelAnimationFrame(autoScrollFrame.current);
+    autoScrollFrame.current = requestAnimationFrame(() => {
+      autoScrollFrame.current = null;
+      if (!pauseAutoScrollRef.current && !isManuallyScrolling.current) {
+        centerLine(lineIndex, true);
+      }
+    });
+  }, [centerLine]);
+
+  const handlePauseAutoScrollChange = useCallback((paused: boolean) => {
+    pauseAutoScrollRef.current = paused;
+    if (paused) {
+      clearRecenterTimer();
+      isManuallyScrolling.current = false;
+      if (autoScrollFrame.current !== null) {
+        cancelAnimationFrame(autoScrollFrame.current);
+        autoScrollFrame.current = null;
+      }
+      return;
+    }
+
+    if (activeLineRef.current >= 0) scheduleCenterLine();
+  }, [clearRecenterTimer, scheduleCenterLine]);
+
+  useAnimatedReaction(
+    () => pauseAutoScroll.value,
+    (paused, previous) => {
+      if (paused !== previous) scheduleOnRN(handlePauseAutoScrollChange, paused);
+    },
+    [handlePauseAutoScrollChange, pauseAutoScroll],
+  );
+
   const recenterAfterManualScroll = useCallback(() => {
     clearRecenterTimer();
     recenterTimer.current = setTimeout(() => {
+      if (pauseAutoScrollRef.current) return;
       isManuallyScrolling.current = false;
       centerLine(activeLineRef.current, true);
     }, 2000);
   }, [centerLine, clearRecenterTimer]);
 
   useEffect(() => {
-    if (!isManuallyScrolling.current && activeLineIndex >= 0) {
-      requestAnimationFrame(() => centerLine(activeLineIndex, true));
+    if (!pauseAutoScrollRef.current && !isManuallyScrolling.current && activeLineIndex >= 0) {
+      scheduleCenterLine(activeLineIndex);
     }
-  }, [activeLineIndex, centerLine, viewportHeight]);
+  }, [activeLineIndex, scheduleCenterLine, viewportHeight]);
 
-  useEffect(() => () => clearRecenterTimer(), [clearRecenterTimer, trackId]);
+  useEffect(() => () => {
+    clearRecenterTimer();
+    if (autoScrollFrame.current !== null) cancelAnimationFrame(autoScrollFrame.current);
+  }, [clearRecenterTimer, trackId]);
 
   return (
     <GestureDetector gesture={scrollGesture}>
@@ -87,6 +132,7 @@ const PlayerLyricsView = ({
         scrollEventThrottle={16}
         onScroll={animatedScrollHandler}
         onScrollBeginDrag={() => {
+          if (pauseAutoScrollRef.current) return;
           clearRecenterTimer();
           isManuallyScrolling.current = true;
         }}
@@ -106,7 +152,11 @@ const PlayerLyricsView = ({
               key={`${trackId}-lyric-${index}`}
               onLayout={(event) => {
                 lineLayouts.current.set(index, event.nativeEvent.layout);
-                if (index === activeLineRef.current && !isManuallyScrolling.current) {
+                if (
+                  index === activeLineRef.current &&
+                  !isManuallyScrolling.current &&
+                  !pauseAutoScrollRef.current
+                ) {
                   centerLine(index, false);
                 }
               }}
@@ -141,4 +191,35 @@ const PlayerLyricsView = ({
   );
 };
 
-export const PlayerLyrics = React.memo(PlayerLyricsView);
+const areLyricsListPropsEqual = (previous: PlayerLyricsListProps, next: PlayerLyricsListProps) =>
+  previous.trackId === next.trackId &&
+  previous.lyrics === next.lyrics &&
+  previous.activeLineIndex === next.activeLineIndex &&
+  previous.pauseAutoScroll === next.pauseAutoScroll &&
+  previous.viewportHeight === next.viewportHeight &&
+  previous.scrollGesture === next.scrollGesture &&
+  previous.scrollOffset === next.scrollOffset &&
+  previous.onSeek === next.onSeek;
+
+const PlayerLyricsList = React.memo(PlayerLyricsView, areLyricsListPropsEqual);
+
+const PlayerLyricsStatusView = (props: PlayerLyricsProps) => {
+  const { currentTime } = useAudioPlayerStatus(props.player);
+  const activeLineIndex = props.lyrics.reduce((activeIndex, line, index) =>
+    line.text.trim().length > 0 && line.timeMs !== null && line.timeMs <= currentTime * 1000
+      ? index
+      : activeIndex,
+  -1);
+
+  return <PlayerLyricsList {...props} activeLineIndex={activeLineIndex} />;
+};
+
+export const PlayerLyrics = React.memo(PlayerLyricsStatusView, (previous, next) =>
+  previous.trackId === next.trackId &&
+  previous.lyrics === next.lyrics &&
+  previous.pauseAutoScroll === next.pauseAutoScroll &&
+  previous.viewportHeight === next.viewportHeight &&
+  previous.scrollGesture === next.scrollGesture &&
+  previous.scrollOffset === next.scrollOffset &&
+  previous.onSeek === next.onSeek,
+);

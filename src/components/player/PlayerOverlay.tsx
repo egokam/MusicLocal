@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
+import { useAudioPlayerStatus } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -26,13 +27,64 @@ const getArtworkSource = (track: Track) => track.artwork
     }
   : undefined;
 
+const formatTime = (seconds: number) =>
+  `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+
+const PlayerProgress = ({
+  player,
+  isLiveRadio,
+  fallbackDurationSeconds,
+  onSeek,
+}: {
+  player: Parameters<typeof useAudioPlayerStatus>[0];
+  isLiveRadio: boolean;
+  fallbackDurationSeconds: number;
+  onSeek: (seconds: number) => void;
+}) => {
+  const status = useAudioPlayerStatus(player);
+  const elapsedSeconds = Math.max(0, status.currentTime);
+  const totalSeconds = Math.max(0, status.duration || fallbackDurationSeconds);
+  const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
+
+  if (isLiveRadio) {
+    return (
+      <View style={{ minHeight: 55, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ minHeight: 32, paddingHorizontal: 14, borderRadius: 18, backgroundColor: 'rgba(250,82,101,0.14)', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#FA5265' }} />
+          <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '800', letterSpacing: 1.1 }}>LIVE STREAM</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <PlayerSlider
+        value={totalSeconds > 0 ? elapsedSeconds / totalSeconds : 0}
+        accessibilityLabel="Playback position"
+        activeColor="rgba(255,255,255,0.88)"
+        disabled={totalSeconds <= 0}
+        onSlidingComplete={(value) => onSeek(value * totalSeconds)}
+      />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 }}>
+        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, fontWeight: '600' }}>
+          {formatTime(elapsedSeconds)}
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, fontWeight: '600' }}>
+          -{formatTime(remainingSeconds)}
+        </Text>
+      </View>
+    </>
+  );
+};
+
 const PlayerOverlayView = ({
   visible,
+  player,
   track,
   lyricsLoadingTrackId,
   isFavorite,
   isPlaying,
-  currentTime,
   durationSeconds,
   volume,
   queue,
@@ -54,11 +106,11 @@ const PlayerOverlayView = ({
   onClearQueue,
 }: {
   visible: boolean;
+  player: Parameters<typeof useAudioPlayerStatus>[0];
   track: Track;
   lyricsLoadingTrackId: string | null;
   isFavorite: boolean;
   isPlaying: boolean;
-  currentTime: number;
   durationSeconds: number;
   volume: number;
   queue: Track[];
@@ -87,6 +139,7 @@ const PlayerOverlayView = ({
   const lyricsProgress = useSharedValue(0);
   const queueContentProgress = useSharedValue(0);
   const detailsScrollOffset = useSharedValue(0);
+  const pauseLyricsAutoScroll = useSharedValue(false);
   const sheetPanAllowed = useSharedValue(true);
   const trackTransition = useSharedValue(1);
   const trackTransitionGeneration = useRef(0);
@@ -137,26 +190,6 @@ const PlayerOverlayView = ({
   const isLiveRadio = renderedTrack.provider === 'radio';
   const canFavoriteTrack = renderedTrack.provider === 'local';
   const detailsExpanded = (lyricsExpanded && canShowLyrics) || queueExpanded;
-  const elapsedSeconds = Math.max(0, currentTime);
-  const totalSeconds = Math.max(0, durationSeconds);
-  const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
-  const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-  const activeLyricIndex = useMemo(() => {
-    if (!lyricsExpanded || !hasLyrics) return -1;
-    return lyrics.reduce((activeIndex, line, index) =>
-      line.text.trim().length > 0 && line.timeMs !== null && line.timeMs <= elapsedSeconds * 1000
-        ? index
-        : activeIndex,
-    -1);
-  }, [elapsedSeconds, hasLyrics, lyrics, lyricsExpanded]);
-  const incomingActiveLyricIndex = useMemo(() => {
-    if (!incomingHasLyrics) return -1;
-    return incomingLyrics.reduce((activeIndex, line, index) =>
-      line.text.trim().length > 0 && line.timeMs !== null && line.timeMs <= elapsedSeconds * 1000
-        ? index
-        : activeIndex,
-    -1);
-  }, [elapsedSeconds, incomingHasLyrics, incomingLyrics]);
   const activeQueueIndex = useMemo(
     () => queue.findIndex((item) => item.id === renderedTrack.id),
     [queue, renderedTrack.id],
@@ -343,11 +376,14 @@ const PlayerOverlayView = ({
           velocity: -velocityY / collapseDistance,
         },
         (finished) => {
-          if (finished) scheduleOnRN(closeOnJS);
+          if (finished) {
+            pauseLyricsAutoScroll.value = false;
+            scheduleOnRN(closeOnJS);
+          }
         },
       );
     },
-    [closeOnJS, collapseDistance, progress],
+    [closeOnJS, collapseDistance, pauseLyricsAutoScroll, progress],
   );
 
   useEffect(() => {
@@ -369,9 +405,11 @@ const PlayerOverlayView = ({
         damping: 29,
         mass: 0.9,
         velocity: -velocityY / collapseDistance,
+      }, (finished) => {
+        if (finished) pauseLyricsAutoScroll.value = false;
       });
     },
-    [collapseDistance, progress],
+    [collapseDistance, pauseLyricsAutoScroll, progress],
   );
 
   const restoreMiniPlayer = useCallback(
@@ -382,9 +420,11 @@ const PlayerOverlayView = ({
         damping: 29,
         mass: 0.9,
         velocity: -velocityY / collapseDistance,
+      }, (finished) => {
+        if (finished) pauseLyricsAutoScroll.value = false;
       });
     },
-    [collapseDistance, progress],
+    [collapseDistance, pauseLyricsAutoScroll, progress],
   );
 
   const openWithAnimation = useCallback(
@@ -399,11 +439,14 @@ const PlayerOverlayView = ({
           velocity: -velocityY / collapseDistance,
         },
         (finished) => {
-          if (finished) scheduleOnRN(openAfterGesture);
+          if (finished) {
+            pauseLyricsAutoScroll.value = false;
+            scheduleOnRN(openAfterGesture);
+          }
         },
       );
     },
-    [collapseDistance, openAfterGesture, progress],
+    [collapseDistance, openAfterGesture, pauseLyricsAutoScroll, progress],
   );
 
   const detailsScrollGesture = useMemo(
@@ -430,6 +473,7 @@ const PlayerOverlayView = ({
           cancelAnimation(progress);
           gestureChanged.value = false;
           gestureStartProgress.value = progress.value;
+          pauseLyricsAutoScroll.value = true;
         })
         .onUpdate((event) => {
           if (gestureStartedOnMiniPlaybackControl.value || !sheetPanAllowed.value) return;
@@ -462,6 +506,10 @@ const PlayerOverlayView = ({
             } else {
               restoreMiniPlayer(event.velocityY);
             }
+          } else if (startProgress >= 0.5) {
+            restoreExpandedPlayer();
+          } else {
+            restoreMiniPlayer();
           }
         })
         .onFinalize((_event, success) => {
@@ -476,6 +524,8 @@ const PlayerOverlayView = ({
             } else {
               restoreMiniPlayer();
             }
+          } else if (sheetPanAllowed.value && !success) {
+            pauseLyricsAutoScroll.value = false;
           }
           sheetPanAllowed.value = true;
         }),
@@ -495,6 +545,7 @@ const PlayerOverlayView = ({
       queueExpanded,
       restoreExpandedPlayer,
       restoreMiniPlayer,
+      pauseLyricsAutoScroll,
       sheetPanAllowed,
       visible,
       windowWidth,
@@ -516,6 +567,12 @@ const PlayerOverlayView = ({
     borderTopRightRadius: interpolate(progress.value, [0, 1], [32, 40]),
     borderBottomLeftRadius: interpolate(progress.value, [0, 1], [32, 0]),
     borderBottomRightRadius: interpolate(progress.value, [0, 1], [32, 0]),
+  }));
+  const backgroundArtworkPositionStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: interpolate(progress.value, [0, 1], [-16, 0]) },
+      { translateY: interpolate(progress.value, [0, 1], [-miniTop, 0]) },
+    ],
   }));
   const expandedSurfaceStyle = useAnimatedStyle(() => ({
     opacity: progress.value,
@@ -660,26 +717,34 @@ const PlayerOverlayView = ({
     return { top: center + 100 };
   });
   const lyricsPanelStyle = useAnimatedStyle(() => ({
-    top: lyricsTextTop,
-    height: interpolate(
-      lyricsProgress.value,
-      [0, 1],
-                  [0, lyricsViewportHeight],
-    ),
-    opacity: lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
-      ? 1 - interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
-      : 0),
-  }));
-  const incomingLyricsPanelStyle = useAnimatedStyle(() => ({
-    top: lyricsTextTop,
     height: interpolate(
       lyricsProgress.value,
       [0, 1],
       [0, lyricsViewportHeight],
     ),
-    opacity: lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
-      ? interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
-      : 1),
+    opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0, 1]) *
+      lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
+        ? 1 - interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
+        : 0),
+    transform: [
+      { scaleX: interpolate(progress.value, [0, 1], [Math.max(windowWidth - 92, 1) / Math.max(windowWidth - 60, 1), 1]) },
+      { translateY: interpolate(progress.value, [0, 1], [miniTop, 0]) },
+    ],
+  }));
+  const incomingLyricsPanelStyle = useAnimatedStyle(() => ({
+    height: interpolate(
+      lyricsProgress.value,
+      [0, 1],
+      [0, lyricsViewportHeight],
+    ),
+    opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0, 1]) *
+      lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
+        ? interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
+        : 1),
+    transform: [
+      { scaleX: interpolate(progress.value, [0, 1], [Math.max(windowWidth - 92, 1) / Math.max(windowWidth - 60, 1), 1]) },
+      { translateY: interpolate(progress.value, [0, 1], [miniTop, 0]) },
+    ],
   }));
   const queuePanelStyle = useAnimatedStyle(() => ({
     top: lyricsTextTop,
@@ -777,13 +842,8 @@ const PlayerOverlayView = ({
             resizeMode="cover"
             blurRadius={20}
             style={[
-              {
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-              },
+              { position: 'absolute', top: 0, left: 0, width: windowWidth, height: windowHeight },
+              backgroundArtworkPositionStyle,
               oldArtworkBackgroundStyle,
             ]}
           />
@@ -793,13 +853,8 @@ const PlayerOverlayView = ({
               resizeMode="cover"
               blurRadius={20}
               style={[
-                {
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                },
+                { position: 'absolute', top: 0, left: 0, width: windowWidth, height: windowHeight },
+                backgroundArtworkPositionStyle,
                 incomingArtworkBackgroundStyle,
               ]}
             />
@@ -845,64 +900,6 @@ const PlayerOverlayView = ({
               expandedContentStyle,
             ]}
           >
-            {visible && lyricsExpanded && isTrackTransitioning ? (
-              <ReanimatedAnimated.View
-                pointerEvents="none"
-                style={[
-                  { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
-                  lyricsPanelStyle,
-                ]}
-              >
-                {hasLyrics ? (
-                  <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
-                    <PlayerLyrics
-                      key={renderedTrack.id}
-                      trackId={renderedTrack.id}
-                      lyrics={lyrics}
-                      activeLineIndex={activeLyricIndex}
-                      viewportHeight={lyricsViewportHeight}
-                      scrollGesture={detailsScrollGesture}
-                      scrollOffset={detailsScrollOffset}
-                      onSeek={onSeek}
-                    />
-                  </ReanimatedAnimated.View>
-                ) : isLyricsLoading ? (
-                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 15 }}>Checking for lyrics…</Text>
-                  </View>
-                ) : null}
-              </ReanimatedAnimated.View>
-            ) : null}
-            {/* Keep the incoming lyrics mounted as the active panel after handoff. */}
-            {incomingLyricsExpanded ? (
-              <ReanimatedAnimated.View
-                pointerEvents="auto"
-                style={[
-                  { position: 'absolute', left: 30, right: 30, overflow: 'hidden' },
-                  incomingLyricsPanelStyle,
-                ]}
-              >
-                {incomingHasLyrics ? (
-                  <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
-                    <PlayerLyrics
-                      key={track.id}
-                      trackId={track.id}
-                      lyrics={incomingLyrics}
-                      activeLineIndex={incomingActiveLyricIndex}
-                      viewportHeight={lyricsViewportHeight}
-                      scrollGesture={detailsScrollGesture}
-                      scrollOffset={detailsScrollOffset}
-                      onSeek={onSeek}
-                    />
-                  </ReanimatedAnimated.View>
-                ) : incomingIsLyricsLoading ? (
-                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 15 }}>Checking for lyrics…</Text>
-                  </View>
-                ) : null}
-              </ReanimatedAnimated.View>
-            ) : null}
-
             {visible && queueExpanded && isTrackTransitioning ? (
               <ReanimatedAnimated.View
                 pointerEvents="none"
@@ -959,32 +956,14 @@ const PlayerOverlayView = ({
                 expandedProgressStyle,
               ]}
             >
-                {isLiveRadio ? (
-                  <View style={{ minHeight: 55, alignItems: 'center', justifyContent: 'center' }}>
-                    <View style={{ minHeight: 32, paddingHorizontal: 14, borderRadius: 18, backgroundColor: 'rgba(250,82,101,0.14)', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#FA5265' }} />
-                      <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '800', letterSpacing: 1.1 }}>LIVE STREAM</Text>
-                    </View>
-                  </View>
-                ) : (
-                  <>
-                    <PlayerSlider
-                      value={totalSeconds > 0 ? elapsedSeconds / totalSeconds : 0}
-                      accessibilityLabel="Playback position"
-                      activeColor="rgba(255,255,255,0.88)"
-                      disabled={totalSeconds <= 0}
-                      onSlidingComplete={(value) => onSeek(value * totalSeconds)}
-                    />
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 }}>
-                      <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, fontWeight: '600' }}>
-                        {formatTime(elapsedSeconds)}
-                      </Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, fontWeight: '600' }}>
-                        -{formatTime(remainingSeconds)}
-                      </Text>
-                    </View>
-                  </>
-                )}
+              {visible ? (
+                <PlayerProgress
+                  player={player}
+                  isLiveRadio={isLiveRadio}
+                  fallbackDurationSeconds={durationSeconds}
+                  onSeek={onSeek}
+                />
+              ) : null}
             </ReanimatedAnimated.View>
 
             <ReanimatedAnimated.View
@@ -1379,15 +1358,75 @@ const PlayerOverlayView = ({
           ) : null}
         </ReanimatedAnimated.View>
       </GestureDetector>
+      {visible && lyricsExpanded && isTrackTransitioning ? (
+        <ReanimatedAnimated.View
+          pointerEvents="none"
+          style={[
+            { position: 'absolute', left: 30, right: 30, top: lyricsTextTop, overflow: 'hidden', zIndex: 21 },
+            lyricsPanelStyle,
+          ]}
+        >
+          {hasLyrics ? (
+            <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
+              <PlayerLyrics
+                key={renderedTrack.id}
+                player={player}
+                trackId={renderedTrack.id}
+                lyrics={lyrics}
+                pauseAutoScroll={pauseLyricsAutoScroll}
+                viewportHeight={lyricsViewportHeight}
+                scrollGesture={detailsScrollGesture}
+                scrollOffset={detailsScrollOffset}
+                onSeek={onSeek}
+              />
+            </ReanimatedAnimated.View>
+          ) : isLyricsLoading ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 15 }}>Checking for lyrics…</Text>
+            </View>
+          ) : null}
+        </ReanimatedAnimated.View>
+      ) : null}
+      {/* Keep the incoming lyrics mounted as the active panel after handoff. */}
+      {visible && incomingLyricsExpanded ? (
+        <ReanimatedAnimated.View
+          pointerEvents="auto"
+          style={[
+            { position: 'absolute', left: 30, right: 30, top: lyricsTextTop, overflow: 'hidden', zIndex: 21 },
+            incomingLyricsPanelStyle,
+          ]}
+        >
+          {incomingHasLyrics ? (
+            <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
+              <PlayerLyrics
+                key={track.id}
+                player={player}
+                trackId={track.id}
+                lyrics={incomingLyrics}
+                pauseAutoScroll={pauseLyricsAutoScroll}
+                viewportHeight={lyricsViewportHeight}
+                scrollGesture={detailsScrollGesture}
+                scrollOffset={detailsScrollOffset}
+                onSeek={onSeek}
+              />
+            </ReanimatedAnimated.View>
+          ) : incomingIsLyricsLoading ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 15 }}>Checking for lyrics…</Text>
+            </View>
+          ) : null}
+        </ReanimatedAnimated.View>
+      ) : null}
     </ReanimatedAnimated.View>
   );
 };
 
-type PlayerOverlayProps = React.ComponentProps<typeof PlayerOverlayView>;
+type PlayerOverlayViewProps = React.ComponentProps<typeof PlayerOverlayView>;
 
-const playerOverlayPropsAreEqual = (previous: PlayerOverlayProps, next: PlayerOverlayProps) => {
+const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: PlayerOverlayViewProps) => {
   if (
     previous.visible !== next.visible ||
+    previous.player !== next.player ||
     previous.track !== next.track ||
     previous.lyricsLoadingTrackId !== next.lyricsLoadingTrackId ||
     previous.isFavorite !== next.isFavorite ||
@@ -1410,7 +1449,6 @@ const playerOverlayPropsAreEqual = (previous: PlayerOverlayProps, next: PlayerOv
   if (!next.visible) return true;
 
   return (
-    previous.currentTime === next.currentTime &&
     previous.durationSeconds === next.durationSeconds &&
     previous.volume === next.volume &&
     previous.queue === next.queue &&
@@ -1420,4 +1458,4 @@ const playerOverlayPropsAreEqual = (previous: PlayerOverlayProps, next: PlayerOv
   );
 };
 
-export const PlayerOverlay = React.memo(PlayerOverlayView, playerOverlayPropsAreEqual);
+export const PlayerOverlay = React.memo(PlayerOverlayView, playerOverlayViewPropsAreEqual);

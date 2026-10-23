@@ -4,7 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
-import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioStatus } from 'expo-audio';
 import { Directory, File, Paths } from 'expo-file-system';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
@@ -71,10 +71,27 @@ const getWidgetLaunchTrackId = (url: string) => {
   }
 };
 
+const PlayerStatusBridge = ({
+  player,
+  onStatus,
+}: {
+  player: ReturnType<typeof useAudioPlayer>;
+  onStatus: (status: AudioStatus) => void;
+}) => {
+  const status = useAudioPlayerStatus(player);
+
+  useEffect(() => {
+    onStatus(status);
+  }, [onStatus, status]);
+
+  return null;
+};
+
 export default function App() {
   const player = useAudioPlayer(null, { updateInterval: 250 });
-  const playerStatus = useAudioPlayerStatus(player);
   const [playerVolume, setPlayerVolumeState] = useState(player.volume);
+  const [playerIsPlaying, setPlayerIsPlaying] = useState(false);
+  const [playerDuration, setPlayerDuration] = useState(0);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playCounts, setPlayCounts] = useState<PlaybackCounts>({});
   const [favoriteTracks, setFavoriteTracks] = useState<Track[]>([]);
@@ -150,18 +167,6 @@ export default function App() {
   useEffect(() => {
     tracksRef.current = tracks;
   }, [tracks]);
-
-  useEffect(() => {
-    playerPlayingRef.current = playerStatus.playing;
-  }, [playerStatus.playing]);
-
-  useEffect(() => {
-    playerCurrentTimeRef.current = playerStatus.currentTime;
-  }, [playerStatus.currentTime]);
-
-  useEffect(() => {
-    playerDurationRef.current = playerStatus.duration;
-  }, [playerStatus.duration]);
 
   useEffect(() => {
     downloadsRef.current = downloadedTracks;
@@ -459,10 +464,10 @@ export default function App() {
     };
 
     publishWidgetState();
-    if (!playerStatus.playing) return;
+    if (!playerIsPlaying) return;
     const progressTimer = setInterval(publishWidgetState, 2000);
     return () => clearInterval(progressTimer);
-  }, [activeTrack, playerStatus.playing]);
+  }, [activeTrack, playerIsPlaying]);
 
   const loadMoreAudiusMixTracks = useCallback(async (mixId: string) => {
     if (!AUDIO_MIXES.some((mix) => mix.id === mixId) || loadingAudiusMixPages.current.has(mixId)) return;
@@ -612,6 +617,28 @@ export default function App() {
       }
     }
   }, [autoplayEnabled, loadMoreAudiusMixTracks, player, playSelectedTrack, repeatMode]);
+
+  const handlePlayerStatus = useCallback((status: AudioStatus) => {
+    playerCurrentTimeRef.current = status.currentTime;
+
+    if (playerPlayingRef.current !== status.playing) {
+      playerPlayingRef.current = status.playing;
+      setPlayerIsPlaying(status.playing);
+    }
+    if (playerDurationRef.current !== status.duration) {
+      playerDurationRef.current = status.duration;
+      setPlayerDuration(status.duration);
+    }
+
+    if (!status.didJustFinish || !activeTrackRef.current) {
+      handledFinishedTrack.current = null;
+      return;
+    }
+    if (handledFinishedTrack.current !== activeTrackRef.current.id) {
+      handledFinishedTrack.current = activeTrackRef.current.id;
+      advanceQueue(true);
+    }
+  }, [advanceQueue]);
 
   const skipNext = useCallback(() => advanceQueue(false), [advanceQueue]);
 
@@ -872,17 +899,6 @@ export default function App() {
     return result;
   }, [updateTrackWithLyrics]);
 
-  useEffect(() => {
-    if (!playerStatus.didJustFinish || !activeTrackRef.current) {
-      handledFinishedTrack.current = null;
-      return;
-    }
-    if (handledFinishedTrack.current !== activeTrackRef.current.id) {
-      handledFinishedTrack.current = activeTrackRef.current.id;
-      advanceQueue(true);
-    }
-  }, [advanceQueue, playerStatus.didJustFinish]);
-
   const downloadTrack = useCallback(async (track: Track) => {
     setDownloadingTrackIds((current) => current.includes(track.id) ? current : [...current, track.id]);
     try {
@@ -1081,10 +1097,11 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <PlayerStatusBridge player={player} onStatus={handlePlayerStatus} />
       <AndroidUpdatePrompt />
       <PlaybackContext.Provider value={playbackActions}>
         <LibrarySelectionBarContext.Provider value={librarySelectionBarContextValue}>
-          <RadioPlaybackStatusContext.Provider value={playerStatus.playing}>
+          <RadioPlaybackStatusContext.Provider value={playerIsPlaying}>
             <NavigationContainer
               onStateChange={(navigationState) => {
                 const libraryRoute = navigationState?.routes.find((route) => route.name === 'Library');
@@ -1111,13 +1128,13 @@ export default function App() {
       </PlaybackContext.Provider>
       {activeTrack && !isLrcSynchronizerActive && (librarySelectionBar === null || playerVisible) ? (
         <PlayerOverlay
+          player={player}
           visible={playerVisible}
           track={activeTrack}
           lyricsLoadingTrackId={lyricsLoadingTrackId}
           isFavorite={Boolean(activeTrack.isFavorite)}
-          isPlaying={playerStatus.playing}
-          currentTime={playerStatus.currentTime}
-          durationSeconds={playerStatus.duration || activeTrack.durationSeconds || 0}
+          isPlaying={playerIsPlaying}
+          durationSeconds={playerDuration || activeTrack.durationSeconds || 0}
           volume={playerVolume}
           queue={playbackQueue}
           shuffleEnabled={shuffleEnabled}
