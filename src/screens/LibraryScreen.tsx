@@ -166,11 +166,11 @@ const DeveloperProfileScreen = ({
     setIsExportingLibrary(true);
     try {
       const destinationDirectory = await Directory.pickDirectoryAsync();
-      const result = await OfflineMusicService.exportDownloadedTracks(destinationDirectory);
+      const result = await OfflineMusicService.exportDownloadedTracksAsZip(destinationDirectory);
       Alert.alert(
-        result.exportedCount > 0 ? 'Library exported' : 'No tracks exported',
+        result.exportedCount > 0 ? 'Library ZIP exported' : 'No tracks exported',
         result.exportedCount > 0
-          ? `${result.exportedCount} audio track${result.exportedCount === 1 ? '' : 's'} exported${result.lyricCount ? ` with ${result.lyricCount} lyric file${result.lyricCount === 1 ? '' : 's'}` : ''}${result.artworkCount ? ` and ${result.artworkCount} artwork file${result.artworkCount === 1 ? '' : 's'}` : ''}.`
+          ? `${result.fileName} saved with ${result.exportedCount} audio track${result.exportedCount === 1 ? '' : 's'}${result.lyricCount ? `, ${result.lyricCount} lyric file${result.lyricCount === 1 ? '' : 's'}` : ''}${result.artworkCount ? `, and ${result.artworkCount} artwork file${result.artworkCount === 1 ? '' : 's'}` : ''}.`
           : 'No saved audio files were available to export.',
       );
     } catch (error) {
@@ -272,16 +272,16 @@ const DeveloperProfileScreen = ({
           onPress={() => void exportLibrary()}
           disabled={isExportingLibrary}
           accessibilityRole="button"
-          accessibilityLabel="Export all saved music to a folder"
+          accessibilityLabel="Export the full music library as a ZIP file"
           style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#3A3A3E', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isExportingLibrary ? 0.65 : 1 }}
         >
           <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
             {isExportingLibrary ? <ActivityIndicator color="white" /> : <Ionicons name="download-outline" size={28} color="white" />}
           </View>
           <View style={{ flex: 1, marginLeft: 15 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Export music</Text>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Export library ZIP</Text>
             <Text style={{ color: '#A1A1A6', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
-              Save your tracks and available lyrics to a folder you choose.
+              Create one ZIP with your tracks, available lyrics, artwork, and library details.
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={21} color="#FA5265" />

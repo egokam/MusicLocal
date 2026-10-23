@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensio
 import { GlassContainer, GlassView, isLiquidGlassAvailable, type GlassEffectStyleConfig, type GlassStyle } from 'expo-glass-effect';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+import { StackActions } from '@react-navigation/native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -221,7 +222,7 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
       const route = mainRoutes[mainIndex];
       if (!route) return;
       const routeIndex = state.routes.findIndex((r) => r.key === route.key);
-      if (state.index === routeIndex) return;
+      const isFocused = state.index === routeIndex;
 
       const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
       if (event.defaultPrevented) {
@@ -230,7 +231,21 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
         position.value = withSpring(back, SETTLE);
         return;
       }
-      navigation.navigate(route.name);
+
+      if (route.name === 'Library') {
+        const libraryState = route.state;
+        const libraryScreen = libraryState?.routes?.[libraryState.index ?? 0];
+        if (libraryState?.key && libraryScreen?.name !== 'LibraryHome') {
+          navigation.dispatch({
+            ...StackActions.popToTop(),
+            target: libraryState.key,
+          });
+        }
+        if (!isFocused) navigation.navigate(route.name);
+        return;
+      }
+
+      if (!isFocused) navigation.navigate(route.name);
     },
     [activeMainIndex, mainRoutes, navigation, position, state.index, state.routes, target],
   );

@@ -326,6 +326,48 @@ export const Id3SynchronizedLyricsService = {
     }
   },
 
+  async restoreLatestSynchronizedMp3(sourceFileName: string, destinationUri: string) {
+    if (!OUTPUT_DIRECTORY.exists) return null;
+    const baseName = safeFileName(sourceFileName.replace(/\.mp3$/i, ''));
+    const prefix = `${baseName}-synchronized-`;
+    const candidates = OUTPUT_DIRECTORY.list()
+      .filter((item): item is File => item instanceof File
+        && item.name.startsWith(prefix)
+        && item.extension.toLowerCase() === '.mp3')
+      .sort((first, second) => second.name.localeCompare(first.name));
+
+    for (const candidate of candidates) {
+      try {
+        const metadata = await parseBuffer(await readMetadataSample(candidate), 'audio/mpeg');
+        const frame = collectFrames(metadata, 'SYLT').find((item) => {
+          const value = item.value;
+          return isRecord(value) && value.descriptor === SYNCHRONIZER_DESCRIPTOR;
+        });
+        if (!frame || !isRecord(frame.value)) continue;
+        const value = frame.value;
+        if (
+          value.language !== 'eng'
+          || value.contentType !== 1
+          || value.timeStampFormat !== 2
+          || !Array.isArray(value.syncText)
+          || value.syncText.length === 0
+          || !value.syncText.every((entry) => isRecord(entry)
+            && typeof entry.text === 'string'
+            && typeof entry.timestamp === 'number'
+            && Number.isFinite(entry.timestamp))
+        ) continue;
+
+        const destination = new File(destinationUri);
+        await candidate.copy(destination, { overwrite: true });
+        if (destination.exists && destination.size === candidate.size) return destination;
+      } catch {
+        // Try an older prepared copy if the newest one is incomplete.
+      }
+    }
+
+    return null;
+  },
+
   async copyToDirectory(verifiedMp3: File, destinationDirectory: Directory, sourceFileName: string, entries: SynchronizedLyricEntry[]) {
     const baseName = `${safeFileName(sourceFileName.replace(/\.mp3$/i, ''))} (synchronized)`;
     let outputName = `${baseName}.mp3`;

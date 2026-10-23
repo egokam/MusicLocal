@@ -133,6 +133,12 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   const [lineEditor, setLineEditor] = useState<{ lineId: string | null; text: string } | null>(null);
   const trackPickerTranslateY = useMemo(() => new Animated.Value(0), []);
   const saveChoiceDialogOpen = useRef(false);
+  const preparedMp3Ref = useRef<{
+    sourceUri: string;
+    syncedLyrics: string;
+    durationMs: number;
+    uri: string;
+  } | null>(null);
   const isDismissingTrackPicker = useRef(false);
   const trackPickerListScrollOffset = useRef(0);
   const availableMp3Tracks = useMemo(() => downloadedTracks.filter((track) => {
@@ -276,9 +282,11 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     setIsImporting(true);
     try {
       if (!track.localUri) throw new Error('This track is not stored on this device.');
-      const file = new File(track.localUri);
+      let file = new File(track.localUri);
       if (!file.exists || (file.size ?? 0) === 0) {
-        throw new Error('This library MP3 is empty or no longer available.');
+        const restored = await Id3SynchronizedLyricsService.restoreLatestSynchronizedMp3(file.name, file.uri);
+        if (!restored) throw new Error('This library MP3 is empty or no longer available.');
+        file = restored;
       }
       if (!file.name.toLocaleLowerCase().endsWith('.mp3')) throw new Error('Only local MP3 tracks can be synchronized.');
 
@@ -474,15 +482,30 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
         throw new Error('Saving synchronized tracks to your library is available on iOS and Android.');
       }
       const entries = exportableLines.filter((line): line is NonNullable<typeof line> => line !== null);
-      const verifiedMp3 = await Id3SynchronizedLyricsService.createVerifiedMp3(
-        selectedMp3.uri,
-        selectedMp3.fileName,
-        entries,
-        trackDuration * 1000,
-      );
       const syncedLyrics = entries
         .map((entry) => `[${formatLyricTime(entry.timestampMs)}] ${entry.text}`)
         .join('\n');
+      const durationMs = trackDuration * 1000;
+      const preparedCopy = preparedMp3Ref.current;
+      const reusableCopy = preparedCopy
+        && preparedCopy.sourceUri === selectedMp3.uri
+        && preparedCopy.syncedLyrics === syncedLyrics
+        && preparedCopy.durationMs === durationMs
+        && new File(preparedCopy.uri).exists
+        ? new File(preparedCopy.uri)
+        : null;
+      const verifiedMp3 = reusableCopy ?? await Id3SynchronizedLyricsService.createVerifiedMp3(
+        selectedMp3.uri,
+        selectedMp3.fileName,
+        entries,
+        durationMs,
+      );
+      preparedMp3Ref.current = {
+        sourceUri: selectedMp3.uri,
+        syncedLyrics,
+        durationMs,
+        uri: verifiedMp3.uri,
+      };
       const previewWasPlaying = playerStatusRef.current.playing;
       const previewPosition = playerStatusRef.current.currentTime;
       const savedTrack = await saveSynchronizedTrack(
@@ -492,6 +515,12 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
         mode,
       );
       if (!savedTrack.localUri) throw new Error('The saved library track has no audio file.');
+      preparedMp3Ref.current = null;
+      try {
+        if (verifiedMp3.exists) verifiedMp3.delete();
+      } catch {
+        // A leftover verified copy is harmless if cache cleanup is unavailable.
+      }
 
       player.pause();
       try {

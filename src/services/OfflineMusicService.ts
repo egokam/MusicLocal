@@ -1,4 +1,4 @@
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File, FileMode, Paths, type FileHandle } from 'expo-file-system';
 import { parseBuffer } from 'music-metadata';
 import { deduplicateSyncedLyrics, parseLyrics } from './LyricsParser';
 import { cacheArtworkForTrack } from './ArtworkService';
@@ -19,6 +19,166 @@ const safeExportName = (value: string) => value
   .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
   .replace(/[. ]+$/g, '')
   .trim() || 'Untitled';
+const safeExportExtension = (value: string | undefined, fallback: string) => {
+  const cleaned = (value || fallback).replace(/[^a-z0-9.]/gi, '');
+  if (!cleaned || cleaned === '.') return fallback;
+  return cleaned.startsWith('.') ? cleaned : `.${cleaned}`;
+};
+
+type ZipEntry = {
+  name: string;
+  file?: File;
+  bytes?: Uint8Array;
+};
+
+type ZipCentralEntry = {
+  name: Uint8Array;
+  crc: number;
+  size: number;
+  localOffset: number;
+};
+
+const zipCrcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value & 1) ? (value >>> 1) ^ 0xedb88320 : value >>> 1;
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+const updateZipCrc = (crc: number, bytes: Uint8Array) => {
+  let value = crc;
+  for (let index = 0; index < bytes.length; index += 1) {
+    value = (value >>> 8) ^ zipCrcTable[(value ^ bytes[index]) & 0xff];
+  }
+  return value >>> 0;
+};
+
+const setZip16 = (bytes: Uint8Array, offset: number, value: number) => {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >>> 8) & 0xff;
+};
+
+const setZip32 = (bytes: Uint8Array, offset: number, value: number) => {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >>> 8) & 0xff;
+  bytes[offset + 2] = (value >>> 16) & 0xff;
+  bytes[offset + 3] = (value >>> 24) & 0xff;
+};
+
+const setZip64 = (bytes: Uint8Array, offset: number, value: number) => {
+  const lowWord = value % 0x100000000;
+  const highWord = Math.floor(value / 0x100000000);
+  setZip32(bytes, offset, lowWord);
+  setZip32(bytes, offset + 4, highWord);
+};
+
+const zipDosTimestamp = (date: Date) => ({
+  time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+  date: (Math.min(2107, Math.max(1980, date.getFullYear())) - 1980) << 9 | ((date.getMonth() + 1) << 5) | date.getDate(),
+});
+
+const makeZipLocalHeader = (name: Uint8Array, time: number, date: number) => {
+  const header = new Uint8Array(30 + name.length + 20);
+  setZip32(header, 0, 0x04034b50);
+  setZip16(header, 4, 45);
+  setZip16(header, 6, 0x0808); // UTF-8 names and a ZIP64 data descriptor follow each file.
+  setZip16(header, 8, 0); // Stored: audio and image files are already compressed.
+  setZip16(header, 10, time);
+  setZip16(header, 12, date);
+  setZip32(header, 14, 0); // CRC is supplied in the data descriptor.
+  setZip32(header, 18, 0xffffffff);
+  setZip32(header, 22, 0xffffffff);
+  setZip16(header, 26, name.length);
+  setZip16(header, 28, 20);
+  header.set(name, 30);
+  const extraOffset = 30 + name.length;
+  setZip16(header, extraOffset, 1); // ZIP64 extended information.
+  setZip16(header, extraOffset + 2, 16);
+  // The sizes are unknown until the entry has streamed; ZIP64 data descriptors carry them.
+  return header;
+};
+
+const makeZipDataDescriptor = (crc: number, size: number) => {
+  const descriptor = new Uint8Array(24);
+  setZip32(descriptor, 0, 0x08074b50);
+  setZip32(descriptor, 4, crc);
+  setZip64(descriptor, 8, size);
+  setZip64(descriptor, 16, size);
+  return descriptor;
+};
+
+const makeZipCentralEntry = (entry: ZipCentralEntry, time: number, date: number) => {
+  const record = new Uint8Array(46 + entry.name.length + 28);
+  setZip32(record, 0, 0x02014b50);
+  setZip16(record, 4, 0x032d); // Unix creator, ZIP 4.5.
+  setZip16(record, 6, 45);
+  setZip16(record, 8, 0x0808);
+  setZip16(record, 10, 0);
+  setZip16(record, 12, time);
+  setZip16(record, 14, date);
+  setZip32(record, 16, entry.crc);
+  setZip32(record, 20, 0xffffffff);
+  setZip32(record, 24, 0xffffffff);
+  setZip16(record, 28, entry.name.length);
+  setZip16(record, 30, 28);
+  setZip16(record, 32, 0); // No file comment.
+  setZip16(record, 34, 0);
+  setZip16(record, 36, 0);
+  setZip32(record, 38, 0);
+  setZip32(record, 42, 0xffffffff);
+  record.set(entry.name, 46);
+  const extraOffset = 46 + entry.name.length;
+  setZip16(record, extraOffset, 1);
+  setZip16(record, extraOffset + 2, 24);
+  setZip64(record, extraOffset + 4, entry.size);
+  setZip64(record, extraOffset + 12, entry.size);
+  setZip64(record, extraOffset + 20, entry.localOffset);
+  return record;
+};
+
+const makeZip64EndRecord = (entryCount: number, centralSize: number, centralOffset: number) => {
+  const record = new Uint8Array(56);
+  setZip32(record, 0, 0x06064b50);
+  setZip64(record, 4, 44);
+  setZip16(record, 12, 0x032d);
+  setZip16(record, 14, 45);
+  setZip32(record, 16, 0);
+  setZip32(record, 20, 0);
+  setZip64(record, 24, entryCount);
+  setZip64(record, 32, entryCount);
+  setZip64(record, 40, centralSize);
+  setZip64(record, 48, centralOffset);
+  return record;
+};
+
+const makeZip64Locator = (endRecordOffset: number) => {
+  const locator = new Uint8Array(20);
+  setZip32(locator, 0, 0x07064b50);
+  setZip32(locator, 4, 0);
+  setZip64(locator, 8, endRecordOffset);
+  setZip32(locator, 16, 1);
+  return locator;
+};
+
+const makeZipEndRecord = () => {
+  const record = new Uint8Array(22);
+  setZip32(record, 0, 0x06054b50);
+  setZip16(record, 4, 0);
+  setZip16(record, 6, 0);
+  setZip16(record, 8, 0xffff);
+  setZip16(record, 10, 0xffff);
+  setZip32(record, 12, 0xffffffff);
+  setZip32(record, 16, 0xffffffff);
+  setZip16(record, 20, 0);
+  return record;
+};
+
+const yieldToUi = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 const idForImport = (url: string, title: string, artist: string) => {
   let hash = 2166136261;
@@ -285,11 +445,15 @@ export const OfflineMusicService = {
     return tracks.filter((track) => track.localUri && new File(track.localUri).exists);
   },
 
-  async exportDownloadedTracks(destinationDirectory: Directory): Promise<{ exportedCount: number; lyricCount: number; artworkCount: number }> {
+  async exportDownloadedTracksAsZip(destinationDirectory: Directory): Promise<{ fileName: string; exportedCount: number; lyricCount: number; artworkCount: number }> {
     const tracks = await this.getDownloadedTracks();
+    const entries: ZipEntry[] = [];
+    const manifestTracks: Record<string, unknown>[] = [];
     let exportedCount = 0;
     let lyricCount = 0;
     let artworkCount = 0;
+    const usedExportBases = new Set<string>();
+    const textEncoder = new TextEncoder();
 
     for (const track of tracks) {
       if (!track.localUri) continue;
@@ -297,31 +461,60 @@ export const OfflineMusicService = {
       if (!audioFile.exists) continue;
 
       const baseName = `${safeExportName(track.artist)} - ${safeExportName(track.title)}`;
-      const extension = audioFile.extension || track.fileExtension || '.mp3';
+      const extension = safeExportExtension(audioFile.extension || track.fileExtension, '.mp3');
       let exportBaseName = baseName;
       let suffix = 2;
-      while (new File(destinationDirectory, `${exportBaseName}${extension}`).exists) {
+      while (usedExportBases.has(exportBaseName.toLowerCase())) {
         exportBaseName = `${baseName} (${suffix})`;
         suffix += 1;
       }
-      const exportedAudio = new File(destinationDirectory, `${exportBaseName}${extension}`);
-      await audioFile.copy(exportedAudio);
+      usedExportBases.add(exportBaseName.toLowerCase());
+      const audioPath = `tracks/${exportBaseName}${extension}`;
+      entries.push({ name: audioPath, file: audioFile });
       exportedCount += 1;
+      const manifestTrack: Record<string, unknown> = {
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        duration: track.duration,
+        durationSeconds: track.durationSeconds,
+        albumArtist: track.albumArtist,
+        trackNumber: track.trackNumber,
+        year: track.year,
+        genre: track.genre,
+        composer: track.composer,
+        isFavorite: track.isFavorite,
+        playCount: track.playCount,
+        provider: track.provider,
+        providerId: track.providerId,
+        mixId: track.mixId,
+        mixOffset: track.mixOffset,
+        lyricsAvailable: track.lyricsAvailable,
+        hasSyncedLyrics: track.hasSyncedLyrics,
+        hasPlainLyrics: track.hasPlainLyrics,
+        lyricsSource: track.lyricsSource,
+        licenseUrl: track.licenseUrl,
+        shareUrl: track.shareUrl,
+        audio: audioPath,
+      };
 
       if (track.lyricsFileUri) {
         const lyricsFile = new File(track.lyricsFileUri);
         if (lyricsFile.exists) {
-          const lyricsExtension = lyricsFile.extension || (track.hasSyncedLyrics ? '.lrc' : '.txt');
-          await lyricsFile.copy(new File(destinationDirectory, `${exportBaseName}${lyricsExtension}`), { overwrite: true });
+          const lyricsExtension = safeExportExtension(lyricsFile.extension, track.hasSyncedLyrics ? '.lrc' : '.txt');
+          const lyricsPath = `lyrics/${exportBaseName}${lyricsExtension}`;
+          entries.push({ name: lyricsPath, file: lyricsFile });
+          manifestTrack.lyrics = lyricsPath;
           lyricCount += 1;
         }
       } else {
         const lyricsText = track.syncedLyrics?.trim() ? track.syncedLyrics : track.plainLyrics;
         if (lyricsText?.trim()) {
           const lyricsExtension = track.syncedLyrics?.trim() || track.hasSyncedLyrics ? '.lrc' : '.txt';
-          const exportedLyrics = new File(destinationDirectory, `${exportBaseName}${lyricsExtension}`);
-          exportedLyrics.create({ overwrite: true });
-          exportedLyrics.write(lyricsText);
+          const lyricsPath = `lyrics/${exportBaseName}${lyricsExtension}`;
+          entries.push({ name: lyricsPath, bytes: textEncoder.encode(lyricsText) });
+          manifestTrack.lyrics = lyricsPath;
           lyricCount += 1;
         }
       }
@@ -330,14 +523,141 @@ export const OfflineMusicService = {
       if (artworkUri) {
         const artworkFile = new File(artworkUri);
         if (artworkFile.exists) {
-          const artworkExtension = artworkFile.extension || '.jpg';
-          await artworkFile.copy(new File(destinationDirectory, `${exportBaseName}${artworkExtension}`), { overwrite: true });
+          const artworkExtension = safeExportExtension(artworkFile.extension, '.jpg');
+          const artworkPath = `artwork/${exportBaseName}${artworkExtension}`;
+          entries.push({ name: artworkPath, file: artworkFile });
+          manifestTrack.artwork = artworkPath;
           artworkCount += 1;
+        }
+      }
+
+      manifestTracks.push(manifestTrack);
+    }
+
+    if (exportedCount === 0) return { fileName: '', exportedCount, lyricCount, artworkCount };
+
+    entries.push({
+      name: 'library.json',
+      bytes: textEncoder.encode(JSON.stringify({
+        format: 'Musiqapp library archive',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        tracks: manifestTracks,
+      }, null, 2)),
+    });
+
+    const baseFileName = 'Musiqapp Library Export';
+    let fileName = `${baseFileName}.zip`;
+    let suffix = 2;
+    while (new File(destinationDirectory, fileName).exists) {
+      fileName = `${baseFileName} (${suffix}).zip`;
+      suffix += 1;
+    }
+
+    const archiveFile = new File(destinationDirectory, fileName);
+    const centralEntries: ZipCentralEntry[] = [];
+    const timestamp = zipDosTimestamp(new Date());
+    let outputHandle: FileHandle | undefined;
+    let archiveComplete = false;
+    let outputOffset = 0;
+
+    try {
+      archiveFile.create({ intermediates: true });
+      outputHandle = archiveFile.open(FileMode.WriteOnly);
+
+      for (const entry of entries) {
+        const encodedName = textEncoder.encode(entry.name);
+        if (encodedName.length > 0xffff) throw new Error(`A library filename is too long to include: ${entry.name}`);
+
+        const localOffset = outputOffset;
+        const header = makeZipLocalHeader(encodedName, timestamp.time, timestamp.date);
+        outputHandle.writeBytes(header);
+        outputOffset += header.length;
+
+        let crc = 0xffffffff;
+        let entrySize = 0;
+        let bytesSinceYield = 0;
+        const writeData = (bytes: Uint8Array) => {
+          if (!outputHandle) throw new Error('The ZIP archive is no longer open.');
+          outputHandle.writeBytes(bytes);
+          crc = updateZipCrc(crc, bytes);
+          entrySize += bytes.length;
+          outputOffset += bytes.length;
+          bytesSinceYield += bytes.length;
+        };
+
+        if (entry.file) {
+          const expectedSize = entry.file.size;
+          if (!Number.isFinite(expectedSize) || expectedSize < 0) {
+            throw new Error(`Could not read the size of ${entry.file.name}.`);
+          }
+          const sourceHandle = entry.file.open(FileMode.ReadOnly);
+          try {
+            let remaining = expectedSize;
+            while (remaining > 0) {
+              const chunk = sourceHandle.readBytes(Math.min(256 * 1024, remaining));
+              if (chunk.length === 0) throw new Error(`${entry.file.name} changed while the library was being exported.`);
+              writeData(chunk);
+              remaining -= chunk.length;
+              if (bytesSinceYield >= 4 * 1024 * 1024) {
+                bytesSinceYield = 0;
+                await yieldToUi();
+              }
+            }
+          } finally {
+            sourceHandle.close();
+          }
+        } else if (entry.bytes) {
+          for (let start = 0; start < entry.bytes.length; start += 256 * 1024) {
+            writeData(entry.bytes.subarray(start, Math.min(start + 256 * 1024, entry.bytes.length)));
+            if (bytesSinceYield >= 4 * 1024 * 1024) {
+              bytesSinceYield = 0;
+              await yieldToUi();
+            }
+          }
+        }
+
+        const finalCrc = (crc ^ 0xffffffff) >>> 0;
+        const descriptor = makeZipDataDescriptor(finalCrc, entrySize);
+        outputHandle.writeBytes(descriptor);
+        outputOffset += descriptor.length;
+        centralEntries.push({ name: encodedName, crc: finalCrc, size: entrySize, localOffset });
+        if (bytesSinceYield > 0) await yieldToUi();
+      }
+
+      const centralOffset = outputOffset;
+      for (const entry of centralEntries) {
+        const record = makeZipCentralEntry(entry, timestamp.time, timestamp.date);
+        outputHandle.writeBytes(record);
+        outputOffset += record.length;
+      }
+      const centralSize = outputOffset - centralOffset;
+      const zip64EndOffset = outputOffset;
+      const zip64EndRecord = makeZip64EndRecord(centralEntries.length, centralSize, centralOffset);
+      outputHandle.writeBytes(zip64EndRecord);
+      outputOffset += zip64EndRecord.length;
+      const zip64Locator = makeZip64Locator(zip64EndOffset);
+      outputHandle.writeBytes(zip64Locator);
+      outputOffset += zip64Locator.length;
+      const endRecord = makeZipEndRecord();
+      outputHandle.writeBytes(endRecord);
+      outputOffset += endRecord.length;
+
+      outputHandle.close();
+      outputHandle = undefined;
+      archiveComplete = true;
+    } finally {
+      outputHandle?.close();
+      if (!archiveComplete && archiveFile.exists) {
+        try {
+          archiveFile.delete();
+        } catch {
+          // Preserve the original export error if the destination refuses cleanup.
         }
       }
     }
 
-    return { exportedCount, lyricCount, artworkCount };
+    return { fileName, exportedCount, lyricCount, artworkCount };
   },
 
   async downloadTrack(track: Track): Promise<Track> {
@@ -585,57 +905,75 @@ export const OfflineMusicService = {
     if (!savedTrack?.localUri) throw new Error('This track is no longer in your local library.');
 
     ensureDirectory();
-    const original = new File(savedTrack.localUri);
+    const originalUri = savedTrack.localUri;
     const replacement = new File(replacementUri);
-    const staging = new File(downloadsDirectory, `${safeName(track.id)}.sync-pending`);
-    const backup = new File(downloadsDirectory, `${safeName(track.id)}.sync-backup`);
+    const stagingUri = new File(downloadsDirectory, `${safeName(track.id)}.sync-pending`).uri;
+    const backupUri = new File(downloadsDirectory, `${safeName(track.id)}.sync-backup`).uri;
+    const originalFile = () => new File(originalUri);
+    const stagingFile = () => new File(stagingUri);
+    const backupFile = () => new File(backupUri);
 
-    if (backup.exists) {
-      if (original.exists) original.delete();
-      try {
-        await backup.move(original);
-      } catch {
-        throw new Error(`Could not restore the original MP3. Its backup is at ${backup.uri}.`);
+    if (backupFile().exists) {
+      if (originalFile().exists) backupFile().delete();
+      else {
+        try {
+          await backupFile().move(originalFile(), { overwrite: true });
+        } catch {
+          throw new Error(`Could not restore the original MP3. Its backup is at ${backupUri}.`);
+        }
       }
     }
-    if (!original.exists) throw new Error('The original library MP3 is no longer available.');
     if (!replacement.exists || (replacement.size ?? 0) <= 0) {
       throw new Error('The synchronized MP3 could not be found. The library track was not changed.');
     }
-    if (original.uri === replacement.uri) throw new Error('The synchronized copy must be separate from the library original.');
+    if (originalUri === replacement.uri) throw new Error('The synchronized copy must be separate from the library original.');
 
-    if (staging.exists) staging.delete();
+    if (stagingFile().exists) stagingFile().delete();
 
     const expectedSize = replacement.size ?? 0;
-    await replacement.copy(staging);
-    if (!staging.exists || (staging.size ?? 0) !== expectedSize) {
-      if (staging.exists) staging.delete();
+    await replacement.copy(stagingFile());
+    if (!stagingFile().exists || (stagingFile().size ?? 0) !== expectedSize) {
+      if (stagingFile().exists) stagingFile().delete();
       throw new Error('Could not stage the synchronized MP3. The library track was not changed.');
     }
 
+    let hasBackup = false;
     try {
-      await original.move(backup);
+      if (originalFile().exists) {
+        await originalFile().move(backupFile());
+        hasBackup = true;
+      }
       try {
-        await staging.move(original);
-        if (!original.exists || (original.size ?? 0) !== expectedSize) {
+        // File.move mutates the source File's URI. Use fresh File references for
+        // both paths so the staged file cannot accidentally target its backup.
+        await stagingFile().move(originalFile(), { overwrite: true });
+        const installedFile = originalFile();
+        if (!installedFile.exists || (installedFile.size ?? 0) !== expectedSize) {
           throw new Error('The synchronized MP3 could not replace the original completely.');
         }
       } catch (error) {
-        if (original.exists) original.delete();
-        if (backup.exists) {
+        const installedFile = originalFile();
+        if (installedFile.exists) installedFile.delete();
+        if (hasBackup && backupFile().exists) {
           try {
-            await backup.move(original);
+            await backupFile().move(originalFile(), { overwrite: true });
           } catch {
-            throw new Error(`Could not restore the original MP3. Its backup is at ${backup.uri}.`);
+            throw new Error(`Could not restore the original MP3. Its backup is at ${backupUri}.`);
           }
         }
         throw error;
       }
     } finally {
-      if (staging.exists) staging.delete();
+      if (stagingFile().exists) stagingFile().delete();
     }
 
-    if (backup.exists) backup.delete();
+    if (hasBackup && backupFile().exists) {
+      try {
+        backupFile().delete();
+      } catch {
+        // Keep the completed replacement; a later save can clean up this backup.
+      }
+    }
   },
 
   async updateTrack(track: Track): Promise<void> {
