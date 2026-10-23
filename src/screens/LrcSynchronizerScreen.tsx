@@ -342,6 +342,33 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     setLineEditor(null);
   };
 
+  const confirmDeleteLine = (line: TimedLyricLine) => {
+    Alert.alert(
+      'Delete lyric line?',
+      'This removes the line and its timestamp from the synchronized lyrics.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const lineIndex = lyricLines.findIndex((currentLine) => currentLine.id === line.id);
+            const remainingLines = lyricLines.filter((currentLine) => currentLine.id !== line.id);
+            setLyricLines(remainingLines);
+            if (selectedLineId === line.id) {
+              const nextUnassignedLine = remainingLines
+                .slice(Math.max(lineIndex, 0))
+                .find((currentLine) => currentLine.text.trim() && currentLine.timeMs === null)
+                ?? remainingLines.find((currentLine) => currentLine.text.trim() && currentLine.timeMs === null);
+              setSelectedLineId(nextUnassignedLine?.id ?? null);
+            }
+            if (lineEditor?.lineId === line.id) setLineEditor(null);
+          },
+        },
+      ],
+    );
+  };
+
   const assignTimestampToSelectedLine = useCallback(() => {
     if (!player.playing) {
       setPlaybackError('Start playback before assigning a timestamp.');
@@ -729,6 +756,17 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               style={{ width: 32, height: 34, marginLeft: 5, alignItems: 'center', justifyContent: 'center' }}
                             >
                               <Ionicons name="create-outline" size={16} color="#8E8E93" />
+                            </TouchableOpacity>
+                          ) : null}
+                          {line.text.trim() ? (
+                            <TouchableOpacity
+                              onPress={() => confirmDeleteLine(line)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Delete lyric line ${index + 1}`}
+                              hitSlop={8}
+                              style={{ width: 32, height: 34, marginLeft: 2, alignItems: 'center', justifyContent: 'center' }}
+                            >
+                              <Ionicons name="trash-outline" size={15} color="#8E8E93" />
                             </TouchableOpacity>
                           ) : null}
                         </View>
