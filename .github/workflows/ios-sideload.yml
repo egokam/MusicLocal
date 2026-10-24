@@ -53,7 +53,7 @@ jobs:
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: musiqapp-ios-unsigned-ipa
+          name: music
           path: build/Musiqapp-unsigned.ipa
           if-no-files-found: error
           retention-days: 7

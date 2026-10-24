@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Constants from 'expo-constants';
 import { Directory } from 'expo-file-system';
 import { WebView } from 'react-native-webview';
 import { LibraryList } from '../components/library/LibraryList';
@@ -307,7 +308,10 @@ const DeveloperProfileScreen = ({
         </TouchableOpacity>
 
         <Text style={{ color: '#65656B', fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 34 }}>
-          {'© 2026 Egokam. All rights reserved.\nEnjoy, dont try to make it commercial, contact admin for support.'}
+          {'© 2026 Egokam. All rights reserved.\nEnjoy, don\'t try to make it commercial, contact admin for support.'}
+        </Text>
+        <Text style={{ color: '#55555A', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
+          Version {Constants.expoConfig?.version ?? '1.0.5'}
         </Text>
       </ScrollView>
     </SafeAreaView>
