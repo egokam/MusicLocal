@@ -208,7 +208,7 @@ public class MusiqYoutubeDownloaderModule: Module {
     }
   }
 
-  private func metadataItem(identifier: AVMetadataIdentifier, value: NSObject, dataType: String? = nil) -> AVMutableMetadataItem {
+  private func metadataItem(identifier: AVMetadataIdentifier, value: NSCopying & NSObjectProtocol, dataType: String? = nil) -> AVMutableMetadataItem {
     let item = AVMutableMetadataItem()
     item.identifier = identifier
     item.value = value
