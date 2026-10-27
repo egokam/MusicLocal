@@ -1,6 +1,6 @@
 const { withPodfile } = require('expo/config-plugins');
 
-const podLine = "  pod 'YouTubeKit', '= 2.8.0', :podspec => '../modules/musiq-youtube-downloader/ios/YouTubeKit.podspec'";
+const podLine = "  pod 'YouTubeKit', :podspec => '../modules/musiq-youtube-downloader/ios/YouTubeKit.podspec'";
 
 module.exports = function withMusiqYoutubeKit(config) {
   return withPodfile(config, (config) => {
