@@ -58,6 +58,7 @@
         }
       ],
       "./plugins/withMusiqNativeWidget",
+      "./plugins/withMusiqYoutubeKit",
       [
         "expo-widgets",
         {

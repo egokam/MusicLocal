@@ -40,8 +40,16 @@ type PlaybackActions = {
     artist: string,
     sourceUrl: string,
     onProgress: (progress: ImportProgress) => void,
+    artworkUrl?: string,
   ) => Promise<Track>;
   importLocalFile: () => Promise<Track | null>;
+  importLocalAudioFile: (
+    uri: string,
+    title: string,
+    artist: string,
+    sourceUrl?: string,
+    artworkUrl?: string,
+  ) => Promise<Track>;
   importMusicFolder: () => Promise<{ importedCount: number; skippedCount: number; artworkCount: number } | null>;
   updateTrack: (track: Track, changes: TrackEditChanges) => Promise<Track>;
   deleteTrack: (track: Track) => Promise<void>;

@@ -1022,19 +1022,9 @@ export default function App() {
     artist: string,
     sourceUrl: string,
     onProgress: Parameters<typeof MusicCatalogService.importAudioUrl>[4],
+    artworkUrl = '',
   ) => {
-    const importedTrack = await MusicCatalogService.importAudioUrl(url, title, artist, sourceUrl, onProgress);
-    const nextTracks = [importedTrack, ...tracksRef.current.filter((track) => track.id !== importedTrack.id)];
-    tracksRef.current = nextTracks;
-    setTracks(nextTracks);
-    return importedTrack;
-  }, []);
-
-  const importLocalFile = useCallback(async () => {
-    const picked = await File.pickFileAsync({ mimeTypes: 'audio/*' });
-    if (picked.canceled || !picked.result) return null;
-    const title = picked.result.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
-    const importedTrack = await OfflineMusicService.importLocalFile(picked.result.uri, title, 'Unknown artist');
+    const importedTrack = await MusicCatalogService.importAudioUrl(url, title, artist, sourceUrl, onProgress, artworkUrl);
     downloadsRef.current = [importedTrack, ...downloadsRef.current.filter((track) => track.id !== importedTrack.id)];
     setDownloadedTracks(downloadsRef.current);
     const nextTracks = [importedTrack, ...tracksRef.current.filter((track) => track.id !== importedTrack.id)];
@@ -1043,6 +1033,30 @@ export default function App() {
     void NowPlayingWidgetService.initialize(nextTracks).catch(() => undefined);
     return importedTrack;
   }, []);
+
+  const importLocalAudioFile = useCallback(async (
+    uri: string,
+    title: string,
+    artist: string,
+    sourceUrl = '',
+    artworkUrl = '',
+  ) => {
+    const importedTrack = await OfflineMusicService.importLocalFile(uri, title, artist, '', sourceUrl, artworkUrl);
+    downloadsRef.current = [importedTrack, ...downloadsRef.current.filter((track) => track.id !== importedTrack.id)];
+    setDownloadedTracks(downloadsRef.current);
+    const nextTracks = [importedTrack, ...tracksRef.current.filter((track) => track.id !== importedTrack.id)];
+    tracksRef.current = nextTracks;
+    setTracks(nextTracks);
+    void NowPlayingWidgetService.initialize(nextTracks).catch(() => undefined);
+    return importedTrack;
+  }, []);
+
+  const importLocalFile = useCallback(async () => {
+    const picked = await File.pickFileAsync({ mimeTypes: 'audio/*' });
+    if (picked.canceled || !picked.result) return null;
+    const title = picked.result.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+    return importLocalAudioFile(picked.result.uri, title, 'Unknown artist');
+  }, [importLocalAudioFile]);
 
   const importMusicFolder = useCallback(async () => {
     let sourceDirectory: Directory;
@@ -1099,6 +1113,7 @@ export default function App() {
     deleteDownloadedTracks,
     importAudioToLibrary,
     importLocalFile,
+    importLocalAudioFile,
     importMusicFolder,
     updateTrack,
     deleteTrack,
@@ -1122,6 +1137,7 @@ export default function App() {
     deleteTrack,
     importAudioToLibrary,
     importLocalFile,
+    importLocalAudioFile,
     importMusicFolder,
     downloadedTracks,
     favoriteTracks,

@@ -6,14 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 from api_common import API_TOKEN, http_client, require_api_token
-from downloader import router as downloader_router
 from lyrics_api import router as lyrics_router
 from library_actions import favorite_track_ids, router as library_actions_router
 from music_library import _all_records, _embedded_cover, _find_record, _public_track
 
 app = FastAPI(title="Musiqapp Private Music API", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "PUT", "POST", "DELETE"], allow_headers=["Authorization", "Content-Type"])
-app.include_router(downloader_router)
 app.include_router(lyrics_router)
 app.include_router(library_actions_router)
 

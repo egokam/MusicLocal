@@ -192,11 +192,51 @@ export const MusicCatalogService = {
 
   async resolveMediaLink(url: string): Promise<MediaLinkMetadata> {
     const trimmed = url.trim();
-    if (!/^https?:\/\//i.test(trimmed)) throw new Error('Paste a valid HTTPS audio URL.');
-    let host = '';
-    try { host = new URL(trimmed).hostname.toLowerCase(); } catch { /* validated above */ }
-    const provider: MediaLinkMetadata['provider'] = host.includes('soundcloud') ? 'SoundCloud' : 'Spotify';
-    return { provider, title: titleFromUrl(trimmed), artist: 'Unknown artist', artwork: '' };
+    let source: URL;
+    try {
+      source = new URL(trimmed);
+    } catch {
+      throw new Error('Paste a valid Spotify or SoundCloud track link.');
+    }
+    if (source.protocol !== 'https:') throw new Error('Track links must use HTTPS.');
+
+    const host = source.hostname.toLowerCase();
+    const isSpotify = host === 'open.spotify.com' || host === 'spotify.link';
+    const isSoundCloud = host === 'soundcloud.com' || host.endsWith('.soundcloud.com');
+    if (!isSpotify && !isSoundCloud) {
+      throw new Error('Paste a Spotify or SoundCloud track link to identify the song.');
+    }
+    if (isSpotify && host !== 'spotify.link' && !/^\/track\//.test(source.pathname)) {
+      throw new Error('Paste a Spotify track link, not a playlist or album link.');
+    }
+
+    const provider: MediaLinkMetadata['provider'] = isSoundCloud ? 'SoundCloud' : 'Spotify';
+    const spotifyEmbedHost = host === 'spotify.link' ? 'https://spotify.link/oembed' : 'https://open.spotify.com/oembed';
+    const endpoint = new URL(isSoundCloud ? 'https://soundcloud.com/oembed' : spotifyEmbedHost);
+    endpoint.searchParams.set('url', source.toString());
+    if (isSoundCloud) {
+      endpoint.searchParams.set('format', 'json');
+      endpoint.searchParams.set('show_artwork', 'true');
+    }
+
+    const response = await fetch(endpoint.toString());
+    if (!response.ok) {
+      throw new Error(`Could not read this ${provider} track link (HTTP ${response.status}).`);
+    }
+    const result = await response.json() as {
+      title?: string;
+      author_name?: string;
+      thumbnail_url?: string;
+    };
+    const title = result.title?.trim() ?? '';
+    const artist = result.author_name?.trim() ?? '';
+    if (!title) throw new Error(`No track title was returned by ${provider}.`);
+    return {
+      provider,
+      title,
+      artist,
+      artwork: result.thumbnail_url?.startsWith('https://') ? result.thumbnail_url : '',
+    };
   },
 
   async importAudioUrl(
@@ -205,7 +245,8 @@ export const MusicCatalogService = {
     artist: string,
     sourceUrl: string,
     onProgress: (progress: ImportProgress) => void,
+    artworkUrl = '',
   ): Promise<Track> {
-    return OfflineMusicService.importAudioUrl(url, title || titleFromUrl(url), artist, sourceUrl, onProgress);
+    return OfflineMusicService.importAudioUrl(url, title || titleFromUrl(url), artist, sourceUrl, onProgress, artworkUrl);
   },
 };
