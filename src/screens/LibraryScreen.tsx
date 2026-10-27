@@ -780,56 +780,13 @@ const AddSongsToPlaylistRoute = ({
 const DownloaderRoute = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'Downloader'>) => {
-  const {
-    tracks,
-    playlists,
-    hasActiveTrack,
-    apiConnected,
-    isLoadingTracks,
-    loadError,
-    downloadedTrackIds,
-    downloadingTrackIds,
-    searchTracks,
-    downloadTrack,
-    importAudioToLibrary,
-    importLocalFile,
-    playTrack,
-    loadPlaylists,
-    playNext,
-    toggleFavorite,
-    addTrackToPlaylist,
-    createPlaylist,
-    updateTrack,
-    deleteTrack,
-  } = usePlaybackActions();
-
-  useEffect(() => {
-    if (apiConnected) void loadPlaylists().catch(() => undefined);
-  }, [apiConnected, loadPlaylists]);
+  const { importAudioToLibrary, importLocalAudioFile } = usePlaybackActions();
 
   return (
     <DownloaderScreen
       onBack={() => navigation.goBack()}
-      onConnectLibrary={() => navigation.navigate('Songs')}
-      onSelectTrack={playTrack}
-      tracks={tracks}
-      apiConnected={apiConnected}
-      isLoadingTracks={isLoadingTracks}
-      loadError={loadError}
-      downloadedTrackIds={downloadedTrackIds}
-      downloadingTrackIds={downloadingTrackIds}
-      onSearch={searchTracks}
-      onDownload={downloadTrack}
       onImportAudioToLibrary={importAudioToLibrary}
-      onImportLocalFile={importLocalFile}
-      playlists={playlists}
-      hasActiveTrack={hasActiveTrack}
-      onPlayNext={playNext}
-      onToggleFavorite={toggleFavorite}
-      onAddToPlaylist={addTrackToPlaylist}
-      onCreatePlaylist={createPlaylist}
-      onSaveTrack={async (track, changes) => { await updateTrack(track, changes); }}
-      onDeleteTrack={async (track) => { await deleteTrack(track); }}
+      onImportLocalAudioFile={importLocalAudioFile}
     />
   );
 };

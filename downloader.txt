@@ -3,7 +3,7 @@
 Track tab:
 - Paste one Spotify or SoundCloud track link.
 - app extracts title, artist, and artwork.
-- app searches YouTube automatically with YoutubeKit.
+- app searches YouTube automatically with YoutubeKit ios .
 - If a match is found, the app builts a music file with artwork/title/artist embeded on the mp3 file and downloaded into the phone’s app local storage.
 - If no match is found, the app switches to Custom tab automatically with the extracted title, artist, and artwork filled in.
 - Real backend errors are shown exactly.

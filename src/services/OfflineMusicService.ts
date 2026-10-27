@@ -698,6 +698,7 @@ export const OfflineMusicService = {
     artist: string,
     sourceUrl: string,
     onProgress: (progress: { progress: number | null; message: string; bytesDownloaded: number; totalBytes: number | null }) => void,
+    sourceArtwork = '',
   ): Promise<Track> {
     const normalizedUrl = url.trim();
     if (!/^https?:\/\//i.test(normalizedUrl)) {
@@ -709,7 +710,7 @@ export const OfflineMusicService = {
     const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
     onProgress({ progress: 0, message: 'Saving audio to this device…', bytesDownloaded: 0, totalBytes: null });
     await File.downloadFileAsync(normalizedUrl, audioFile, { idempotent: true });
-    const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, id);
+    const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, id, sourceArtwork);
     const track: Track = {
       id,
       title: title.trim() || 'Untitled track',
@@ -736,15 +737,22 @@ export const OfflineMusicService = {
   },
 
   /** Copy a file selected from the Files app into the private music library. */
-  async importLocalFile(sourceUri: string, title: string, artist: string, album = ''): Promise<Track> {
+  async importLocalFile(
+    sourceUri: string,
+    title: string,
+    artist: string,
+    album = '',
+    sourceUrl = '',
+    sourceArtwork = '',
+  ): Promise<Track> {
     ensureDirectory();
-    const id = idForImport(sourceUri, title, artist);
+    const id = idForImport(sourceUrl || sourceUri, title, artist);
     const fileExtension = extensionFromUrl(sourceUri);
     const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
     if (audioFile.exists) audioFile.delete();
     await new File(sourceUri).copy(audioFile);
     const embedded = await extractEmbeddedMetadata(audioFile, id, { title, artist });
-    const artwork = embedded.artwork || await cacheArtworkForTrack(new File(sourceUri), downloadsDirectory, id);
+    const artwork = embedded.artwork || await cacheArtworkForTrack(new File(sourceUri), downloadsDirectory, id, sourceArtwork);
     const track: Track = {
       id,
       title: embedded.title.trim() || 'Untitled track',
@@ -764,6 +772,7 @@ export const OfflineMusicService = {
       fileExtension,
       downloadAllowed: false,
       localUri: audioFile.uri,
+      shareUrl: sourceUrl || undefined,
       dateAdded: Date.now(),
       lyricsFileUri: embedded.lyricsFileUri,
       lyricsAvailable: Boolean(embedded.lyricsFileUri),
