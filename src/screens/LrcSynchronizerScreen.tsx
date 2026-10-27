@@ -122,6 +122,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   const [lyricLines, setLyricLines] = useState<TimedLyricLine[]>([]);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [pauseToastVisible, setPauseToastVisible] = useState(false);
   const [seekBarWidth, setSeekBarWidth] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -132,6 +133,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   const [pastedLyrics, setPastedLyrics] = useState('');
   const [lineEditor, setLineEditor] = useState<{ lineId: string | null; text: string } | null>(null);
   const trackPickerTranslateY = useMemo(() => new Animated.Value(0), []);
+  const pauseToastOpacity = useMemo(() => new Animated.Value(0), []);
   const saveChoiceDialogOpen = useRef(false);
   const preparedMp3Ref = useRef<{
     sourceUri: string;
@@ -271,6 +273,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     playerStatusRef.current = playerStatus;
   }, [playerStatus]);
 
+  useEffect(() => () => {
+    pauseToastOpacity.stopAnimation();
+  }, [pauseToastOpacity]);
+
   const loadLyrics = useCallback((lyrics: string | null) => {
     const lines = lyrics === null ? [] : parseLyrics(lyrics);
     setLyricLines(lines);
@@ -397,18 +403,43 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     setPlaybackError(null);
   }, [lyricLines, player, selectedLineId]);
 
+  const showPausePlayerToast = useCallback(() => {
+    pauseToastOpacity.stopAnimation();
+    pauseToastOpacity.setValue(0);
+    setPauseToastVisible(true);
+    Animated.sequence([
+      Animated.timing(pauseToastOpacity, {
+        toValue: 0.64,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+      Animated.delay(1230),
+      Animated.timing(pauseToastOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) setPauseToastVisible(false);
+    });
+  }, [pauseToastOpacity]);
+
   const retimeLine = useCallback((line: TimedLyricLine) => {
-    setSelectedLineId(line.id);
-    if (!player.playing) {
-      setPlaybackError('Play the track, then tap a lyric line to set its timestamp.');
+    if (player.playing) {
+      showPausePlayerToast();
       return;
     }
-    const timestampMs = Math.max(0, Math.round(player.currentTime * 1000));
-    setLyricLines((currentLines) => currentLines.map((currentLine) => (
-      currentLine.id === line.id ? { ...currentLine, timeMs: timestampMs } : currentLine
-    )));
+
+    setSelectedLineId(line.id);
+    setLyricLines((currentLines) => {
+      const lineIndex = currentLines.findIndex((currentLine) => currentLine.id === line.id);
+      if (lineIndex < 0) return currentLines;
+      return currentLines.map((currentLine, index) => (
+        index >= lineIndex ? { ...currentLine, timeMs: null } : currentLine
+      ));
+    });
     setPlaybackError(null);
-  }, [player]);
+  }, [player, showPausePlayerToast]);
 
   const restartSynchronization = () => {
     Alert.alert(
@@ -1150,6 +1181,40 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             </Text>
           ) : null}
         </View>
+        {pauseToastVisible ? (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: '46%',
+              left: 0,
+              right: 0,
+              alignItems: 'center',
+              zIndex: 50,
+              elevation: 50,
+              opacity: pauseToastOpacity,
+            }}
+          >
+            <View
+              style={{
+                paddingHorizontal: 18,
+                paddingVertical: 12,
+                borderRadius: 18,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.12)',
+                backgroundColor: 'rgba(48,48,52,0.96)',
+                shadowColor: '#000000',
+                shadowOpacity: 0.2,
+                shadowRadius: 14,
+                shadowOffset: { width: 0, height: 5 },
+              }}
+            >
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600' }}>
+                pause the player first
+              </Text>
+            </View>
+          </Animated.View>
+        ) : null}
       </View>
 
       <Modal
