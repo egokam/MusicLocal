@@ -14,7 +14,6 @@ import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
 import { getMusicApiHeaders } from '../services/MusicCatalogService';
 import { OfflineMusicService } from '../services/OfflineMusicService';
-import { DownloaderScreen } from './DownloaderScreen';
 import { LrcCheckerScreen } from './LrcCheckerScreen';
 import { LrcSynchronizerScreen } from './LrcSynchronizerScreen';
 import { PlaylistsScreen } from './PlaylistsScreen';
@@ -35,7 +34,6 @@ type LibraryStackParamList = {
   Playlists: undefined;
   PlaylistTracks: { playlistId: string; title: string };
   AddSongsToPlaylist: { playlistId: string; title: string };
-  Downloader: undefined;
   LrcChecker: undefined;
   LrcSynchronizer: undefined;
 };
@@ -58,7 +56,6 @@ const LibraryHomeScreen = ({
             if (title === 'Artists') navigation.navigate('Artists');
             if (title === 'Favorites') navigation.navigate('Favorites');
             if (title === 'Playlists') navigation.navigate('Playlists');
-            if (title === 'Downloader') navigation.navigate('Downloader');
             if (title === 'LRC Checker') navigation.navigate('LrcChecker');
             if (title === 'LRC Synchronizer') navigation.navigate('LrcSynchronizer');
           }}
@@ -777,63 +774,6 @@ const AddSongsToPlaylistRoute = ({
   );
 };
 
-const DownloaderRoute = ({
-  navigation,
-}: NativeStackScreenProps<LibraryStackParamList, 'Downloader'>) => {
-  const {
-    tracks,
-    playlists,
-    hasActiveTrack,
-    apiConnected,
-    isLoadingTracks,
-    loadError,
-    downloadedTrackIds,
-    downloadingTrackIds,
-    searchTracks,
-    downloadTrack,
-    importAudioToLibrary,
-    importLocalFile,
-    playTrack,
-    loadPlaylists,
-    playNext,
-    toggleFavorite,
-    addTrackToPlaylist,
-    createPlaylist,
-    updateTrack,
-    deleteTrack,
-  } = usePlaybackActions();
-
-  useEffect(() => {
-    if (apiConnected) void loadPlaylists().catch(() => undefined);
-  }, [apiConnected, loadPlaylists]);
-
-  return (
-    <DownloaderScreen
-      onBack={() => navigation.goBack()}
-      onConnectLibrary={() => navigation.navigate('Songs')}
-      onSelectTrack={playTrack}
-      tracks={tracks}
-      apiConnected={apiConnected}
-      isLoadingTracks={isLoadingTracks}
-      loadError={loadError}
-      downloadedTrackIds={downloadedTrackIds}
-      downloadingTrackIds={downloadingTrackIds}
-      onSearch={searchTracks}
-      onDownload={downloadTrack}
-      onImportAudioToLibrary={importAudioToLibrary}
-      onImportLocalFile={importLocalFile}
-      playlists={playlists}
-      hasActiveTrack={hasActiveTrack}
-      onPlayNext={playNext}
-      onToggleFavorite={toggleFavorite}
-      onAddToPlaylist={addTrackToPlaylist}
-      onCreatePlaylist={createPlaylist}
-      onSaveTrack={async (track, changes) => { await updateTrack(track, changes); }}
-      onDeleteTrack={async (track) => { await deleteTrack(track); }}
-    />
-  );
-};
-
 const LrcCheckerRoute = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'LrcChecker'>) => {
@@ -892,7 +832,6 @@ export const LibraryScreen = () => (
     <Stack.Screen name="Playlists" component={PlaylistsRoute} />
     <Stack.Screen name="PlaylistTracks" component={PlaylistTracksRoute} />
     <Stack.Screen name="AddSongsToPlaylist" component={AddSongsToPlaylistRoute} />
-    <Stack.Screen name="Downloader" component={DownloaderRoute} />
     <Stack.Screen name="LrcChecker" component={LrcCheckerRoute} />
     <Stack.Screen name="LrcSynchronizer" component={LrcSynchronizerRoute} />
   </Stack.Navigator>
