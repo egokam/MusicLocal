@@ -5,6 +5,60 @@ import Foundation
 import UIKit
 import YouTubeKit
 
+private struct NativePlayerFormatsResponse: YouTubeResponse {
+  static let headersType = HeaderTypes.videoInfos
+  static let parametersValidationList: ValidationList = [:]
+
+  let audioFormats: [AudioOnlyFormat]
+  let progressiveFormats: [VideoDownloadFormat]
+
+  static func decodeJSON(json: YouTubeKit.JSON) throws -> Self {
+    let streamingData = json["streamingData"]
+    let formats = streamingData["formats"].arrayValue + streamingData["adaptiveFormats"].arrayValue
+    var audioFormats: [AudioOnlyFormat] = []
+    var progressiveFormats: [VideoDownloadFormat] = []
+
+    for item in formats {
+      guard
+        let mimeTypeValue = item["mimeType"].string,
+        let url = item["url"].url,
+        url.scheme == "https"
+      else {
+        continue
+      }
+
+      let mimeType = mimeTypeValue.components(separatedBy: ";").first?.lowercased() ?? ""
+      let contentLength = item["contentLength"].int ?? item["contentLength"].string.flatMap(Int.init)
+      let duration = item["approxDurationMs"].string.flatMap(Int.init)
+      let bitrate = item["averageBitrate"].int
+
+      if mimeType.hasPrefix("audio/") {
+        audioFormats.append(AudioOnlyFormat(
+          averageBitrate: bitrate,
+          contentLength: contentLength,
+          contentDuration: duration,
+          url: url,
+          mimeType: mimeType
+        ))
+      } else if mimeType == "video/mp4", item["fps"].int != nil {
+        progressiveFormats.append(VideoDownloadFormat(
+          averageBitrate: bitrate,
+          contentDuration: duration,
+          contentLength: contentLength,
+          mimeType: mimeType,
+          url: url,
+          width: item["width"].int,
+          height: item["height"].int,
+          quality: item["qualityLabel"].string,
+          fps: item["fps"].int
+        ))
+      }
+    }
+
+    return Self(audioFormats: audioFormats, progressiveFormats: progressiveFormats)
+  }
+}
+
 public class MusiqYoutubeDownloaderModule: Module {
   private let maximumAudioBytes: Int64 = 512 * 1024 * 1024
   private let maximumArtworkBytes = 15 * 1024 * 1024
@@ -74,23 +128,78 @@ public class MusiqYoutubeDownloaderModule: Module {
     model.selectedLocale = "en-US"
     let video = YTVideo(videoId: videoID)
     let response = try await video.fetchStreamingInfosWithDownloadFormatsThrowing(youtubeModel: model, useCookies: nil)
-    let audioFormat = response.downloadFormats
+    let webM4aAudioFormat = response.downloadFormats
       .compactMap { $0 as? AudioOnlyFormat }
-      .filter { ($0.mimeType ?? "").lowercased().hasPrefix("audio/mp4") && $0.url != nil }
+      .filter { ($0.mimeType ?? "").lowercased().hasPrefix("audio/mp4") && $0.url?.scheme == "https" }
       .max { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) }
 
-    guard let audioFormat, let streamURL = audioFormat.url, streamURL.scheme == "https" else {
-      throw moduleError("YouTube did not provide a compatible M4A audio stream for this video.")
+    let webAlternateAudioFormat = response.downloadFormats
+      .compactMap { $0 as? AudioOnlyFormat }
+      .filter {
+        let mimeType = ($0.mimeType ?? "").lowercased()
+        return (mimeType.hasPrefix("audio/mpeg") || mimeType.hasPrefix("audio/aac")) && $0.url?.scheme == "https"
+      }
+      .max { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) }
+
+    // YouTube often exposes audio-only WebM streams alongside a lower-resolution
+    // progressive MP4 that includes audio. AVFoundation can't read WebM, so use
+    // that MP4 as the on-device fallback and export only its audio track below.
+    let webProgressiveMP4Format = response.defaultFormats
+      .compactMap { $0 as? VideoDownloadFormat }
+      .filter { ($0.mimeType ?? "").lowercased().hasPrefix("video/mp4") && $0.url?.scheme == "https" }
+      .min { ($0.contentLength ?? Int.max) < ($1.contentLength ?? Int.max) }
+
+    let nativeResponse: NativePlayerFormatsResponse?
+    if webM4aAudioFormat == nil && webAlternateAudioFormat == nil && webProgressiveMP4Format == nil {
+      nativeResponse = try? await NativePlayerFormatsResponse.sendThrowingRequest(
+        youtubeModel: model,
+        data: [.query: videoID],
+        useCookies: nil
+      )
+    } else {
+      nativeResponse = nil
     }
 
-    if let length = audioFormat.contentLength, length > Int(maximumAudioBytes) {
+    let m4aAudioFormat = webM4aAudioFormat ?? nativeResponse?.audioFormats
+      .filter { ($0.mimeType ?? "").lowercased().hasPrefix("audio/mp4") }
+      .max { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) }
+    let alternateAudioFormat = webAlternateAudioFormat ?? nativeResponse?.audioFormats
+      .filter {
+        let mimeType = ($0.mimeType ?? "").lowercased()
+        return mimeType.hasPrefix("audio/mpeg") || mimeType.hasPrefix("audio/aac")
+      }
+      .max { ($0.averageBitrate ?? 0) < ($1.averageBitrate ?? 0) }
+    let progressiveMP4Format = webProgressiveMP4Format ?? nativeResponse?.progressiveFormats
+      .min { ($0.contentLength ?? Int.max) < ($1.contentLength ?? Int.max) }
+
+    let selectedAudioFormat = m4aAudioFormat ?? alternateAudioFormat
+    let streamURL = selectedAudioFormat?.url ?? progressiveMP4Format?.url
+    guard let streamURL, streamURL.scheme == "https" else {
+      throw moduleError("YouTube did not provide an iPhone-compatible audio stream for this video.")
+    }
+
+    let contentLength = selectedAudioFormat?.contentLength ?? progressiveMP4Format?.contentLength
+    if let contentLength, Int64(contentLength) > maximumAudioBytes {
       throw moduleError("Audio files must be smaller than 512 MB.")
     }
 
+    let selectedAudioMimeType = selectedAudioFormat?.mimeType?.lowercased() ?? ""
+    let sourceExtension: String
+    if selectedAudioFormat == nil {
+      sourceExtension = "mp4"
+    } else if selectedAudioMimeType.hasPrefix("audio/mpeg") {
+      sourceExtension = "mp3"
+    } else if selectedAudioMimeType.hasPrefix("audio/aac") {
+      sourceExtension = "aac"
+    } else {
+      sourceExtension = "m4a"
+    }
+    let shouldTranscodeToM4A = selectedAudioFormat == nil || sourceExtension != "m4a"
+
     var request = URLRequest(url: streamURL)
     request.timeoutInterval = 60
-    if let length = audioFormat.contentLength, length > 0 {
-      request.setValue("bytes=0-\(length - 1)", forHTTPHeaderField: "Range")
+    if let contentLength, contentLength > 0 {
+      request.setValue("bytes=0-\(contentLength - 1)", forHTTPHeaderField: "Range")
     }
 
     let (temporaryURL, responseValue) = try await URLSession.shared.download(for: request)
@@ -107,7 +216,7 @@ public class MusiqYoutubeDownloaderModule: Module {
     }
 
     let directory = try temporaryAudioDirectory()
-    let sourceURL = directory.appendingPathComponent("source-\(UUID().uuidString).m4a")
+    let sourceURL = directory.appendingPathComponent("source-\(UUID().uuidString).\(sourceExtension)")
     let taggedURL = directory.appendingPathComponent("track-\(UUID().uuidString).m4a")
     try FileManager.default.moveItem(at: temporaryURL, to: sourceURL)
 
@@ -127,7 +236,8 @@ public class MusiqYoutubeDownloaderModule: Module {
         destinationURL: taggedURL,
         title: resolvedTitle,
         artist: resolvedArtist,
-        artwork: artwork
+        artwork: artwork,
+        transcodeToM4A: shouldTranscodeToM4A
       )
       try? FileManager.default.removeItem(at: sourceURL)
       return [
@@ -170,9 +280,10 @@ public class MusiqYoutubeDownloaderModule: Module {
     }
   }
 
-  private func writeMetadata(sourceURL: URL, destinationURL: URL, title: String, artist: String, artwork: Data?) async throws {
+  private func writeMetadata(sourceURL: URL, destinationURL: URL, title: String, artist: String, artwork: Data?, transcodeToM4A: Bool) async throws {
     let asset = AVURLAsset(url: sourceURL)
-    guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+    let presetName = transcodeToM4A ? AVAssetExportPresetAppleM4A : AVAssetExportPresetPassthrough
+    guard let exportSession = AVAssetExportSession(asset: asset, presetName: presetName) else {
       throw moduleError("Could not prepare the downloaded audio for saving.")
     }
     guard exportSession.supportedFileTypes.contains(.m4a) else {

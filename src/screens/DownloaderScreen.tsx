@@ -167,7 +167,7 @@ export const DownloaderScreen = ({
     let temporaryUri = '';
     setBusy(video.videoId);
     setError('');
-    setMessage('Preparing the M4A audio and embedding its track details…');
+    setMessage('Preparing the audio and embedding its track details…');
     try {
       const downloadedAudio = await YouTubeDownloaderService.downloadAudio(
         video.videoId,
@@ -452,6 +452,18 @@ export const DownloaderScreen = ({
                     {busy === video.videoId ? <ActivityIndicator color="#FA5265" /> : <Ionicons name="arrow-down-circle" size={25} color="#FA5265" />}
                   </TouchableOpacity>
                 ))}
+
+                {matches.length > 0 ? (
+                  <TouchableOpacity
+                    onPress={() => selectTab('custom')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Not in this list. Enter custom track details."
+                    style={{ minHeight: 50, borderRadius: 16, borderWidth: 1, borderColor: '#38383D', backgroundColor: '#151517', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 2 }}
+                  >
+                    <Text style={{ color: '#D1D1D6', fontSize: 15, fontWeight: '700' }}>Not in this list</Text>
+                    <Ionicons name="arrow-forward" size={17} color="#A1A1A6" />
+                  </TouchableOpacity>
+                ) : null}
               </View>
             ) : (
               <View style={{ gap: 12 }}>

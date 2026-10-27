@@ -216,6 +216,14 @@ const metadataFromFile = (fileName: string) => {
   };
 };
 
+const isGeneratedLocalId = (value: string) => /^local-[a-f0-9]+$/i.test(value.trim());
+const isFallbackArtist = (value: string) => !value.trim() || value.trim().toLowerCase() === 'unknown artist';
+const isUsefulEmbeddedText = (value: string | undefined) => Boolean(
+  value?.trim()
+  && value.trim().toLowerCase() !== 'unknown artist'
+  && !isGeneratedLocalId(value),
+);
+
 const formatDuration = (seconds?: number) => {
   if (!seconds || seconds <= 0) return '—';
   const minutes = Math.floor(seconds / 60);
@@ -384,17 +392,47 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
       const baseName = audioFile.name.replace(/\.[^.]+$/, '');
       const lrc = new File(audioFile.parentDirectory, `${baseName}.lrc`);
       const txt = new File(audioFile.parentDirectory, `${baseName}.txt`);
-      const lyricsFileUri = lrc.exists ? lrc.uri : txt.exists ? txt.uri : undefined;
+      const needsMetadataRecovery = !track.title.trim()
+        || isGeneratedLocalId(track.title)
+        || isFallbackArtist(track.artist);
+      const embedded = needsMetadataRecovery
+        ? await extractEmbeddedMetadata(audioFile, track.id, {
+          title: track.title.trim() || baseName,
+          artist: track.artist.trim() || 'Unknown artist',
+        })
+        : undefined;
+      const lyricsFileUri = lrc.exists
+        ? lrc.uri
+        : txt.exists
+          ? txt.uri
+          : (track.lyricsFileUri && new File(track.lyricsFileUri).exists ? track.lyricsFileUri : embedded?.lyricsFileUri);
       const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, track.id, track.artwork);
       const next = {
         ...track,
+        title: (isGeneratedLocalId(track.title) || !track.title.trim()) && isUsefulEmbeddedText(embedded?.title)
+          ? embedded!.title
+          : track.title,
+        artist: isFallbackArtist(track.artist) && isUsefulEmbeddedText(embedded?.artist)
+          ? embedded!.artist
+          : track.artist,
+        album: track.album.trim() || embedded?.album || '',
+        albumArtist: track.albumArtist || embedded?.albumArtist,
+        trackNumber: track.trackNumber ?? embedded?.trackNumber,
+        year: track.year ?? embedded?.year,
+        genre: track.genre?.length ? track.genre : embedded?.genre,
+        composer: track.composer?.length ? track.composer : embedded?.composer,
+        durationSeconds: track.durationSeconds ?? embedded?.durationSeconds,
+        duration: (!track.duration || track.duration === '—') && embedded?.durationSeconds
+          ? formatDuration(embedded.durationSeconds)
+          : track.duration,
         lyricsFileUri,
-        ...(artwork ? { artwork } : {}),
+        artwork: artwork || embedded?.artwork || track.artwork,
+        artworkFileUri: track.artworkFileUri || embedded?.artworkFileUri || artwork,
         lyricsAvailable: Boolean(track.lyricsAvailable || lyricsFileUri),
-        hasSyncedLyrics: Boolean(track.hasSyncedLyrics || lrc.exists),
-        hasPlainLyrics: Boolean(track.hasPlainLyrics || (!lrc.exists && txt.exists)),
+        hasSyncedLyrics: Boolean(track.hasSyncedLyrics || lrc.exists || embedded?.hasSyncedLyrics),
+        hasPlainLyrics: Boolean(track.hasPlainLyrics || (!lrc.exists && txt.exists) || embedded?.hasPlainLyrics),
       };
-      if (next.lyricsFileUri !== track.lyricsFileUri || next.artwork !== track.artwork || next.hasSyncedLyrics !== track.hasSyncedLyrics || next.hasPlainLyrics !== track.hasPlainLyrics) indexChanged = true;
+      if (JSON.stringify(next) !== JSON.stringify(track)) indexChanged = true;
       refreshed.push(next);
     } catch {
       refreshed.push(track);
@@ -405,26 +443,36 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
   for (const item of downloadsDirectory.list()) {
     if (!(item instanceof File) || !supportedAudio.test(item.name) || knownUris.has(item.uri)) continue;
     const baseName = item.name.replace(/\.[^.]+$/, '');
-    const { title, artist } = metadataFromFile(item.name);
-    const id = idForImport(item.uri, title, artist);
+    const fallback = metadataFromFile(item.name);
+    const id = isGeneratedLocalId(baseName) ? baseName : idForImport(item.uri, fallback.title, fallback.artist);
+    const embedded = await extractEmbeddedMetadata(item, id, fallback);
+    const title = isUsefulEmbeddedText(embedded.title) ? embedded.title : fallback.title;
+    const artist = isUsefulEmbeddedText(embedded.artist) ? embedded.artist : fallback.artist;
     const lrc = new File(downloadsDirectory, `${baseName}.lrc`);
     const txt = new File(downloadsDirectory, `${baseName}.txt`);
-    const artwork = await cacheArtworkForTrack(item, downloadsDirectory, id);
+    const artwork = embedded.artwork || await cacheArtworkForTrack(item, downloadsDirectory, id);
     discovered.push({
       id,
       title,
       artist,
-      album: '',
-      duration: '—',
+      album: embedded.album,
+      albumArtist: embedded.albumArtist,
+      trackNumber: embedded.trackNumber,
+      year: embedded.year,
+      genre: embedded.genre,
+      composer: embedded.composer,
+      duration: formatDuration(embedded.durationSeconds),
+      durationSeconds: embedded.durationSeconds,
       artwork: artwork ?? '',
+      artworkFileUri: embedded.artworkFileUri || artwork,
       provider: 'local',
       providerId: id,
       fileExtension: item.extension,
       localUri: item.uri,
-      lyricsFileUri: lrc.exists ? lrc.uri : txt.exists ? txt.uri : undefined,
-      lyricsAvailable: lrc.exists || txt.exists,
-      hasSyncedLyrics: lrc.exists,
-      hasPlainLyrics: !lrc.exists && txt.exists,
+      lyricsFileUri: lrc.exists ? lrc.uri : txt.exists ? txt.uri : embedded.lyricsFileUri,
+      lyricsAvailable: lrc.exists || txt.exists || Boolean(embedded.lyricsFileUri),
+      hasSyncedLyrics: lrc.exists || embedded.hasSyncedLyrics,
+      hasPlainLyrics: !lrc.exists && (txt.exists || embedded.hasPlainLyrics),
       dateAdded: Date.now(),
     });
   }

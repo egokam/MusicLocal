@@ -308,7 +308,7 @@ const DeveloperProfileScreen = ({
           {'© 2026 Egokam. All rights reserved.\nEnjoy, don\'t try to make it commercial, contact admin for support.'}
         </Text>
         <Text style={{ color: '#55555A', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
-          Version {Constants.expoConfig?.version ?? '1.0.5'}
+          Version {Constants.expoConfig?.version ?? '1.0.6'}
         </Text>
       </ScrollView>
     </SafeAreaView>
