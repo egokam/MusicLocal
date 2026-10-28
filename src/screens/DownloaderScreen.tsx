@@ -2,15 +2,17 @@ import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -18,7 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { Track } from '../types';
 import type { ImportProgress } from '../services/MusicCatalogService';
-import { YouTubeDownloaderService, type YouTubeVideoMatch } from '../native/YouTubeDownloader';
+import { OfflineMusicService } from '../services/OfflineMusicService';
 
 /* eslint-disable react-hooks/immutability */
 
@@ -43,45 +45,34 @@ type DownloaderScreenProps = {
 
 type DownloaderMode = 'track' | 'custom';
 
-const inputStyle = {
-  minHeight: 54,
-  borderRadius: 17,
-  paddingHorizontal: 16,
-  paddingVertical: 13,
-  backgroundColor: '#1C1C1E',
-  color: 'white',
-  fontSize: 16,
-  borderWidth: 1,
-  borderColor: '#2B2B30',
-} as const;
+type LocalAudioSelection = {
+  uri: string;
+  name: string;
+  extension: string;
+  title: string;
+  artist: string;
+  lyrics: string;
+  artworkUri?: string;
+  added: boolean;
+};
+
+const localAudioExtension = /\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 
 const supportedAudioExtension = (url: URL) => /\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i.test(url.pathname);
 
-const youtubeVideoId = (value: string) => {
-  try {
-    const url = new URL(value.trim());
-    if (url.protocol !== 'https:') return null;
-    const host = url.hostname.toLowerCase().replace(/^www\./, '').replace(/^m\./, '');
-    let id = '';
-    if (host === 'youtu.be') {
-      id = url.pathname.split('/').filter(Boolean)[0] ?? '';
-    } else if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
-      if (url.pathname === '/watch') id = url.searchParams.get('v') ?? '';
-      else id = url.pathname.split('/').filter(Boolean)[1] ?? '';
-    }
-    return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-  } catch {
-    return null;
+const base64Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const encodeBase64 = (bytes: Uint8Array) => {
+  let encoded = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index];
+    const second = bytes[index + 1];
+    const third = bytes[index + 2];
+    encoded += base64Alphabet[first >> 2];
+    encoded += base64Alphabet[((first & 0x03) << 4) | ((second ?? 0) >> 4)];
+    encoded += second === undefined ? '=' : base64Alphabet[((second & 0x0f) << 2) | ((third ?? 0) >> 6)];
+    encoded += third === undefined ? '=' : base64Alphabet[third & 0x3f];
   }
-};
-
-const isSoundCloudLink = (value: string) => {
-  try {
-    const host = new URL(value.trim()).hostname.toLowerCase();
-    return host === 'soundcloud.com' || host.endsWith('.soundcloud.com');
-  } catch {
-    return false;
-  }
+  return encoded;
 };
 
 const TRACK_WEBSITE_URL = 'https://spotimate.app/en1';
@@ -449,14 +440,13 @@ export const DownloaderScreen = ({
 }: DownloaderScreenProps) => {
   const [mode, setMode] = useState<DownloaderMode>('track');
   const [tabsWidth, setTabsWidth] = useState(0);
-  const [customLink, setCustomLink] = useState('');
-  const [title, setTitle] = useState('');
-  const [artist, setArtist] = useState('');
-  const [artworkUrl, setArtworkUrl] = useState('');
+  const [selectedAudio, setSelectedAudio] = useState<LocalAudioSelection | null>(null);
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [trackContentHeight, setTrackContentHeight] = useState(320);
+  const previewPlayer = useAudioPlayer(null);
+  const previewStatus = useAudioPlayerStatus(previewPlayer);
   const activeWebDownloads = useRef(new Set<string>());
   const tabPosition = useSharedValue(0);
   const dragOrigin = useSharedValue(0);
@@ -570,152 +560,82 @@ export const DownloaderScreen = ({
     }
   };
 
-  const downloadYouTubeResult = async (
-    video: YouTubeVideoMatch,
-    sourceUrl: string,
-    sourceTitle: string,
-    sourceArtist: string,
-    sourceArtwork: string,
-  ) => {
-    const downloadTitle = sourceTitle.trim() || video.title;
-    const downloadArtist = sourceArtist.trim() || video.artist;
-    let cover = sourceArtwork || video.thumbnailURL;
-    let temporaryUri = '';
-    setBusy(video.videoId);
-    setError('');
-    setMessage('Preparing the audio and embedding its track details…');
-    try {
-      const downloadedAudio = await YouTubeDownloaderService.downloadAudio(
-        video.videoId,
-        sourceTitle.trim(),
-        sourceArtist.trim(),
-        cover,
-      );
-      temporaryUri = downloadedAudio.uri;
-      const savedTitle = downloadTitle || downloadedAudio.title;
-      const savedArtist = downloadArtist || downloadedAudio.artist;
-      cover = cover || downloadedAudio.artworkURL;
-      await onImportLocalAudioFile(
-        temporaryUri,
-        savedTitle,
-        savedArtist,
-        sourceUrl || `https://www.youtube.com/watch?v=${video.videoId}`,
-        cover,
-      );
-      setMessage(`“${savedTitle}” was added to your library.`);
-      Alert.alert('Saved to library', `${savedTitle} is ready to play offline.`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save this YouTube result.');
-      setMessage('');
-    } finally {
-      if (temporaryUri) {
-        try {
-          YouTubeDownloaderService.deleteTemporaryAudio(temporaryUri);
-        } catch {
-          // The app-owned temporary file is cleaned on the next import if removal fails.
-        }
-      }
-      setBusy('');
-    }
-  };
-
-  const saveCustomAudio = async () => {
-    const source = customLink.trim();
-    if (!source) {
-      setError('Paste a YouTube video link or a direct audio-file link.');
-      return;
-    }
+  const chooseAudioFile = async () => {
     setError('');
     setMessage('');
-
-    const videoId = youtubeVideoId(source);
-    if (videoId) {
-      await downloadYouTubeResult(
-        {
-          videoId,
-          title: title.trim(),
-          artist: artist.trim(),
-          thumbnailURL: '',
-          durationText: '',
-        },
-        source,
-        title,
-        artist,
-        artworkUrl,
-      );
-      return;
-    }
-
-    if (isSoundCloudLink(source)) {
-      setError('SoundCloud audio links are not supported. Paste a YouTube video link or a direct audio-file URL instead.');
-      return;
-    }
-
-    let audioUrl: URL;
     try {
-      audioUrl = new URL(source);
-    } catch {
-      setError('Paste a valid HTTPS YouTube or direct audio-file link.');
-      return;
-    }
-    if (audioUrl.protocol !== 'https:' || !supportedAudioExtension(audioUrl)) {
-      setError('Use a secure direct link ending in MP3, M4A, AAC, WAV, FLAC, OGG, or OPUS.');
-      return;
-    }
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'audio/*',
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      const extensionMatch = asset.name.match(localAudioExtension);
+      if (!extensionMatch) {
+        setError('Choose an MP3, M4A, AAC, WAV, FLAC, OGG, or OPUS audio file.');
+        return;
+      }
 
-    setBusy('direct');
-    setMessage('Saving audio to your library…');
-    try {
-      const savedTitle = title.trim() || decodeURIComponent(audioUrl.pathname.split('/').at(-1) ?? 'Imported audio')
-        .replace(/\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i, '')
-        .replace(/[-_]+/g, ' ');
-      const imported = await onImportAudioToLibrary(
-        source,
-        savedTitle,
-        artist.trim() || 'Unknown artist',
-        source,
-        (progress) => setMessage(progress.message),
-        artworkUrl,
-      );
-      setMessage(`“${imported.title}” was added to your library.`);
-      Alert.alert('Saved to library', `${imported.title} is ready to play offline.`);
+      setBusy('inspecting-file');
+      previewPlayer.pause();
+      const metadata = await OfflineMusicService.inspectLocalAudioMetadata(asset.uri);
+      const artworkUri = metadata.artworkData?.length
+        ? `data:${metadata.artworkMimeType || 'image/jpeg'};base64,${encodeBase64(metadata.artworkData)}`
+        : undefined;
+      previewPlayer.replace(asset.uri);
+      setSelectedAudio({
+        uri: asset.uri,
+        name: asset.name,
+        extension: extensionMatch[1].toUpperCase(),
+        title: metadata.title.trim() || 'Unknown',
+        artist: metadata.artist.trim() || 'Unknown',
+        lyrics: metadata.lyricsText?.trim() || 'Unknown',
+        artworkUri,
+        added: false,
+      });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save this audio file.');
-      setMessage('');
+      setError(cause instanceof Error ? cause.message : 'Could not read that audio file.');
     } finally {
       setBusy('');
     }
   };
 
-  const renderTextInput = (
-    value: string,
-    onChangeText: (text: string) => void,
-    placeholder: string,
-    autoCapitalize: 'none' | 'sentences' = 'sentences',
-  ) => (
-    <TextInput
-      value={value}
-      onChangeText={onChangeText}
-      placeholder={placeholder}
-      placeholderTextColor="#77777D"
-      autoCapitalize={autoCapitalize}
-      autoCorrect={false}
-      selectionColor="#FA5265"
-      style={inputStyle}
-    />
-  );
+  const togglePreview = async () => {
+    if (!selectedAudio) return;
+    try {
+      if (previewStatus.playing) {
+        previewPlayer.pause();
+        return;
+      }
+      await setAudioModeAsync({ playsInSilentMode: true });
+      previewPlayer.play();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not play this audio preview.');
+    }
+  };
 
-  const actionButton = (label: string, onPress: () => void, loading: boolean, disabled = false) => (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={disabled || loading || Boolean(busy)}
-      accessibilityRole="button"
-      style={{ minHeight: 54, borderRadius: 17, backgroundColor: '#F62442', flexDirection: 'row', gap: 9, alignItems: 'center', justifyContent: 'center', opacity: disabled || loading || Boolean(busy) ? 0.55 : 1 }}
-    >
-      {loading ? <ActivityIndicator color="white" /> : <Ionicons name="arrow-down-circle-outline" size={21} color="white" />}
-      <Text style={{ color: 'white', fontSize: 16, fontWeight: '800' }}>{label}</Text>
-    </TouchableOpacity>
-  );
+  const addSelectedAudioToLibrary = async () => {
+    if (!selectedAudio || selectedAudio.added) return;
+    setError('');
+    setBusy('adding-local-file');
+    setMessage('Adding audio to your library…');
+    previewPlayer.pause();
+    try {
+      const imported = await onImportLocalAudioFile(
+        selectedAudio.uri,
+        selectedAudio.title,
+        selectedAudio.artist,
+      );
+      setSelectedAudio((current) => current ? { ...current, added: true } : current);
+      setMessage(`“${imported.title}” was added to your library.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not add this audio file to your library.');
+      setMessage('');
+    } finally {
+      setBusy('');
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
@@ -730,7 +650,7 @@ export const DownloaderScreen = ({
             <Ionicons name="chevron-back" size={26} color="white" />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => Alert.alert('Downloader', 'Track accepts Spotify links and shows the available download options. Custom accepts YouTube video links or direct audio files.')}
+            onPress={() => Alert.alert('Downloader', 'Track accepts Spotify links and shows the available download options. File imports MP3, M4A, AAC, WAV, FLAC, OGG, and OPUS audio from your device.')}
             accessibilityRole="button"
             accessibilityLabel="About downloader"
             style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }}
@@ -746,7 +666,7 @@ export const DownloaderScreen = ({
           >
             <Text style={{ color: 'white', fontSize: 37, lineHeight: 44, fontWeight: '800' }}>Downloader</Text>
             <Text style={{ color: '#A1A1A6', fontSize: 15, lineHeight: 21, marginTop: -10 }}>
-              {mode === 'track' ? 'Paste a Spotify link to see the available track downloads.' : 'Save a YouTube result or a direct audio file to your library.'}
+              {mode === 'track' ? 'Paste a Spotify link to see the available track downloads.' : 'Choose an audio file to preview its details and add it to your library.'}
             </Text>
 
             <GestureDetector gesture={tabPan}>
@@ -768,9 +688,9 @@ export const DownloaderScreen = ({
                       accessibilityState={{ selected }}
                       style={{ flex: 1, borderRadius: 22, backgroundColor: 'transparent', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
                     >
-                      <Ionicons name={item === 'track' ? 'musical-note' : 'link'} size={17} color={selected ? '#FA5265' : '#A1A1A6'} />
+                      <Ionicons name={item === 'track' ? 'musical-note' : 'folder-open-outline'} size={17} color={selected ? '#FA5265' : '#A1A1A6'} />
                       <Text style={{ color: selected ? 'white' : '#A1A1A6', fontSize: 14, fontWeight: '700' }}>
-                        {item === 'track' ? 'Track' : 'Custom'}
+                        {item === 'track' ? 'Track' : 'File'}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -798,15 +718,89 @@ export const DownloaderScreen = ({
                 />
               </View>
             ) : (
-              <View style={{ gap: 12 }}>
-                <Text style={{ color: '#A1A1A6', fontSize: 14, lineHeight: 19 }}>
-                  Add track details, then paste a YouTube video link or a direct audio-file URL. SoundCloud audio links are not extracted.
-                </Text>
-                {renderTextInput(title, setTitle, 'Track name')}
-                {renderTextInput(artist, setArtist, 'Artist')}
-                {renderTextInput(artworkUrl, setArtworkUrl, 'Artwork image URL (optional)', 'none')}
-                {renderTextInput(customLink, setCustomLink, 'YouTube video or direct audio URL', 'none')}
-                {actionButton('Save to library', saveCustomAudio, busy === 'direct' || Boolean(busy && busy !== 'search'))}
+              <View style={{ gap: 14, marginTop: 4 }}>
+                <TouchableOpacity
+                  onPress={() => void chooseAudioFile()}
+                  disabled={Boolean(busy)}
+                  accessibilityRole="button"
+                  accessibilityLabel={selectedAudio ? 'Choose another audio file' : 'Import an audio file'}
+                  style={{ minHeight: 58, borderRadius: 999, borderWidth: 1, borderColor: '#38383D', backgroundColor: '#1C1C1E', flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.65 : 1 }}
+                >
+                  {busy === 'inspecting-file' ? <ActivityIndicator color="#FA5265" /> : <Ionicons name="folder-open-outline" size={20} color="#FA5265" />}
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
+                    {busy === 'inspecting-file' ? 'Reading audio details…' : selectedAudio ? 'Choose another file' : 'Import audio file'}
+                  </Text>
+                </TouchableOpacity>
+
+                {selectedAudio && (
+                  <View style={{ overflow: 'hidden', borderRadius: 30, borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)', backgroundColor: '#1C1C1E' }}>
+                    {selectedAudio.artworkUri && (
+                      <Image
+                        source={{ uri: selectedAudio.artworkUri }}
+                        blurRadius={28}
+                        resizeMode="cover"
+                        style={{ position: 'absolute', top: -20, left: -20, right: -20, bottom: -20, opacity: 0.42 }}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
+                      />
+                    )}
+                    <View style={{ padding: 18, backgroundColor: 'rgba(12,12,14,0.58)', gap: 15 }}>
+                      <View style={{ alignItems: 'center', gap: 13 }}>
+                        <View style={{ width: 190, height: 190, overflow: 'hidden', borderRadius: 26, borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
+                          {selectedAudio.artworkUri ? (
+                            <Image source={{ uri: selectedAudio.artworkUri }} resizeMode="cover" style={{ width: '100%', height: '100%' }} accessibilityLabel="Embedded audio artwork" />
+                          ) : (
+                            <View style={{ alignItems: 'center', gap: 8 }}>
+                              <Ionicons name="musical-notes-outline" size={48} color="#8E8E93" />
+                              <Text style={{ color: '#A1A1A6', fontSize: 13 }}>Unknown artwork</Text>
+                            </View>
+                          )}
+                        </View>
+                        <View style={{ alignItems: 'center', gap: 3 }}>
+                          <Text numberOfLines={2} style={{ color: 'white', fontSize: 21, lineHeight: 26, fontWeight: '800', textAlign: 'center' }}>{selectedAudio.title}</Text>
+                          <Text numberOfLines={1} style={{ color: '#D1D1D6', fontSize: 15, lineHeight: 21, textAlign: 'center' }}>{selectedAudio.artist}</Text>
+                          <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 12, marginTop: 3 }}>{selectedAudio.name} · {selectedAudio.extension}</Text>
+                        </View>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 13, borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(20,20,22,0.68)' }}>
+                        <TouchableOpacity
+                          onPress={() => void togglePreview()}
+                          accessibilityRole="button"
+                          accessibilityLabel={previewStatus.playing ? 'Pause audio preview' : 'Play audio preview'}
+                          style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: '#F62442', alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <Ionicons name={previewStatus.playing ? 'pause' : 'play'} size={23} color="white" style={previewStatus.playing ? undefined : { marginLeft: 3 }} />
+                        </TouchableOpacity>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Audio preview</Text>
+                          <Text style={{ color: '#A1A1A6', fontSize: 12, marginTop: 3 }}>{previewStatus.playing ? 'Playing' : 'Ready to play'}</Text>
+                        </View>
+                      </View>
+
+                      <View style={{ gap: 7 }}>
+                        <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Lyrics</Text>
+                        <ScrollView nestedScrollEnabled style={{ maxHeight: 138, padding: 12, borderRadius: 18, backgroundColor: 'rgba(20,20,22,0.6)' }}>
+                          <Text style={{ color: '#D1D1D6', fontSize: 14, lineHeight: 21 }}>{selectedAudio.lyrics}</Text>
+                        </ScrollView>
+                      </View>
+
+                      <TouchableOpacity
+                        onPress={() => void addSelectedAudioToLibrary()}
+                        disabled={Boolean(busy) || selectedAudio.added}
+                        accessibilityRole="button"
+                        style={{ minHeight: 56, borderRadius: 999, backgroundColor: selectedAudio.added ? '#343438' : '#F62442', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, opacity: busy && busy !== 'adding-local-file' ? 0.55 : 1 }}
+                      >
+                        {busy === 'adding-local-file'
+                          ? <ActivityIndicator color="white" />
+                          : <Ionicons name={selectedAudio.added ? 'checkmark-circle' : 'add-circle-outline'} size={21} color="white" />}
+                        <Text style={{ color: 'white', fontSize: 16, fontWeight: '800' }}>
+                          {busy === 'adding-local-file' ? 'Adding to Library…' : selectedAudio.added ? 'Added to Library' : 'Add to Library'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
             )}
 

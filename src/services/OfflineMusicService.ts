@@ -299,7 +299,12 @@ const installLegacyTextDecoderSupport = () => {
 
 installLegacyTextDecoderSupport();
 
-const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { title: string; artist: string }) => {
+const extractEmbeddedMetadata = async (
+  audioFile: File,
+  id: string,
+  fallback: { title: string; artist: string },
+  persistAssets = true,
+) => {
   let title = fallback.title;
   let artist = fallback.artist;
   let album = '';
@@ -309,8 +314,11 @@ const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { 
   let genre: string[] | undefined;
   let composer: string[] | undefined;
   let artwork: string | undefined;
+  let artworkData: Uint8Array | undefined;
+  let artworkMimeType: string | undefined;
   let durationSeconds: number | undefined;
   let lyricsFileUri: string | undefined;
+  let lyricsText: string | undefined;
   let hasSyncedLyrics = false;
   let hasPlainLyrics = false;
   try {
@@ -331,14 +339,17 @@ const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { 
     const picture = pictures.find((candidate) => /cover\s*\(front\)|front/i.test(candidate.type ?? ''))
       ?? pictures.find((candidate) => candidate.data?.length > 0);
     if (picture?.data?.length) {
-      const mimeType = picture.format.toLowerCase();
-      const extension = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : mimeType.includes('gif') ? 'gif' : 'jpg';
-      const artworkFile = new File(downloadsDirectory, `${safeName(id)}-artwork.${extension}`);
-      if (artworkFile.exists) artworkFile.delete();
-      artworkFile.create({ intermediates: true });
-      artworkFile.write(picture.data);
-      if (artworkFile.exists && (artworkFile.size ?? 0) > 0) artwork = artworkFile.uri;
-      else console.warn(`[Music import] Embedded artwork was parsed but not saved for ${audioFile.name}.`);
+      artworkData = picture.data;
+      artworkMimeType = picture.format.toLowerCase() || 'image/jpeg';
+      if (persistAssets) {
+        const extension = artworkMimeType.includes('png') ? 'png' : artworkMimeType.includes('webp') ? 'webp' : artworkMimeType.includes('gif') ? 'gif' : 'jpg';
+        const artworkFile = new File(downloadsDirectory, `${safeName(id)}-artwork.${extension}`);
+        if (artworkFile.exists) artworkFile.delete();
+        artworkFile.create({ intermediates: true });
+        artworkFile.write(picture.data);
+        if (artworkFile.exists && (artworkFile.size ?? 0) > 0) artwork = artworkFile.uri;
+        else console.warn(`[Music import] Embedded artwork was parsed but not saved for ${audioFile.name}.`);
+      }
     }
     const lyricParts = (result.common.lyrics ?? []).flatMap((entry) => {
       if (entry.text?.trim()) return [entry.text.trim()];
@@ -355,19 +366,40 @@ const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { 
     });
     const embeddedLyrics = lyricParts.join('\n\n').trim();
     if (embeddedLyrics) {
+      lyricsText = embeddedLyrics;
       hasSyncedLyrics = (result.common.lyrics ?? []).some((entry) => Boolean(entry.syncText?.length));
       hasPlainLyrics = !hasSyncedLyrics;
-      const lyricsFile = new File(downloadsDirectory, `${safeName(id)}.${hasSyncedLyrics ? 'lrc' : 'txt'}`);
-      if (lyricsFile.exists) lyricsFile.delete();
-      writeTextFile(lyricsFile, embeddedLyrics);
-      lyricsFileUri = lyricsFile.uri;
+      if (persistAssets) {
+        const lyricsFile = new File(downloadsDirectory, `${safeName(id)}.${hasSyncedLyrics ? 'lrc' : 'txt'}`);
+        if (lyricsFile.exists) lyricsFile.delete();
+        writeTextFile(lyricsFile, embeddedLyrics);
+        lyricsFileUri = lyricsFile.uri;
+      }
     }
   } catch (error) {
     // Keep importing the audio, but report the parser failure instead of
     // silently making an embedded-cover failure impossible to diagnose.
     console.warn(`[Music import] Could not read embedded metadata from ${audioFile.name}:`, error);
   }
-  return { title, artist, album, albumArtist, trackNumber, year, genre, composer, artwork, artworkFileUri: artwork, durationSeconds, lyricsFileUri, hasSyncedLyrics, hasPlainLyrics };
+  return {
+    title,
+    artist,
+    album,
+    albumArtist,
+    trackNumber,
+    year,
+    genre,
+    composer,
+    artwork,
+    artworkData,
+    artworkMimeType,
+    artworkFileUri: artwork,
+    durationSeconds,
+    lyricsFileUri,
+    lyricsText,
+    hasSyncedLyrics,
+    hasPlainLyrics,
+  };
 };
 
 const readIndexedTracks = async (): Promise<Track[]> => {
@@ -486,6 +518,16 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
 };
 
 export const OfflineMusicService = {
+  async inspectLocalAudioMetadata(sourceUri: string) {
+    const audioFile = new File(sourceUri);
+    return extractEmbeddedMetadata(
+      audioFile,
+      'local-audio-preview',
+      { title: 'Unknown', artist: 'Unknown' },
+      false,
+    );
+  },
+
   async getDownloadedTracks(): Promise<Track[]> {
     ensureDirectory();
     const indexed = await readIndexedTracks();
