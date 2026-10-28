@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -485,16 +485,19 @@ export const DownloaderScreen = ({
       scheduleOnRN(setMode, nextMode);
     });
 
-  const selectTab = (nextMode: DownloaderMode) => {
-    setMode(nextMode);
-    tabPosition.value = withSpring(nextMode === 'custom' ? 1 : 0, {
+  useEffect(() => {
+    if (tabsWidth <= 0) return;
+    const selectedPosition = mode === 'custom' ? 1 : 0;
+    tabPosition.value = withSpring(selectedPosition, {
       damping: 15,
       stiffness: 190,
       mass: 0.7,
     });
-    bubbleScale.value = withSpring(1.04, { damping: 10, stiffness: 220 }, () => {
-      bubbleScale.value = withSpring(1, { damping: 12, stiffness: 220 });
-    });
+    bubbleScale.value = withSpring(1, { damping: 12, stiffness: 220 });
+  }, [mode, tabsWidth, tabPosition, bubbleScale]);
+
+  const selectTab = (nextMode: DownloaderMode) => {
+    setMode(nextMode);
     setError('');
     setMessage('');
   };
@@ -671,7 +674,12 @@ export const DownloaderScreen = ({
 
             <GestureDetector gesture={tabPan}>
               <View
-                onLayout={(event) => setTabsWidth(event.nativeEvent.layout.width)}
+                onLayout={(event) => {
+                  const measuredWidth = event.nativeEvent.layout.width;
+                  if (Number.isFinite(measuredWidth) && measuredWidth > 0) {
+                    setTabsWidth((currentWidth) => Math.abs(currentWidth - measuredWidth) < 1 ? currentWidth : measuredWidth);
+                  }
+                }}
                 style={{ height: 48, marginTop: 8, padding: 4, borderRadius: 25, backgroundColor: '#1C1C1E', flexDirection: 'row', overflow: 'hidden' }}
               >
                 <Animated.View

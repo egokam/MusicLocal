@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/immutability */
+
 import { useCallback, useContext, useEffect, useMemo, useState, type ComponentProps } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { GlassContainer, GlassView, isLiquidGlassAvailable, type GlassEffectStyleConfig, type GlassStyle } from 'expo-glass-effect';
@@ -134,6 +136,10 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
   const count = mainRoutes.length;
   const islandWidth = windowWidth - 32;
   const collapsedIslandWidth = islandWidth - BAR_HEIGHT - 12;
+  const estimatedSlotWidth = Math.max(
+    (collapsedIslandWidth - BAR_PADDING * 2) / Math.max(count, 1),
+    1,
+  );
 
   const finishSelectionExit = useCallback(() => setSelectionUiVisible(false), []);
   const finishTabBarExit = useCallback(() => setTabBarVisible(false), []);
@@ -321,11 +327,13 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
     // Stretch while travelling, relax on arrival
     const travel = Math.min(Math.abs(target.value - position.value), 1);
     const grow = 1 + l * 0.14;
+    const slotWidth = slotSV.value > 0 ? slotSV.value : estimatedSlotWidth;
     return {
-      opacity: lensOpacity.value,
-      width: slotSV.value,
+      // Keep the resting selection visible even if a previous fade was interrupted.
+      opacity: activeMainIndex >= 0 ? 1 : lensOpacity.value,
+      width: slotWidth,
       transform: [
-        { translateX: position.value * slotSV.value },
+        { translateX: position.value * slotWidth },
         { scaleX: grow * (1 + travel * 0.12) },
         { scaleY: grow * (1 - travel * 0.05) },
       ],
@@ -334,7 +342,7 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
       borderColor: `rgba(255,255,255,${0.16 + l * 0.26})`,
       shadowOpacity: l * 0.35,
     };
-  });
+  }, [activeMainIndex, estimatedSlotWidth]);
 
   if (isLrcSynchronizerActive) return null;
 
@@ -357,7 +365,10 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
             <Animated.View
               style={[styles.track, tabBarContentVisibilityStyle]}
               onLayout={(e) => {
-                slotSV.value = e.nativeEvent.layout.width / Math.max(count, 1);
+                const measuredSlotWidth = e.nativeEvent.layout.width / Math.max(count, 1);
+                if (Number.isFinite(measuredSlotWidth) && measuredSlotWidth > 0) {
+                  slotSV.value = measuredSlotWidth;
+                }
               }}
             >
               <Animated.View pointerEvents="none" style={[styles.lens, lensStyle]} />
