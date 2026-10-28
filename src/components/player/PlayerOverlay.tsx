@@ -3,6 +3,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { useAudioPlayerStatus } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +21,7 @@ const HAS_LIQUID_GLASS = isLiquidGlassAvailable() && isGlassEffectAPIAvailable()
 const TRACK_DETAILS_FADE_DURATION = 290;
 const TRACK_DETAILS_OVERLAP_GAP = 100;
 const TRACK_DETAILS_FADE_EASING = Easing.bezier(0.4, 0, 0.2, 1);
+const ReanimatedExpoImage = ReanimatedAnimated.createAnimatedComponent(ExpoImage);
 const getArtworkSource = (track: Track) => track.artwork
   ? {
       uri: track.artwork,
@@ -837,9 +839,9 @@ const PlayerOverlayView = ({
               expandedSurfaceStyle,
             ]}
           />
-          <ReanimatedAnimated.Image
+          <ReanimatedExpoImage
             source={displayArtworkSource}
-            resizeMode="cover"
+            contentFit="cover"
             blurRadius={20}
             style={[
               { position: 'absolute', top: 0, left: 0, width: windowWidth, height: windowHeight },
@@ -848,9 +850,9 @@ const PlayerOverlayView = ({
             ]}
           />
           {isTrackTransitioning ? (
-            <ReanimatedAnimated.Image
+            <ReanimatedExpoImage
               source={incomingArtworkSource}
-              resizeMode="cover"
+              contentFit="cover"
               blurRadius={20}
               style={[
                 { position: 'absolute', top: 0, left: 0, width: windowWidth, height: windowHeight },
@@ -1131,9 +1133,9 @@ const PlayerOverlayView = ({
                 style={[StyleSheet.absoluteFill, oldTrackDetailsStyle]}
               >
                 <ReanimatedAnimated.View style={artworkImageFrameStyle}>
-                  <ReanimatedAnimated.Image
+                  <ReanimatedExpoImage
                     source={displayArtworkSource}
-                    resizeMode="cover"
+                    contentFit="cover"
                     accessibilityLabel={displayTrack.album + ' album artwork'}
                     style={{ width: artworkSize, height: artworkSize }}
                   />
@@ -1144,9 +1146,9 @@ const PlayerOverlayView = ({
                 style={[StyleSheet.absoluteFill, blurredArtworkStyle]}
               >
                 <ReanimatedAnimated.View style={artworkImageFrameStyle}>
-                  <ReanimatedAnimated.Image
+                  <ReanimatedExpoImage
                     source={displayArtworkSource}
-                    resizeMode="cover"
+                    contentFit="cover"
                     blurRadius={18}
                     accessibilityLabel={displayTrack.album + ' album artwork'}
                     style={{ width: artworkSize, height: artworkSize }}
@@ -1159,9 +1161,9 @@ const PlayerOverlayView = ({
                   style={[StyleSheet.absoluteFill, incomingTrackDetailsStyle]}
                 >
                   <ReanimatedAnimated.View style={artworkImageFrameStyle}>
-                    <ReanimatedAnimated.Image
+                    <ReanimatedExpoImage
                       source={incomingArtworkSource}
-                      resizeMode="cover"
+                      contentFit="cover"
                       accessibilityLabel={track.album + ' album artwork'}
                       style={{ width: artworkSize, height: artworkSize }}
                     />
@@ -1174,9 +1176,9 @@ const PlayerOverlayView = ({
                   style={[StyleSheet.absoluteFill, incomingBlurredArtworkStyle]}
                 >
                   <ReanimatedAnimated.View style={artworkImageFrameStyle}>
-                    <ReanimatedAnimated.Image
+                    <ReanimatedExpoImage
                       source={incomingArtworkSource}
-                      resizeMode="cover"
+                      contentFit="cover"
                       blurRadius={18}
                       accessibilityLabel={track.album + ' album artwork'}
                       style={{ width: artworkSize, height: artworkSize }}

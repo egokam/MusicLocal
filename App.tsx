@@ -403,7 +403,8 @@ export default function App() {
     setActiveTrack(selectedTrack);
     handledFinishedTrack.current = null;
     const isRadioTrack = selectedTrack.provider === 'radio';
-    const shouldLoadLyrics = !isRadioTrack && !selectedTrack.lyrics?.length;
+    const isQuranTrack = selectedTrack.provider === 'quran';
+    const shouldLoadLyrics = !isRadioTrack && !isQuranTrack && !selectedTrack.lyrics?.length;
     setLyricsLoadingTrackId(shouldLoadLyrics ? selectedTrack.id : null);
     const musicApiHeaders = selectedTrack.provider === 'local' ? getMusicApiHeaders() : {};
     player.replace(
@@ -426,7 +427,7 @@ export default function App() {
       // Lock-screen metadata is optional; keep stream playback available if the OS rejects it.
     }
     player.play();
-    if (!isRadioTrack) incrementPlayCount(selectedTrack.id);
+    if (!isRadioTrack && !isQuranTrack) incrementPlayCount(selectedTrack.id);
 
     if (shouldLoadLyrics) {
       void MusicCatalogService.getLyrics(selectedTrack)
