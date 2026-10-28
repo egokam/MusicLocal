@@ -3,13 +3,13 @@
     "name": "Music",
     "slug": "musiqapp",
     "scheme": "musiqapp",
-    "version": "1.0.6",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "site.egokam.musiqapp",
-      "buildNumber": "8",
+      "buildNumber": "10",
       "supportsTablet": true,
       "infoPlist": {
         "UIBackgroundModes": [
@@ -77,7 +77,8 @@
           ]
         }
       ],
-      "expo-background-task"
+      "expo-background-task",
+      "expo-image"
     ],
     "extra": {
       "eas": {

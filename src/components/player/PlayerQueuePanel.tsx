@@ -3,8 +3,9 @@
 
 import React, { useCallback, useMemo } from 'react';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { GestureDetector, type NativeGesture } from 'react-native-gesture-handler';
-import { Image, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 import Animated, { useAnimatedScrollHandler, type SharedValue } from 'react-native-reanimated';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
 import type { Track } from '../../types';
@@ -104,7 +105,7 @@ const QueueTrackRowView = ({
       {artworkSource ? (
         <Image
           source={artworkSource}
-          resizeMode="cover"
+          contentFit="cover"
           style={{ width: 46, height: 46, borderRadius: 8, backgroundColor: '#303034' }}
         />
       ) : (
