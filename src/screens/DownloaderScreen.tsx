@@ -89,7 +89,7 @@ const TRACK_PAGE_HTML = `
         * { box-sizing: border-box; }
         html, body { width: 100%; min-height: 100%; margin: 0; background: #000 !important; color: #F5F5F7 !important; }
         body { padding: 0 18px 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; font-size: 16px; line-height: 1.45; }
-        .track-page { width: 100%; max-width: 620px; margin: 0 auto; }
+        .track-page { width: 100%; max-width: 620px; height: auto !important; min-height: 0 !important; margin: 0 auto; }
         .input-url-box { margin: 0 !important; padding: 0 !important; background: transparent !important; border: 0 !important; }
         .input-url-box .field.has-addons { display: flex !important; flex-direction: column !important; align-items: stretch !important; gap: 12px !important; margin: 0 !important; }
         .input-url-box .field.has-addons > .control:first-child { width: 100% !important; min-width: 0 !important; }
@@ -128,6 +128,10 @@ const TRACK_PAGE_HTML = `
         #download-info .native-track-result::after { content: ""; position: absolute; z-index: 1; inset: 0; border-radius: inherit; background: linear-gradient(180deg, rgba(14,12,11,.52), rgba(14,12,11,.68)); pointer-events: none; }
         #download-info .native-track-result > :not(.native-track-backdrop) { position: relative; z-index: 2; }
         #download-info .native-track-result h1, #download-info .native-track-result h2, #download-info .native-track-result h3, #download-info .native-track-result h4 { margin: 16px 0 !important; color: #F5F5F7 !important; font-size: 23px !important; font-weight: 700 !important; line-height: 1.2 !important; text-align: center !important; }
+        #download-info .native-track-result .native-audio-status, #download-info .native-audio-status { display: flex !important; align-items: center; justify-content: center; gap: 9px; margin: 12px 0 2px !important; padding: 10px 14px !important; border: 1px solid rgba(255,255,255,.1) !important; border-radius: 999px !important; background: rgba(20,20,22,.66) !important; color: #D1D1D6 !important; font-size: 14px !important; font-weight: 600 !important; line-height: 1.3 !important; text-align: center !important; }
+        #download-info .native-audio-status-icon { display: inline-flex; width: 18px; height: 18px; flex: 0 0 18px; align-items: center; justify-content: center; border: 2px solid rgba(255,255,255,.28); border-top-color: #F62442; border-radius: 50%; color: transparent; animation: spin .8s linear infinite; }
+        #download-info .native-audio-status[data-state="success"] .native-audio-status-icon { border: 0; color: #30D158; font-size: 18px; font-weight: 800; animation: none; }
+        #download-info .native-audio-status[data-state="error"] .native-audio-status-icon { border: 0; color: #FF7280; font-size: 17px; font-weight: 800; animation: none; }
         #download-info .native-track-artwork { display: block; width: min(100%, 250px) !important; height: auto !important; margin: 0 auto 12px !important; border-radius: 28px !important; object-fit: cover; box-shadow: 0 12px 30px rgba(0,0,0,.32); }
         #download-info .sm-single-track.grid-container { display: grid !important; grid-template-columns: 58px minmax(0, 1fr) minmax(112px, 132px) !important; grid-auto-rows: min-content !important; align-content: start !important; align-items: center !important; gap: 10px !important; height: auto !important; min-height: 0 !important; max-height: none !important; margin-top: 12px !important; padding: 8px 0 !important; border: 0 !important; border-radius: 28px !important; background: transparent !important; box-shadow: none !important; }
         #download-info .sm-single-track [data-track-name], #download-info .sm-single-track [data-track-artist], #download-info .sm-single-track .sm-track-info strong, #download-info .sm-single-track .sm-track-info > span { display: none !important; }
@@ -185,9 +189,14 @@ const webAudioLinkBridge = `
     var mimeByExtension = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', opus: 'audio/opus' };
     function postHeight() {
       if (!window.ReactNativeWebView || !document.documentElement) return;
+      var content = document.querySelector('main.track-page') || document.body;
+      var contentRect = content ? content.getBoundingClientRect() : null;
+      var scrollOffset = window.pageYOffset || document.documentElement.scrollTop || 0;
+      var bodyPaddingBottom = document.body ? (parseFloat(window.getComputedStyle(document.body).paddingBottom) || 0) : 0;
+      var contentHeight = contentRect ? contentRect.bottom + scrollOffset + bodyPaddingBottom : 0;
       window.ReactNativeWebView.postMessage(JSON.stringify({
         type: 'track-content-height',
-        height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)
+        height: Math.ceil(Math.max(contentHeight, 0))
       }));
     }
     var resizeQueued = false;
@@ -394,6 +403,35 @@ const webAudioLinkBridge = `
       var title = (value || '').trim();
       return /^download(?:\\s*(?:mp3|audio))?$/i.test(title) ? '' : title;
     }
+    window.setNativeAudioDownloadStatus = function (message, state) {
+      var root = document.getElementById('download-info');
+      if (!root) return;
+      var card = root.querySelector('.native-track-result') || root;
+      var status = card.querySelector('.native-audio-status');
+      if (!status) {
+        status = document.createElement('p');
+        status.className = 'native-audio-status';
+        status.setAttribute('role', 'status');
+        var icon = document.createElement('span');
+        icon.className = 'native-audio-status-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        var label = document.createElement('span');
+        label.className = 'native-audio-status-label';
+        status.appendChild(icon);
+        status.appendChild(label);
+        card.appendChild(status);
+      }
+      status.setAttribute('data-state', state);
+      var icon = status.querySelector('.native-audio-status-icon');
+      var label = status.querySelector('.native-audio-status-label');
+      if (icon) icon.textContent = state === 'success' ? '✓' : state === 'error' ? '!' : '';
+      if (label) label.textContent = message;
+      var preview = root.querySelector('.sm-preview');
+      if (preview) {
+        if (state === 'loading') preview.setAttribute('data-native-downloading', 'true');
+        else preview.removeAttribute('data-native-downloading');
+      }
+    };
     document.addEventListener('click', function (event) {
       var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
       if (!link) return;
@@ -421,6 +459,7 @@ const webAudioLinkBridge = `
         || readAdjacentTrackText(resultRoot, '[data-track-name], [itemprop="name"], .track-title, .song-title');
       event.preventDefault();
       event.stopImmediatePropagation();
+      window.setNativeAudioDownloadStatus('Saving audio to your library…', 'loading');
       window.ReactNativeWebView.postMessage(JSON.stringify({
         type: 'audio-download',
         url: url.href,
@@ -445,6 +484,7 @@ export const DownloaderScreen = ({
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [trackContentHeight, setTrackContentHeight] = useState(320);
+  const trackWebViewRef = useRef<WebView | null>(null);
   const previewPlayer = useAudioPlayer(null);
   const previewStatus = useAudioPlayerStatus(previewPlayer);
   const activeWebDownloads = useRef(new Set<string>());
@@ -454,7 +494,6 @@ export const DownloaderScreen = ({
   const tabWidth = Math.max((tabsWidth - 8) / 2, 1);
 
   const highlightStyle = useAnimatedStyle(() => ({
-    width: tabWidth,
     transform: [
       { translateX: tabPosition.value * tabWidth },
       { scaleX: bubbleScale.value },
@@ -502,6 +541,17 @@ export const DownloaderScreen = ({
     setMessage('');
   };
 
+  const updateTrackAudioStatus = (text: string, state: 'loading' | 'success' | 'error') => {
+    const textValue = JSON.stringify(text);
+    const stateValue = JSON.stringify(state);
+    trackWebViewRef.current?.injectJavaScript(`
+      if (typeof window.setNativeAudioDownloadStatus === 'function') {
+        window.setNativeAudioDownloadStatus(${textValue}, ${stateValue});
+      }
+      true;
+    `);
+  };
+
   const importWebsiteAudio = async (url: string, suggestedTitle = '', suggestedArtist = '', mimeType = '') => {
     if (activeWebDownloads.current.has(url)) return;
     let audioUrl: URL;
@@ -520,6 +570,7 @@ export const DownloaderScreen = ({
     setError('');
     setBusy('website-audio');
     setMessage('Saving audio to your library…');
+    updateTrackAudioStatus('Saving audio to your library…', 'loading');
     const fileName = audioUrl.pathname.split('/').filter(Boolean).at(-1) || audioName || 'Imported audio';
     let fallbackTitle = fileName;
     try {
@@ -535,11 +586,17 @@ export const DownloaderScreen = ({
         preferredTitle || fallbackTitle,
         suggestedArtist.trim() || 'Unknown artist',
         url,
-        (progress) => setMessage(progress.message),
+        (progress) => {
+          setMessage(progress.message);
+          updateTrackAudioStatus(progress.message, 'loading');
+        },
       );
       setMessage(`“${imported.title}” was added to your library.`);
+      updateTrackAudioStatus(`“${imported.title}” was added to your library.`, 'success');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save this audio file.');
+      const errorMessage = cause instanceof Error ? cause.message : 'Could not save this audio file.';
+      setError(errorMessage);
+      updateTrackAudioStatus(errorMessage, 'error');
       setMessage('');
     } finally {
       activeWebDownloads.current.delete(url);
@@ -684,7 +741,7 @@ export const DownloaderScreen = ({
               >
                 <Animated.View
                   pointerEvents="none"
-                  style={[{ position: 'absolute', left: 4, top: 4, bottom: 4, borderRadius: 22, backgroundColor: '#39393D' }, highlightStyle]}
+                  style={[{ position: 'absolute', left: 4, top: 4, bottom: 4, width: '50%', borderRadius: 22, backgroundColor: '#39393D' }, highlightStyle]}
                 />
                 {(['track', 'custom'] as const).map((item) => {
                   const selected = mode === item;
@@ -709,6 +766,7 @@ export const DownloaderScreen = ({
             {mode === 'track' ? (
               <View style={{ marginBottom: 16, overflow: 'hidden', borderRadius: 20, backgroundColor: '#000000' }}>
                 <WebView
+                  ref={trackWebViewRef}
                   source={TRACK_WEBVIEW_SOURCE}
                   originWhitelist={['*']}
                   style={{ height: trackContentHeight, backgroundColor: '#000000' }}
@@ -812,10 +870,10 @@ export const DownloaderScreen = ({
               </View>
             )}
 
-            {Boolean(error) && (
+            {Boolean(error) && mode === 'custom' && (
               <Text accessibilityRole="alert" style={{ color: '#FF7280', fontSize: 14, lineHeight: 20, paddingHorizontal: 2 }}>{error}</Text>
             )}
-            {Boolean(message) && !error && (
+            {Boolean(message) && !error && mode === 'custom' && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 2 }}>
                 {Boolean(busy) && <ActivityIndicator size="small" color="#FA5265" />}
                 <Text style={{ flex: 1, color: '#A1A1A6', fontSize: 13, lineHeight: 19 }}>{message}</Text>

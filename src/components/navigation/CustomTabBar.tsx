@@ -331,7 +331,6 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
     return {
       // Keep the resting selection visible even if a previous fade was interrupted.
       opacity: activeMainIndex >= 0 ? 1 : lensOpacity.value,
-      width: slotWidth,
       transform: [
         { translateX: position.value * slotWidth },
         { scaleX: grow * (1 + travel * 0.12) },
@@ -371,7 +370,10 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
                 }
               }}
             >
-              <Animated.View pointerEvents="none" style={[styles.lens, lensStyle]} />
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.lens, { width: `${100 / Math.max(count, 1)}%` }, lensStyle]}
+              />
 
               {mainRoutes.map((route, mainIndex) => (
                 <TabItem

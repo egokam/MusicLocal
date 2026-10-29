@@ -1,0 +1,35 @@
+{
+  "Colors_to_change": [
+    {
+      "oldcolor": "green",
+      "newcolor": "#F62442"
+    },
+    {
+      "oldcolor": "white",
+      "newcolor": "#F5F5F7"
+    },
+    {
+      "oldcolor": "black",
+      "newcolor": "#000000"
+    }
+  ],
+  "Text_to_edit": [
+    {
+      "oldtext": "Old title",
+      "newtext": "New title"
+    },
+    {
+      "oldtext": "Example text",
+      "newtext": "Updated text"
+    },
+    {
+      "oldtext": "Download now",
+      "newtext": "Get audio"
+    }
+  ],
+  "Text_to_remove": [
+    "Advertisement",
+    "Subscribe now",
+    "Sponsored content"
+  ]
+}
