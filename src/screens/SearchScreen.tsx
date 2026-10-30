@@ -17,6 +17,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as SecureStore from 'expo-secure-store';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
+import { TrackListSkeleton } from '../components/Skeleton';
 import { getMusicApiHeaders, MusicCatalogService, type TrackEditChanges } from '../services/MusicCatalogService';
 import { AudiusCatalogService } from '../services/AudiusCatalogService';
 import type { PlaylistSummary, Track } from '../types';
@@ -181,6 +182,17 @@ export const SearchScreen = () => {
     });
     return [...byId.values()];
   }, [actions.downloadedTracks, actions.tracks]);
+  const cachedMatches = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(query.trim());
+    if (!normalizedQuery) return [];
+    return localTracks.filter((track) => (
+      normalizeSearchText(trackSearchText(track)).includes(normalizedQuery)
+    ));
+  }, [localTracks, query]);
+  const visibleResults = useMemo(
+    () => query.trim() ? (loading ? cachedMatches : results) : [],
+    [cachedMatches, loading, query, results],
+  );
   const favoriteIds = useMemo(() => new Set(actions.favoriteTracks.map((track) => track.id)), [actions.favoriteTracks]);
   const downloadedIds = useMemo(() => new Set(actions.downloadedTrackIds), [actions.downloadedTrackIds]);
   const downloadingIds = useMemo(() => new Set(actions.downloadingTrackIds), [actions.downloadingTrackIds]);
@@ -227,14 +239,9 @@ export const SearchScreen = () => {
     if (!trimmedQuery) return;
 
     let cancelled = false;
+
     const timeout = setTimeout(() => {
-      setLoading(true);
-      setSearchNotice('');
       void (async () => {
-        const normalizedQuery = normalizeSearchText(trimmedQuery);
-        const cachedMatches = localTracks.filter((track) =>
-          normalizeSearchText(trackSearchText(track)).includes(normalizedQuery),
-        );
         let libraryMatches = cachedMatches;
         let libraryFailed = false;
 
@@ -289,12 +296,12 @@ export const SearchScreen = () => {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [actions.apiConnected, favoriteIds, localTracks, query, scope]);
+  }, [actions.apiConnected, cachedMatches, favoriteIds, localTracks, query, scope]);
 
   const artists = useMemo<ArtistResult[]>(() => {
     const seen = new Set<string>();
     const found: ArtistResult[] = [];
-    results.forEach((track) => {
+    visibleResults.forEach((track) => {
       const name = track.artist.trim();
       const key = normalizeSearchText(name);
       if (!name || seen.has(key)) return;
@@ -302,15 +309,32 @@ export const SearchScreen = () => {
       found.push({ name, artwork: track.artwork, sourceTrack: track });
     });
     return found.slice(0, 4);
-  }, [results]);
+  }, [visibleResults]);
 
   const addRecent = (entry: RecentEntry) => {
     setRecents((current) => [entry, ...current.filter((item) => item.id !== entry.id)].slice(0, MAX_RECENTS));
   };
 
   const searchThis = (nextQuery: string, nextScope: SearchScope = scope) => {
+    if (nextQuery === query && nextScope === scope) return;
     setScope(nextScope);
     setQuery(nextQuery);
+    setLoading(Boolean(nextQuery.trim()));
+    setSearchNotice('');
+  };
+
+  const updateScope = (nextScope: SearchScope) => {
+    if (nextScope === scope) return;
+    setScope(nextScope);
+    setLoading(Boolean(query.trim()));
+    setSearchNotice('');
+  };
+
+  const updateQuery = (nextQuery: string) => {
+    if (nextQuery === query) return;
+    setQuery(nextQuery);
+    setLoading(Boolean(nextQuery.trim()));
+    setSearchNotice('');
   };
 
   const selectTrack = (track: Track, queue: Track[] = results) => {
@@ -366,7 +390,7 @@ export const SearchScreen = () => {
             return (
               <TouchableOpacity
                 key={item}
-                onPress={() => setScope(item)}
+                onPress={() => updateScope(item)}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
                 accessibilityLabel={item === 'universal' ? 'Universal search' : 'Library search'}
@@ -469,7 +493,7 @@ export const SearchScreen = () => {
             </View>
           ) : (
             <View>
-              {loading ? <ActivityIndicator color="#FA5265" style={{ marginBottom: 18 }} /> : null}
+              {loading && visibleResults.length === 0 ? <TrackListSkeleton count={5} /> : null}
               {searchNotice ? <Text style={{ color: '#A1A1A6', fontSize: 13, marginHorizontal: 20, marginBottom: 14 }}>{searchNotice}</Text> : null}
               {artists.length > 0 ? (
                 <View style={{ marginBottom: 14 }}>
@@ -505,20 +529,20 @@ export const SearchScreen = () => {
                 </View>
               ) : null}
               <Text style={{ color: '#F5F5F7', fontSize: 19, fontWeight: '700', marginHorizontal: 20, marginBottom: 8 }}>Songs</Text>
-              {results.map((track, index) => (
+              {visibleResults.map((track, index) => (
                 <SearchTrackRow
                   key={track.id}
                   track={{ ...track, isFavorite: Boolean(track.isFavorite || favoriteIds.has(track.id)) }}
                   sourceLabel={sourceLabel(track)}
                   downloaded={downloadedIds.has(track.id)}
                   downloading={downloadingIds.has(track.id)}
-                  onPress={() => selectTrack(track)}
+                  onPress={() => selectTrack(track, visibleResults)}
                   onDownload={() => void download(track)}
                   onMore={(anchor) => setSelectedTrack({ track, anchor })}
-                  isLast={index === results.length - 1}
+                  isLast={index === visibleResults.length - 1}
                 />
               ))}
-              {!loading && results.length === 0 ? (
+              {!loading && visibleResults.length === 0 ? (
                 <View style={{ paddingHorizontal: 20, paddingTop: 10 }}>
                   <Text style={{ color: '#8E8E93', fontSize: 15 }}>No matches found.</Text>
                 </View>
@@ -533,7 +557,7 @@ export const SearchScreen = () => {
             <TextInput
               ref={inputRef}
               value={query}
-              onChangeText={setQuery}
+              onChangeText={updateQuery}
               onSubmitEditing={submitQuery}
               placeholder={scope === 'universal' ? 'Artists, Songs, Lyrics, and More' : 'Search your library'}
               placeholderTextColor="#8E8E93"
@@ -552,7 +576,7 @@ export const SearchScreen = () => {
           </View>
           <TouchableOpacity
             onPress={() => {
-              setQuery('');
+              updateQuery('');
               inputRef.current?.blur();
               Keyboard.dismiss();
             }}

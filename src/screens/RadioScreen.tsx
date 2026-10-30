@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   Image,
   RefreshControl,
@@ -14,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
+import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { usePlaybackActions, useRadioPlaybackStatus } from '../contexts/PlaybackContext';
 import type { Track } from '../types';
 
@@ -197,6 +197,21 @@ const RadioVisualizer = memo(({ active }: { active: boolean }) => {
   );
 });
 RadioVisualizer.displayName = 'RadioVisualizer';
+
+const RadioStationSkeletonList = () => (
+  <SkeletonPulse style={{ paddingHorizontal: 20, paddingTop: 12 }}>
+    {[0, 1, 2, 3, 4, 5].map((index) => (
+      <View key={index} style={{ minHeight: 82, marginBottom: 10, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 21, backgroundColor: '#111113', borderWidth: 1, borderColor: '#1B1B1E', flexDirection: 'row', alignItems: 'center' }}>
+        <SkeletonBlock style={{ width: 58, height: 58, borderRadius: 17 }} />
+        <View style={{ flex: 1, marginLeft: 13 }}>
+          <SkeletonBlock style={{ width: `${index % 2 === 0 ? 68 : 52}%`, height: 15, borderRadius: 8 }} />
+          <SkeletonBlock style={{ width: '44%', height: 11, borderRadius: 6, marginTop: 9 }} />
+        </View>
+        <SkeletonBlock style={{ width: 34, height: 34, borderRadius: 17 }} />
+      </View>
+    ))}
+  </SkeletonPulse>
+);
 
 const RadioHeroCard = memo(({
   activeTrack,
@@ -569,13 +584,9 @@ export const RadioScreen = () => {
           renderItem={renderStation}
           ListHeaderComponent={listHeader}
           ListEmptyComponent={(
-            <View style={{ minHeight: 156, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 20 }}>
-              {loading ? (
-                <>
-                  <ActivityIndicator color="#FA5265" size="small" />
-                  <Text style={{ color: '#8E8E93', fontSize: 13, marginTop: 12 }}>Finding stations for you…</Text>
-                </>
-              ) : error ? (
+            loading ? <RadioStationSkeletonList /> : (
+              <View style={{ minHeight: 156, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 20 }}>
+              {error ? (
                 <>
                   <Ionicons name="cloud-offline-outline" size={28} color="#77777D" />
                   <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>Couldn’t reach the radio directory</Text>
@@ -595,7 +606,8 @@ export const RadioScreen = () => {
                   </Text>
                 </>
               )}
-            </View>
+              </View>
+            )
           )}
           refreshControl={<RefreshControl refreshing={loading && stations.length > 0} onRefresh={() => setRefreshKey((key) => key + 1)} tintColor="#FA5265" colors={['#FA5265']} />}
           keyboardShouldPersistTaps="handled"

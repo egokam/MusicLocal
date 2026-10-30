@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TrackListSkeleton } from '../components/Skeleton';
 import { ArtistListItem } from '../components/library/ArtistListItem';
 import { AlphabetIndex } from '../components/songs/AlphabetIndex';
 import { SongsHeader } from '../components/songs/SongsHeader';
@@ -103,11 +104,11 @@ export const ArtistsScreen = ({
             </Text>
           )}
           ListEmptyComponent={(
-            <View style={{ paddingHorizontal: 20, paddingTop: 24, alignItems: loading ? 'center' : 'flex-start' }}>
-              {loading ? <ActivityIndicator color="#FA243C" /> : (
+            loading ? <TrackListSkeleton count={8} /> : (
+              <View style={{ paddingHorizontal: 20, paddingTop: 24 }}>
                 <Text style={{ color: '#8E8E93', fontSize: 16 }}>Artists from your library will appear here.</Text>
-              )}
-            </View>
+              </View>
+            )
           )}
           stickySectionHeadersEnabled={false}
           keyboardShouldPersistTaps="handled"

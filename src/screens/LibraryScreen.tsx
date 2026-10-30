@@ -9,6 +9,7 @@ import { Directory } from 'expo-file-system';
 import { WebView } from 'react-native-webview';
 import { LibraryList } from '../components/library/LibraryList';
 import { TopBar } from '../components/library/TopBar';
+import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
@@ -100,9 +101,23 @@ const LibraryHomeScreen = ({
               ))}
             </ScrollView>
           ) : (
-            <Text style={{ color: '#8E8E93', fontSize: 14, marginHorizontal: 20 }}>
-              {isLoadingTracks || apiInitializing ? 'Loading your library…' : 'Your most played tracks will appear here as you listen.'}
-            </Text>
+            isLoadingTracks || apiInitializing ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 14 }}>
+                <SkeletonPulse style={{ flexDirection: 'row', gap: 14 }}>
+                  {[0, 1, 2, 3].map((index) => (
+                    <View key={index} style={{ width: 148 }}>
+                      <SkeletonBlock style={{ width: 148, height: 148, borderRadius: 15 }} />
+                      <SkeletonBlock style={{ width: index % 2 === 0 ? 112 : 88, height: 15, borderRadius: 8, marginTop: 10 }} />
+                      <SkeletonBlock style={{ width: 82, height: 12, borderRadius: 7, marginTop: 7 }} />
+                    </View>
+                  ))}
+                </SkeletonPulse>
+              </ScrollView>
+            ) : (
+              <Text style={{ color: '#8E8E93', fontSize: 14, marginHorizontal: 20 }}>
+                Your most played tracks will appear here as you listen.
+              </Text>
+            )
           )}
         </View>
       </ScrollView>

@@ -15,6 +15,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { getMusicApiHeaders } from '../services/MusicCatalogService';
 import type { PlaylistCoverSelection, PlaylistSummary } from '../types';
 
@@ -111,7 +112,19 @@ export const PlaylistsScreen = ({
           Your playlists and covers stay on this phone.
         </Text>
 
-        {loading ? <ActivityIndicator color="#FA243C" style={{ marginTop: 20 }} /> : null}
+        {loading ? (
+          <SkeletonPulse style={{ marginTop: 4 }}>
+            {[0, 1, 2, 3, 4].map((index) => (
+              <View key={index} style={{ minHeight: 82, marginBottom: 10, paddingHorizontal: 12, paddingVertical: 12, borderRadius: 19, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center' }}>
+                <SkeletonBlock style={{ width: 58, height: 58, borderRadius: 12 }} />
+                <View style={{ flex: 1, marginLeft: 13 }}>
+                  <SkeletonBlock style={{ width: `${index % 2 === 0 ? 67 : 49}%`, height: 15, borderRadius: 8 }} />
+                  <SkeletonBlock style={{ width: '28%', height: 11, borderRadius: 6, marginTop: 9 }} />
+                </View>
+              </View>
+            ))}
+          </SkeletonPulse>
+        ) : null}
         {!loading && playlists.length === 0 ? (
           <TouchableOpacity
             onPress={() => setCreateVisible(true)}

@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassSurface } from '../../glass';
+import { TrackListSkeleton } from '../components/Skeleton';
 import { LrcCheckerRow, type LrcCheckState } from '../components/library/LrcCheckerRow';
 import { LrcCheckerService } from '../services/LrcCheckerService';
 import type { Track } from '../types';
@@ -449,12 +450,14 @@ export const LrcCheckerScreen = ({
             );
           }}
           ListEmptyComponent={(
-            <View style={{ alignItems: 'center', paddingHorizontal: 35, paddingTop: 48 }}>
-              {isLoadingTracks ? <ActivityIndicator color="#FA5265" /> : <Ionicons name="musical-notes-outline" size={34} color="#66666B" />}
-              <Text style={{ color: '#A1A1A6', fontSize: 14, textAlign: 'center', lineHeight: 21, marginTop: 12 }}>
-                {isLoadingTracks ? 'Loading tracks…' : search ? 'No songs match this filter.' : 'Your library tracks will appear here.'}
-              </Text>
-            </View>
+            isLoadingTracks ? <TrackListSkeleton count={7} /> : (
+              <View style={{ alignItems: 'center', paddingHorizontal: 35, paddingTop: 48 }}>
+                <Ionicons name="musical-notes-outline" size={34} color="#66666B" />
+                <Text style={{ color: '#A1A1A6', fontSize: 14, textAlign: 'center', lineHeight: 21, marginTop: 12 }}>
+                  {search ? 'No songs match this filter.' : 'Your library tracks will appear here.'}
+                </Text>
+              </View>
+            )
           )}
         />
 
