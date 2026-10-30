@@ -10,21 +10,19 @@ export type AudiusMixDefinition = {
   glow: string;
 };
 
-export type AmbientMoodId = 'sleep' | 'productivity' | 'chill' | 'wellbeing';
+export type GenreMixId = 'lofi' | 'afrohouse' | 'trip-hop' | 'chillpop';
 
-export type AmbientMoodDefinition = {
-  id: AmbientMoodId;
+export type GenreMixDefinition = {
+  id: GenreMixId;
   title: string;
-  description: string;
-  query?: string;
-  audiusMood: 'Peaceful' | 'Easygoing';
+  query: string;
 };
 
-export const AMBIENT_MOODS: AmbientMoodDefinition[] = [
-  { id: 'sleep', title: 'Sleep', description: 'Quiet soundscapes to wind down', query: 'ambient sleep instrumental', audiusMood: 'Peaceful' },
-  { id: 'productivity', title: 'Productivity', description: 'Gentle focus for your work', audiusMood: 'Easygoing' },
-  { id: 'chill', title: 'Chill', description: 'Mellow music for slower moments', query: 'ambient chill instrumental', audiusMood: 'Easygoing' },
-  { id: 'wellbeing', title: 'Wellbeing', description: 'Restorative meditation ambience', query: 'ambient meditation instrumental', audiusMood: 'Peaceful' },
+export const GENRE_MIXES: GenreMixDefinition[] = [
+  { id: 'lofi', title: 'Lo-fi', query: 'lofi hip hop' },
+  { id: 'afrohouse', title: 'Afro House', query: 'afro house' },
+  { id: 'trip-hop', title: 'Trip-hop', query: 'trip hop' },
+  { id: 'chillpop', title: 'Chill Pop', query: 'chill pop' },
 ];
 
 export const AUDIO_MIXES: AudiusMixDefinition[] = [
@@ -126,25 +124,23 @@ export const AudiusCatalogService = {
       .filter((track): track is Track => track !== null);
   },
 
-  async getAmbientTracks(moodId: AmbientMoodId, offset = 0, limit = DEFAULT_PAGE_SIZE): Promise<Track[]> {
-    const mood = AMBIENT_MOODS.find((item) => item.id === moodId);
-    if (!mood) throw new Error('This Ambient collection is unavailable.');
+  async getGenreMixTracks(genreMixId: GenreMixId, offset = 0, limit = DEFAULT_PAGE_SIZE): Promise<Track[]> {
+    const genreMix = GENRE_MIXES.find((item) => item.id === genreMixId);
+    if (!genreMix) throw new Error('This genre mix is unavailable.');
 
     const params = new URLSearchParams({
-      genre: 'Ambient',
-      mood: mood.audiusMood,
+      query: genreMix.query,
       sort_method: 'popular',
       limit: String(limit),
       offset: String(offset),
     });
-    if (mood.query) params.set('query', mood.query);
     const response = await fetch(`${AUDIUS_API}/tracks/search?${params.toString()}`, {
       headers: { Accept: 'application/json' },
     });
     if (!response.ok) throw new Error(`Audius returned ${response.status}.`);
 
     const payload = await response.json() as { data?: AudiusTrack[] };
-    if (!Array.isArray(payload.data)) throw new Error('Audius returned an invalid Ambient track list.');
+    if (!Array.isArray(payload.data)) throw new Error('Audius returned an invalid genre track list.');
     return payload.data
       .map((item) => toTrack(item))
       .filter((track): track is Track => track !== null);

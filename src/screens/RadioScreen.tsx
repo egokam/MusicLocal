@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
-  FlatList,
   Image,
   RefreshControl,
   ScrollView,
@@ -13,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import { usePlaybackActions, useRadioPlaybackStatus } from '../contexts/PlaybackContext';
 import type { Track } from '../types';
@@ -360,6 +359,7 @@ const RadioStationRow = memo(({
 RadioStationRow.displayName = 'RadioStationRow';
 
 export const RadioScreen = () => {
+  const insets = useSafeAreaInsets();
   const { activeTrack, playTrack, togglePlayback } = usePlaybackActions();
   const [category, setCategory] = useState<CategoryId>('popular');
   const [search, setSearch] = useState('');
@@ -369,6 +369,17 @@ export const RadioScreen = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const topInsetCompensation = Math.max(0, insets.top - 24);
+  const scrollY = useMemo(() => new Animated.Value(0), []);
+  const scrollHandler = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    [scrollY],
+  );
+  const topFadeOpacity = scrollY.interpolate({
+    inputRange: [0, 10, 26],
+    outputRange: [0, 0.75, 1],
+    extrapolate: 'clamp',
+  });
   const introOpacity = useRef(new Animated.Value(0)).current;
   const introY = useRef(new Animated.Value(12)).current;
 
@@ -550,49 +561,76 @@ export const RadioScreen = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
-      <FlatList
-        data={stations}
-        keyExtractor={(item) => item.stationuuid}
-        renderItem={renderStation}
-        ListHeaderComponent={listHeader}
-        ListEmptyComponent={(
-          <View style={{ minHeight: 156, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 20 }}>
-            {loading ? (
-              <>
-                <ActivityIndicator color="#FA5265" size="small" />
-                <Text style={{ color: '#8E8E93', fontSize: 13, marginTop: 12 }}>Finding stations for you…</Text>
-              </>
-            ) : error ? (
-              <>
-                <Ionicons name="cloud-offline-outline" size={28} color="#77777D" />
-                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>Couldn’t reach the radio directory</Text>
-                <Text style={{ color: '#8E8E93', fontSize: 13, textAlign: 'center', marginTop: 6 }}>Check your connection, then try again.</Text>
-                <TouchableOpacity onPress={() => setRefreshKey((key) => key + 1)} activeOpacity={0.75} style={{ marginTop: 16, paddingHorizontal: 17, height: 38, borderRadius: 20, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Try again</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <Ionicons name={category === 'favorites' ? 'heart-outline' : 'radio-outline'} size={28} color="#77777D" />
-                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>
-                  {category === 'favorites' ? 'No favorite stations yet' : search.trim() ? 'No matching stations' : 'No stations found'}
-                </Text>
-                <Text style={{ color: '#8E8E93', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
-                  {category === 'favorites' ? 'Tap the heart beside a station to keep it here.' : 'Try another search or choose a different category.'}
-                </Text>
-              </>
-            )}
-          </View>
-        )}
-        refreshControl={<RefreshControl refreshing={loading && stations.length > 0} onRefresh={() => setRefreshKey((key) => key + 1)} tintColor="#FA5265" colors={['#FA5265']} />}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 15, paddingBottom: 190, flexGrow: 1 }}
-        initialNumToRender={8}
-        maxToRenderPerBatch={8}
-        windowSize={7}
-        removeClippedSubviews
-      />
+      <View style={{ flex: 1, marginTop: -topInsetCompensation }}>
+        <Animated.FlatList<RadioStation>
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          data={stations}
+          keyExtractor={(item) => item.stationuuid}
+          renderItem={renderStation}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={(
+            <View style={{ minHeight: 156, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 20 }}>
+              {loading ? (
+                <>
+                  <ActivityIndicator color="#FA5265" size="small" />
+                  <Text style={{ color: '#8E8E93', fontSize: 13, marginTop: 12 }}>Finding stations for you…</Text>
+                </>
+              ) : error ? (
+                <>
+                  <Ionicons name="cloud-offline-outline" size={28} color="#77777D" />
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>Couldn’t reach the radio directory</Text>
+                  <Text style={{ color: '#8E8E93', fontSize: 13, textAlign: 'center', marginTop: 6 }}>Check your connection, then try again.</Text>
+                  <TouchableOpacity onPress={() => setRefreshKey((key) => key + 1)} activeOpacity={0.75} style={{ marginTop: 16, paddingHorizontal: 17, height: 38, borderRadius: 20, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Try again</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Ionicons name={category === 'favorites' ? 'heart-outline' : 'radio-outline'} size={28} color="#77777D" />
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>
+                    {category === 'favorites' ? 'No favorite stations yet' : search.trim() ? 'No matching stations' : 'No stations found'}
+                  </Text>
+                  <Text style={{ color: '#8E8E93', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
+                    {category === 'favorites' ? 'Tap the heart beside a station to keep it here.' : 'Try another search or choose a different category.'}
+                  </Text>
+                </>
+              )}
+            </View>
+          )}
+          refreshControl={<RefreshControl refreshing={loading && stations.length > 0} onRefresh={() => setRefreshKey((key) => key + 1)} tintColor="#FA5265" colors={['#FA5265']} />}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          onScroll={scrollHandler}
+          scrollEventThrottle={16}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 15 + topInsetCompensation, paddingBottom: 190, flexGrow: 1 }}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews
+        />
+
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: -24,
+            left: 0,
+            right: 0,
+            height: 170,
+            zIndex: 15,
+            elevation: 15,
+            opacity: topFadeOpacity,
+          }}
+        >
+          <LinearGradient
+            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            locations={[0, 0.32, 0.68, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          />
+        </Animated.View>
+      </View>
     </SafeAreaView>
   );
 };
