@@ -8,6 +8,7 @@ import { SongListItem, type SongMenuAnchor } from '../components/songs/SongListI
 import { SongsControls } from '../components/songs/SongsControls';
 import { SongsHeader } from '../components/songs/SongsHeader';
 import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
+import { TrackListSkeleton } from '../components/Skeleton';
 import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
 import { LibrarySelectionBarContext } from '../contexts/PlaybackContext';
@@ -510,10 +511,9 @@ export const SongsScreen = ({
             </View>
           }
           ListEmptyComponent={
-            <View style={{ paddingHorizontal: 20, paddingTop: 22 }}>
-              {isLoadingTracks ? (
-                <Text style={{ color: '#8E8E93', fontSize: 16 }}>Loading your music…</Text>
-              ) : canReplacePairingCode ? (
+            isLoadingTracks ? <TrackListSkeleton count={8} /> : (
+              <View style={{ paddingHorizontal: 20, paddingTop: 22 }}>
+              {canReplacePairingCode ? (
                 <TouchableOpacity
                   onPress={() => {
                     setConnectionError(null);
@@ -529,7 +529,8 @@ export const SongsScreen = ({
               ) : (
                 <Text style={{ color: '#8E8E93', fontSize: 16 }}>{loadError ?? emptyMessage}</Text>
               )}
-            </View>
+              </View>
+            )
           }
           stickySectionHeadersEnabled={false}
           keyboardShouldPersistTaps="handled"

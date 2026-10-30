@@ -25,6 +25,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { GlassSurface } from '../../glass';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { SongsHeader } from '../components/songs/SongsHeader';
+import { TrackListSkeleton } from '../components/Skeleton';
 import { Id3SynchronizedLyricsService } from '../services/Id3SynchronizedLyricsService';
 import type { Track } from '../types';
 
@@ -1310,9 +1311,8 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             ) : null}
 
             {isLoadingTracks || apiInitializing ? (
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator color="#FA5265" />
-                <Text style={{ color: '#A1A1A6', fontSize: 13, marginTop: 10 }}>Loading your library…</Text>
+              <View style={{ flex: 1 }}>
+                <TrackListSkeleton count={6} />
               </View>
             ) : availableMp3Tracks.length === 0 ? (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 }}>

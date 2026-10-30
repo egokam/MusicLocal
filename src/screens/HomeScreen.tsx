@@ -24,6 +24,7 @@ import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { AUDIO_MIXES, GENRE_MIXES, AudiusCatalogService, type AudiusMixDefinition, type AudiusMixId, type GenreMixId } from '../services/AudiusCatalogService';
 import type { Track } from '../types';
@@ -354,6 +355,16 @@ const PressableCard = memo(({
 });
 PressableCard.displayName = 'PressableCard';
 
+const DiscoveryCardSkeleton = () => (
+  <SkeletonPulse style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 5, overflow: 'hidden', borderRadius: 19 }}>
+    <SkeletonBlock style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: '#202024', borderRadius: 19 }} />
+    <SkeletonBlock style={{ position: 'absolute', top: 14, alignSelf: 'center', width: 76, height: 10, borderRadius: 5 }} />
+    <SkeletonBlock style={{ position: 'absolute', top: '45%', alignSelf: 'center', width: '68%', height: 18, borderRadius: 9 }} />
+    <SkeletonBlock style={{ position: 'absolute', top: '45%', alignSelf: 'center', width: '43%', height: 18, borderRadius: 9, marginTop: 25 }} />
+    <SkeletonBlock style={{ position: 'absolute', bottom: 12, right: 12, width: 31, height: 31, borderRadius: 16 }} />
+  </SkeletonPulse>
+);
+
 const NonStopMixCard = memo(({
   mix,
   tracks,
@@ -403,6 +414,7 @@ const NonStopMixCard = memo(({
             <Ionicons name={tracks.length ? 'play' : 'refresh'} size={15} color="white" />
           )}
         </View>
+        {loading && tracks.length === 0 ? <DiscoveryCardSkeleton /> : null}
       </View>
       <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '700', marginTop: 10 }}>{mix.title}</Text>
       <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 3 }}>
@@ -462,6 +474,7 @@ const GenreMixCard = memo(({
             <Ionicons name={tracks.length ? 'play' : 'refresh'} size={15} color="white" />
           )}
         </View>
+        {loading && tracks.length === 0 ? <DiscoveryCardSkeleton /> : null}
       </View>
       <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '700', marginTop: 10 }}>{genreMix.title}</Text>
       <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 3 }}>
@@ -521,6 +534,7 @@ const QuranReciterCard = memo(({
           <Ionicons name={unavailable ? 'refresh' : active ? 'volume-high' : 'play'} size={15} color="white" />
         )}
       </View>
+      {loading ? <DiscoveryCardSkeleton /> : null}
     </View>
     <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '700', marginTop: 10 }}>{reciter.name}</Text>
     <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 3 }}>
@@ -823,8 +837,8 @@ export const HomeScreen = () => {
   const playMix = useCallback((mixId: AudiusMixId) => {
     const queue = mixTracks[mixId];
     if (queue.length > 0) playTrack(queue[0], queue);
-    else refreshDiscovery();
-  }, [mixTracks, playTrack, refreshDiscovery]);
+    else if (!mixLoading) refreshDiscovery();
+  }, [mixLoading, mixTracks, playTrack, refreshDiscovery]);
 
   const playQuranSurah = useCallback((reciter: QuranReciter, startingSurahNumber = 1) => {
     if (quranLoading) return;
@@ -858,6 +872,7 @@ export const HomeScreen = () => {
     const queue = genreTracks[genreMixId];
     const firstTrack = queue[0];
     if (!firstTrack) {
+      if (genreLoading) return;
       setGenreLoading(true);
       setGenreUnavailable(false);
       setGenreRetryKey((current) => current + 1);
@@ -865,7 +880,7 @@ export const HomeScreen = () => {
     }
     if (activeTrack?.id === firstTrack.id) togglePlayback();
     else playTrack(firstTrack, queue);
-  }, [activeTrack?.id, genreTracks, playTrack, togglePlayback]);
+  }, [activeTrack?.id, genreLoading, genreTracks, playTrack, togglePlayback]);
 
   const playStation = useCallback((station: RadioStation) => {
     const track = toStationTrack(station);

@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { AlbumGridItem } from '../components/library/AlbumGridItem';
 import { AlbumCollectionControls } from '../components/library/AlbumCollectionControls';
 import { AlphabetIndex } from '../components/songs/AlphabetIndex';
@@ -149,13 +150,27 @@ export const AlbumsScreen = ({
             />
           )}
           ListEmptyComponent={(
-            <View style={{ paddingHorizontal: 20, paddingTop: 24, alignItems: loading ? 'center' : 'flex-start' }}>
-              {loading ? <ActivityIndicator color="#FA243C" /> : (
+            loading ? (
+              <SkeletonPulse style={{ paddingTop: 22 }}>
+                {[0, 1, 2, 3].map((row) => (
+                  <View key={row} style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginBottom: 18 }}>
+                    {[0, 1].map((column) => (
+                      <View key={column} style={{ flex: 1 }}>
+                        <SkeletonBlock style={{ width: '100%', aspectRatio: 1, borderRadius: 17 }} />
+                        <SkeletonBlock style={{ width: '76%', height: 14, borderRadius: 7, marginTop: 10 }} />
+                        <SkeletonBlock style={{ width: '48%', height: 11, borderRadius: 6, marginTop: 7 }} />
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </SkeletonPulse>
+            ) : (
+              <View style={{ paddingHorizontal: 20, paddingTop: 24 }}>
                 <Text style={{ color: '#8E8E93', fontSize: 16 }}>
                   {search ? 'No albums match your search.' : 'Albums from your library will appear here.'}
                 </Text>
-              )}
-            </View>
+              </View>
+            )
           )}
           stickySectionHeadersEnabled={false}
           keyboardShouldPersistTaps="handled"
