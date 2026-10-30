@@ -10,7 +10,6 @@ import {
   Modal,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -24,9 +23,9 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
-import { AMBIENT_MOODS, AUDIO_MIXES, AudiusCatalogService, type AmbientMoodId, type AudiusMixDefinition, type AudiusMixId } from '../services/AudiusCatalogService';
+import { AUDIO_MIXES, GENRE_MIXES, AudiusCatalogService, type AudiusMixDefinition, type AudiusMixId, type GenreMixId } from '../services/AudiusCatalogService';
 import type { Track } from '../types';
 
 type HomeNavigation = BottomTabNavigationProp<{
@@ -61,17 +60,16 @@ type QuranReciter = {
   arabicName?: string;
   artwork?: string;
 };
-type AmbientFeed = {
-  moodId: AmbientMoodId;
-  tracks: Track[];
-  offset: number;
-  hasMore: boolean;
-  loading: boolean;
-  loadingMore: boolean;
-  error: string | null;
-};
+type GenreMixTracks = Record<GenreMixId, Track[]>;
 
-const AMBIENT_PAGE_SIZE = 18;
+const emptyGenreMixTracks = (): GenreMixTracks => ({
+  lofi: [],
+  afrohouse: [],
+  'trip-hop': [],
+  chillpop: [],
+});
+
+const GENRE_MIX_QUEUE_SIZE = 18;
 const QURAN_SURAHS_URL = 'https://api.alquran.cloud/v1/surah';
 const QURAN_AUDIO_URL = 'https://cdn.islamic.network/quran/audio-surah';
 const QURAN_RECITER_PHOTO_URL = 'https://juzzquran.com/images/reciters';
@@ -415,6 +413,65 @@ const NonStopMixCard = memo(({
 });
 NonStopMixCard.displayName = 'NonStopMixCard';
 
+const GenreMixCard = memo(({
+  genreMix,
+  tracks,
+  loading,
+  width,
+  onPress,
+}: {
+  genreMix: (typeof GENRE_MIXES)[number];
+  tracks: Track[];
+  loading: boolean;
+  width: number;
+  onPress: () => void;
+}) => {
+  const [failedArtwork, setFailedArtwork] = useState('');
+  const artwork = tracks[0]?.artwork;
+  const artworkFailed = Boolean(artwork) && failedArtwork === artwork;
+
+  return (
+    <PressableCard
+      style={{ width, marginRight: 13 }}
+      onPress={onPress}
+      accessibilityLabel={tracks.length ? `Play the ${genreMix.title} mix` : `Refresh the ${genreMix.title} mix`}
+    >
+      <View style={{ width, height: width, borderRadius: 20, overflow: 'hidden', backgroundColor: '#161619', borderWidth: 1, borderColor: '#302735', justifyContent: 'center', alignItems: 'center' }}>
+        {artwork && !artworkFailed ? (
+          <Image source={{ uri: artwork }} onError={() => setFailedArtwork(artwork ?? '')} resizeMode="cover" style={{ position: 'absolute', width: '100%', height: '100%' }} />
+        ) : (
+          <LinearGradient colors={['#392A3C', '#19141C', '#09090A']} style={{ position: 'absolute', width: '100%', height: '100%' }} />
+        )}
+        <LinearGradient
+          colors={['rgba(0,0,0,0.22)', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.84)']}
+          locations={[0, 0.52, 1]}
+          style={{ position: 'absolute', width: '100%', height: '100%' }}
+        />
+        <View style={{ position: 'absolute', top: 13, flexDirection: 'row', alignItems: 'center', gap: 5, opacity: 0.94 }}>
+          <Ionicons name="sparkles" size={14} color="#E4C5F0" />
+          <Text style={{ color: 'white', fontSize: 10, fontWeight: '800', letterSpacing: 1.15 }}>GENRE MIX</Text>
+        </View>
+        <Text
+          numberOfLines={2}
+          style={{ color: 'white', fontSize: 25, lineHeight: 29, fontWeight: '800', letterSpacing: -0.55, textAlign: 'center', paddingHorizontal: 13, textShadowColor: '#D4B2E4', textShadowRadius: 17, textShadowOffset: { width: 0, height: 0 } }}
+        >
+          {genreMix.title}
+        </Text>
+        <View style={{ position: 'absolute', bottom: 12, right: 12, width: 31, height: 31, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.58)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
+          {loading && tracks.length === 0 ? <ActivityIndicator size="small" color="white" /> : (
+            <Ionicons name={tracks.length ? 'play' : 'refresh'} size={15} color="white" />
+          )}
+        </View>
+      </View>
+      <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '700', marginTop: 10 }}>{genreMix.title}</Text>
+      <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 3 }}>
+        {tracks.length ? `Audius · ${tracks.length} tracks` : loading ? `Finding ${genreMix.title} tracks…` : 'Tap to try again'}
+      </Text>
+    </PressableCard>
+  );
+});
+GenreMixCard.displayName = 'GenreMixCard';
+
 const QuranReciterCard = memo(({
   reciter,
   active,
@@ -550,62 +607,9 @@ const LiveRadioCard = memo(({
 });
 LiveRadioCard.displayName = 'LiveRadioCard';
 
-const AmbientTrackRow = memo(({
-  track,
-  active,
-  onPress,
-  onOpenSource,
-}: {
-  track: Track;
-  active: boolean;
-  onPress: () => void;
-  onOpenSource: () => void;
-}) => {
-  const [failedArtwork, setFailedArtwork] = useState('');
-  const hasArtwork = Boolean(track.artwork) && failedArtwork !== track.artwork;
-
-  return (
-    <View style={{ minHeight: 70, flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#252528' }}>
-      <TouchableOpacity
-        onPress={onPress}
-        activeOpacity={0.78}
-        accessibilityRole="button"
-        accessibilityLabel={`${active ? 'Pause' : 'Play'} ${track.title} by ${track.artist}`}
-        style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}
-      >
-        <View style={{ width: 52, height: 52, borderRadius: 13, overflow: 'hidden', backgroundColor: '#17171A', alignItems: 'center', justifyContent: 'center' }}>
-          {hasArtwork ? (
-            <Image source={{ uri: track.artwork }} onError={() => setFailedArtwork(track.artwork)} resizeMode="cover" style={{ width: '100%', height: '100%' }} />
-          ) : (
-            <LinearGradient colors={['#392A3C', '#17171A']} style={{ width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="sparkles-outline" size={22} color="#C7A9D9" />
-            </LinearGradient>
-          )}
-        </View>
-        <View style={{ flex: 1, minWidth: 0, marginLeft: 12 }}>
-          <Text numberOfLines={1} style={{ color: active ? '#FA5265' : 'white', fontSize: 15, fontWeight: '700' }}>{track.title}</Text>
-          <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '500', marginTop: 4 }}>{track.artist}</Text>
-          <Text numberOfLines={1} style={{ color: '#69696F', fontSize: 10, fontWeight: '600', marginTop: 3 }}>Audius · Ambient</Text>
-        </View>
-        <View style={{ width: 35, alignItems: 'flex-end', marginLeft: 8 }}>
-          <Text style={{ color: '#77777D', fontSize: 11, fontWeight: '600' }}>{track.duration}</Text>
-        </View>
-      </TouchableOpacity>
-      {track.shareUrl ? (
-        <TouchableOpacity onPress={onOpenSource} hitSlop={9} accessibilityRole="button" accessibilityLabel={`Open ${track.title} on Audius`} style={{ width: 34, height: 42, alignItems: 'center', justifyContent: 'center', marginLeft: 4 }}>
-          <Ionicons name="open-outline" size={17} color="#8E8E93" />
-        </TouchableOpacity>
-      ) : null}
-      <TouchableOpacity onPress={onPress} hitSlop={9} accessibilityRole="button" accessibilityLabel={`${active ? 'Pause' : 'Play'} ${track.title}`} style={{ width: 36, height: 42, alignItems: 'center', justifyContent: 'center', marginLeft: 3 }}>
-        <Ionicons name={active ? 'pause-circle' : 'play-circle'} size={27} color={active ? '#FA5265' : 'white'} />
-      </TouchableOpacity>
-    </View>
-  );
-});
-AmbientTrackRow.displayName = 'AmbientTrackRow';
-
 export const HomeScreen = () => {
   const navigation = useNavigation<HomeNavigation>();
+  const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
   const { activeTrack, playTrack, togglePlayback } = usePlaybackActions();
   const [mixTracks, setMixTracks] = useState<MixTracks>(emptyMixTracks);
@@ -620,18 +624,11 @@ export const HomeScreen = () => {
   const [reciterSearch, setReciterSearch] = useState('');
   const [selectedQuranReciter, setSelectedQuranReciter] = useState<QuranReciter | null>(null);
   const [returnToReciterList, setReturnToReciterList] = useState(false);
-  const [ambientMood, setAmbientMood] = useState<AmbientMoodId>('sleep');
-  const [ambientRetryKey, setAmbientRetryKey] = useState(0);
-  const [ambientFeed, setAmbientFeed] = useState<AmbientFeed>({
-    moodId: 'sleep',
-    tracks: [],
-    offset: 0,
-    hasMore: true,
-    loading: true,
-    loadingMore: false,
-    error: null,
-  });
-  const ambientRequestId = useRef(0);
+  const [genreRetryKey, setGenreRetryKey] = useState(0);
+  const [genreTracks, setGenreTracks] = useState<GenreMixTracks>(emptyGenreMixTracks);
+  const [genreLoading, setGenreLoading] = useState(true);
+  const [genreUnavailable, setGenreUnavailable] = useState(false);
+  const genreRequestId = useRef(0);
   const quranReciterCatalogRequest = useRef(false);
   const [stations, setStations] = useState<RadioStation[]>([]);
   const [mixLoading, setMixLoading] = useState(true);
@@ -639,6 +636,17 @@ export const HomeScreen = () => {
   const [mixUnavailable, setMixUnavailable] = useState(false);
   const [radioUnavailable, setRadioUnavailable] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const topInsetCompensation = Math.max(0, insets.top - 24);
+  const homeScrollY = useMemo(() => new Animated.Value(0), []);
+  const homeScrollHandler = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: homeScrollY } } }], { useNativeDriver: true }),
+    [homeScrollY],
+  );
+  const topFadeOpacity = homeScrollY.interpolate({
+    inputRange: [0, 10, 26],
+    outputRange: [0, 0.75, 1],
+    extrapolate: 'clamp',
+  });
   const [introOpacity] = useState(() => new Animated.Value(0));
   const [introY] = useState(() => new Animated.Value(12));
   const cardWidth = Math.min(174, Math.max(142, Math.floor((screenWidth - 64) / 2)));
@@ -683,8 +691,6 @@ export const HomeScreen = () => {
 
   useEffect(() => {
     let mounted = true;
-    setQuranLoading(true);
-    setQuranUnavailable(false);
 
     void fetch(QURAN_SURAHS_URL, { headers: { Accept: 'application/json' } }).then(async (response) => {
       if (!response.ok) throw new Error(`Quran catalog returned ${response.status}.`);
@@ -713,45 +719,28 @@ export const HomeScreen = () => {
   }, [quranRetryKey]);
 
   useEffect(() => {
-    const requestId = ++ambientRequestId.current;
-    setAmbientFeed({
-      moodId: ambientMood,
-      tracks: [],
-      offset: 0,
-      hasMore: true,
-      loading: true,
-      loadingMore: false,
-      error: null,
-    });
+    const requestId = ++genreRequestId.current;
 
-    void AudiusCatalogService.getAmbientTracks(ambientMood, 0, AMBIENT_PAGE_SIZE).then((tracks) => {
-      if (ambientRequestId.current !== requestId) return;
-      setAmbientFeed({
-        moodId: ambientMood,
-        tracks,
-        offset: AMBIENT_PAGE_SIZE,
-        hasMore: tracks.length === AMBIENT_PAGE_SIZE,
-        loading: false,
-        loadingMore: false,
-        error: null,
-      });
-    }).catch((error: unknown) => {
-      if (ambientRequestId.current !== requestId) return;
-      setAmbientFeed({
-        moodId: ambientMood,
-        tracks: [],
-        offset: 0,
-        hasMore: false,
-        loading: false,
-        loadingMore: false,
-        error: error instanceof Error ? error.message : 'Ambient music could not be loaded.',
-      });
+    void Promise.all(GENRE_MIXES.map(async (genreMix) => {
+      try {
+        return { genreMixId: genreMix.id, tracks: await AudiusCatalogService.getGenreMixTracks(genreMix.id, 0, GENRE_MIX_QUEUE_SIZE) };
+      } catch {
+        return { genreMixId: genreMix.id, tracks: [] as Track[] };
+      }
+    })).then((results) => {
+      if (genreRequestId.current !== requestId) return;
+      const nextGenreTracks = emptyGenreMixTracks();
+      results.forEach(({ genreMixId, tracks }) => { nextGenreTracks[genreMixId] = tracks; });
+      setGenreTracks(nextGenreTracks);
+      setGenreUnavailable(!results.some(({ tracks }) => tracks.length > 0));
+    }).finally(() => {
+      if (genreRequestId.current === requestId) setGenreLoading(false);
     });
 
     return () => {
-      if (ambientRequestId.current === requestId) ambientRequestId.current += 1;
+      if (genreRequestId.current === requestId) genreRequestId.current += 1;
     };
-  }, [ambientMood, refreshKey, ambientRetryKey]);
+  }, [refreshKey, genreRetryKey]);
 
   const radioTracks = useMemo(() => stations.map(toStationTrack), [stations]);
   const retryQuranCatalog = useCallback(() => {
@@ -817,11 +806,19 @@ export const HomeScreen = () => {
   const refreshDiscovery = useCallback(() => {
     setMixLoading(true);
     setRadioLoading(true);
+    setGenreLoading(true);
     setMixUnavailable(false);
     setRadioUnavailable(false);
+    setGenreUnavailable(false);
     retryQuranCatalog();
     setRefreshKey((current) => current + 1);
   }, [retryQuranCatalog]);
+
+  const refreshGenres = useCallback(() => {
+    setGenreLoading(true);
+    setGenreUnavailable(false);
+    setGenreRetryKey((current) => current + 1);
+  }, []);
 
   const playMix = useCallback((mixId: AudiusMixId) => {
     const queue = mixTracks[mixId];
@@ -857,53 +854,18 @@ export const HomeScreen = () => {
     else playTrack(selectedTrack, queue);
   }, [activeTrack?.id, playTrack, quranLoading, quranSurahs, quranUnavailable, retryQuranCatalog, togglePlayback]);
 
-  const loadMoreAmbientTracks = useCallback(async () => {
-    if (ambientFeed.moodId !== ambientMood || ambientFeed.loading || ambientFeed.loadingMore || !ambientFeed.hasMore) return;
-    const moodId = ambientMood;
-    const offset = ambientFeed.offset;
-    const requestId = ambientRequestId.current;
-    setAmbientFeed((current) => current.moodId === moodId ? { ...current, loadingMore: true, error: null } : current);
-
-    try {
-      const nextTracks = await AudiusCatalogService.getAmbientTracks(moodId, offset, AMBIENT_PAGE_SIZE);
-      if (ambientRequestId.current !== requestId) return;
-      setAmbientFeed((current) => {
-        if (current.moodId !== moodId) return current;
-        const seen = new Set(current.tracks.map((track) => track.id));
-        const uniqueTracks = nextTracks.filter((track) => !seen.has(track.id));
-        return {
-          ...current,
-          tracks: [...current.tracks, ...uniqueTracks],
-          offset: offset + AMBIENT_PAGE_SIZE,
-          hasMore: nextTracks.length === AMBIENT_PAGE_SIZE,
-          loadingMore: false,
-          error: null,
-        };
-      });
-    } catch (error) {
-      if (ambientRequestId.current !== requestId) return;
-      setAmbientFeed((current) => current.moodId === moodId ? {
-        ...current,
-        loadingMore: false,
-        error: error instanceof Error ? error.message : 'More Ambient music could not be loaded.',
-      } : current);
-    }
-  }, [ambientFeed, ambientMood]);
-
-  const playAmbientTrack = useCallback((track: Track) => {
-    if (activeTrack?.id === track.id) {
-      togglePlayback();
+  const playGenreMix = useCallback((genreMixId: GenreMixId) => {
+    const queue = genreTracks[genreMixId];
+    const firstTrack = queue[0];
+    if (!firstTrack) {
+      setGenreLoading(true);
+      setGenreUnavailable(false);
+      setGenreRetryKey((current) => current + 1);
       return;
     }
-    const queue = ambientFeed.moodId === ambientMood && ambientFeed.tracks.length > 0
-      ? ambientFeed.tracks
-      : [track];
-    playTrack(track, queue);
-  }, [activeTrack?.id, ambientFeed, ambientMood, playTrack, togglePlayback]);
-
-  const openAmbientSource = useCallback((track: Track) => {
-    if (track.shareUrl) void Linking.openURL(track.shareUrl).catch(() => undefined);
-  }, []);
+    if (activeTrack?.id === firstTrack.id) togglePlayback();
+    else playTrack(firstTrack, queue);
+  }, [activeTrack?.id, genreTracks, playTrack, togglePlayback]);
 
   const playStation = useCallback((station: RadioStation) => {
     const track = toStationTrack(station);
@@ -938,265 +900,241 @@ export const HomeScreen = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={mixLoading || radioLoading || quranLoading || ambientFeed.loading} onRefresh={refreshDiscovery} tintColor="#FA5265" colors={['#FA5265']} />}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 190 }}
-      >
-        <Animated.View style={{ opacity: introOpacity, transform: [{ translateY: introY }] }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
-            <Text style={{ color: 'white', fontSize: 40, lineHeight: 47, fontWeight: '800', letterSpacing: -1 }}>Home</Text>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Library', { screen: 'DeveloperProfile' })}
-              activeOpacity={0.78}
-              accessibilityRole="button"
-              accessibilityLabel="Open Kamal’s profile"
-              style={{ width: 48, height: 48, borderRadius: 24, overflow: 'hidden' }}
-            >
-              <LinearGradient colors={['#514A68', '#262331']} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="person" size={27} color="white" />
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Non-Stop Music</Text>
-              <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 3 }}>Fresh independent mixes, ready to keep playing</Text>
-            </View>
-            {mixLoading ? <ActivityIndicator color="#FA5265" size="small" /> : (
-              <TouchableOpacity onPress={refreshDiscovery} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh Home music" style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#171719', alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="refresh" size={17} color="#B7B7BC" />
+      <View style={{ flex: 1, marginTop: -topInsetCompensation }}>
+        <Animated.ScrollView
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={mixLoading || radioLoading || quranLoading || genreLoading} onRefresh={refreshDiscovery} tintColor="#FA5265" colors={['#FA5265']} />}
+          onScroll={homeScrollHandler}
+          scrollEventThrottle={16}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12 + topInsetCompensation, paddingBottom: 190 }}
+        >
+          <Animated.View style={{ opacity: introOpacity, transform: [{ translateY: introY }] }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
+              <Text style={{ color: 'white', fontSize: 40, lineHeight: 47, fontWeight: '800', letterSpacing: -1 }}>Home</Text>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Library', { screen: 'DeveloperProfile' })}
+                activeOpacity={0.78}
+                accessibilityRole="button"
+                accessibilityLabel="Open Kamal’s profile"
+                style={{ width: 48, height: 48, borderRadius: 24, overflow: 'hidden' }}
+              >
+                <LinearGradient colors={['#514A68', '#262331']} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="person" size={27} color="white" />
+                </LinearGradient>
               </TouchableOpacity>
-            )}
-          </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 7, paddingBottom: 2 }}>
-            {AUDIO_MIXES.map((mix) => (
-              <NonStopMixCard
-                key={mix.id}
-                mix={mix}
-                tracks={mixTracks[mix.id]}
-                loading={mixLoading}
-                width={cardWidth}
-                onPress={() => playMix(mix.id)}
-              />
-            ))}
-          </ScrollView>
-
-          {mixUnavailable && !mixLoading ? (
-            <TouchableOpacity onPress={refreshDiscovery} activeOpacity={0.75} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 9, paddingVertical: 8 }}>
-              <Ionicons name="cloud-offline-outline" size={16} color="#FA5265" />
-              <Text style={{ color: '#A1A1A6', fontSize: 12, marginLeft: 7 }}>Couldn’t load mixes. Tap to retry.</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <View style={{ marginTop: 37, marginBottom: 15 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 37, height: 37, borderRadius: 19, backgroundColor: '#1B261F', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                <Ionicons name="book-outline" size={19} color="#E4D6A8" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Quran</Text>
-                <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 2 }}>Surah recitations · Al Quran Cloud</Text>
-              </View>
-              {quranLoading ? <ActivityIndicator color="#E4D6A8" size="small" /> : null}
             </View>
-          </View>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 7, paddingBottom: 2 }}>
-            {QURAN_RECITERS.map((reciter) => (
-              <QuranReciterCard
-                key={reciter.edition}
-                reciter={reciter}
-                active={activeTrack?.provider === 'quran' && activeTrack.providerId === reciter.edition}
-                loading={quranLoading && quranSurahs.length === 0}
-                unavailable={quranUnavailable}
-                width={cardWidth}
-                onPress={() => openQuranReciter(reciter)}
-              />
-            ))}
-            <AllQuranRecitersCard
-              width={cardWidth}
-              count={availableQuranReciters.length}
-              onPress={openAllReciters}
-            />
-          </ScrollView>
-
-          {quranUnavailable ? (
-            <TouchableOpacity onPress={retryQuranCatalog} activeOpacity={0.75} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 9, paddingVertical: 8 }}>
-              <Ionicons name="cloud-offline-outline" size={16} color="#E4D6A8" />
-              <Text style={{ color: '#A1A1A6', fontSize: 12, marginLeft: 7 }}>Couldn’t load the Quran catalog. Tap to retry.</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <View style={{ marginTop: 37, marginBottom: 15 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 37, height: 37, borderRadius: 19, backgroundColor: '#211925', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                <Ionicons name="sparkles" size={19} color="#D4B2E4" />
-              </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 15 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Ambient</Text>
-                <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 2 }}>Instrumental sounds for your moment</Text>
+                <Text style={{ color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Non-Stop Music</Text>
+                <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 3 }}>Fresh independent mixes, ready to keep playing</Text>
               </View>
-              {ambientFeed.loading ? <ActivityIndicator color="#D4B2E4" size="small" /> : (
-                <TouchableOpacity onPress={() => setAmbientRetryKey((current) => current + 1)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh Ambient music" style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#171719', alignItems: 'center', justifyContent: 'center' }}>
+              {mixLoading ? <ActivityIndicator color="#FA5265" size="small" /> : (
+                <TouchableOpacity onPress={refreshDiscovery} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh Home music" style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#171719', alignItems: 'center', justifyContent: 'center' }}>
                   <Ionicons name="refresh" size={17} color="#B7B7BC" />
                 </TouchableOpacity>
               )}
             </View>
-            <Text style={{ color: '#77777D', fontSize: 12, fontWeight: '500', marginTop: 8, marginLeft: 47 }}>
-              Independent tracks from Audius · mostly instrumental
-            </Text>
-          </View>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
-            {AMBIENT_MOODS.map((mood) => {
-              const selected = mood.id === ambientMood;
-              return (
-                <TouchableOpacity
-                  key={mood.id}
-                  onPress={() => setAmbientMood(mood.id)}
-                  activeOpacity={0.75}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected }}
-                  style={{ minHeight: 38, paddingHorizontal: 15, borderRadius: 20, backgroundColor: selected ? '#30202D' : '#141416', borderWidth: 1, borderColor: selected ? '#76516F' : '#262629', alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Text style={{ color: selected ? '#F0D8F4' : '#A1A1A6', fontSize: 13, fontWeight: selected ? '700' : '600' }}>{mood.title}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          <Text style={{ color: '#8E8E93', fontSize: 13, fontWeight: '500', marginBottom: 4 }}>
-            {AMBIENT_MOODS.find((mood) => mood.id === ambientMood)?.description}
-          </Text>
-
-          {ambientFeed.loading || ambientFeed.moodId !== ambientMood ? (
-            <View style={{ minHeight: 112, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-              <ActivityIndicator color="#D4B2E4" />
-              <Text style={{ color: '#77777D', fontSize: 12, fontWeight: '500' }}>Finding ambient tracks…</Text>
-            </View>
-          ) : ambientFeed.error && ambientFeed.tracks.length === 0 ? (
-            <TouchableOpacity onPress={() => setAmbientRetryKey((current) => current + 1)} activeOpacity={0.75} style={{ minHeight: 92, borderRadius: 18, backgroundColor: '#121214', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 18 }}>
-              <Ionicons name="cloud-offline-outline" size={19} color="#D4B2E4" />
-              <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '600', flexShrink: 1 }}>Couldn’t load ambient music · tap to retry</Text>
-            </TouchableOpacity>
-          ) : ambientFeed.tracks.length > 0 ? (
-            <View>
-              {ambientFeed.tracks.map((track) => (
-                <AmbientTrackRow
-                  key={track.id}
-                  track={track}
-                  active={activeTrack?.id === track.id}
-                  onPress={() => playAmbientTrack(track)}
-                  onOpenSource={() => openAmbientSource(track)}
-                />
-              ))}
-              {ambientFeed.error ? (
-                <Text style={{ color: '#A1A1A6', fontSize: 12, marginTop: 10 }}>{ambientFeed.error}</Text>
-              ) : null}
-              {ambientFeed.hasMore ? (
-                <TouchableOpacity
-                  onPress={() => void loadMoreAmbientTracks()}
-                  disabled={ambientFeed.loadingMore}
-                  activeOpacity={0.75}
-                  accessibilityRole="button"
-                  accessibilityLabel="Load more Ambient tracks"
-                  style={{ minHeight: 46, borderRadius: 23, backgroundColor: '#17171A', borderWidth: 1, borderColor: '#2B2B30', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 13 }}
-                >
-                  {ambientFeed.loadingMore ? <ActivityIndicator color="#D4B2E4" size="small" /> : <Ionicons name="add" size={18} color="#D4B2E4" />}
-                  <Text style={{ color: '#D7D7DC', fontSize: 13, fontWeight: '700' }}>{ambientFeed.loadingMore ? 'Loading tracks…' : 'Load more tracks'}</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          ) : (
-            <View style={{ minHeight: 92, borderRadius: 18, backgroundColor: '#121214', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 }}>
-              <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>No tracks found for this mood right now. Try another mood or refresh.</Text>
-            </View>
-          )}
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 37, marginBottom: 15 }}>
-            <Text style={{ flex: 1, color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Live Radio Stations</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Radio')} hitSlop={8} accessibilityRole="button" accessibilityLabel="See all radio stations" style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, paddingLeft: 7 }}>
-              <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700' }}>See all</Text>
-              <Ionicons name="chevron-forward" size={15} color="#FA5265" style={{ marginLeft: 2 }} />
-            </TouchableOpacity>
-          </View>
-
-          {radioLoading && stations.length === 0 ? (
-            <View style={{ height: cardWidth + 51, flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
-              {[0, 1].map((item) => (
-                <View key={item} style={{ width: cardWidth, height: cardWidth, borderRadius: 20, backgroundColor: '#141416', alignItems: 'center', justifyContent: 'center' }}>
-                  {item === 0 ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="radio-outline" size={25} color="#343438" />}
-                </View>
-              ))}
-            </View>
-          ) : stations.length > 0 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 7, paddingBottom: 2 }}>
-              {stations.map((station) => (
-                <LiveRadioCard
-                  key={station.stationuuid}
-                  station={station}
-                  active={activeTrack?.id === `radio:${station.stationuuid}`}
+              {AUDIO_MIXES.map((mix) => (
+                <NonStopMixCard
+                  key={mix.id}
+                  mix={mix}
+                  tracks={mixTracks[mix.id]}
+                  loading={mixLoading}
                   width={cardWidth}
-                  onPress={() => playStation(station)}
+                  onPress={() => playMix(mix.id)}
                 />
               ))}
             </ScrollView>
-          ) : (
-            <TouchableOpacity onPress={refreshDiscovery} activeOpacity={0.75} style={{ minHeight: 125, borderRadius: 20, backgroundColor: '#121214', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 20 }}>
-              <Ionicons name={radioUnavailable ? 'cloud-offline-outline' : 'radio-outline'} size={20} color="#FA5265" />
-              <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '600' }}>{radioUnavailable ? 'Couldn’t load stations · tap to retry' : 'No stations available right now'}</Text>
-            </TouchableOpacity>
-          )}
 
-          <PressableCard
-            style={{ width: '100%', marginTop: 34 }}
-            onPress={() => void openDonationLink()}
-            accessibilityLabel="Support Music app with a PayPal donation"
-          >
-            <LinearGradient
-              colors={['#123879', '#0757C8', '#087BBE']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{ minHeight: 348, borderRadius: 27, paddingHorizontal: 23, paddingVertical: 22, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(128,190,255,0.32)' }}
+            {mixUnavailable && !mixLoading ? (
+              <TouchableOpacity onPress={refreshDiscovery} activeOpacity={0.75} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 9, paddingVertical: 8 }}>
+                <Ionicons name="cloud-offline-outline" size={16} color="#FA5265" />
+                <Text style={{ color: '#A1A1A6', fontSize: 12, marginLeft: 7 }}>Couldn’t load mixes. Tap to retry.</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <View style={{ marginTop: 37, marginBottom: 15 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ width: 37, height: 37, borderRadius: 19, backgroundColor: '#1B261F', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                  <Ionicons name="book-outline" size={19} color="#E4D6A8" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Quran</Text>
+                  <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 2 }}>Surah recitations · Al Quran Cloud</Text>
+                </View>
+                {quranLoading ? <ActivityIndicator color="#E4D6A8" size="small" /> : null}
+              </View>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 7, paddingBottom: 2 }}>
+              {QURAN_RECITERS.map((reciter) => (
+                <QuranReciterCard
+                  key={reciter.edition}
+                  reciter={reciter}
+                  active={activeTrack?.provider === 'quran' && activeTrack.providerId === reciter.edition}
+                  loading={quranLoading && quranSurahs.length === 0}
+                  unavailable={quranUnavailable}
+                  width={cardWidth}
+                  onPress={() => openQuranReciter(reciter)}
+                />
+              ))}
+              <AllQuranRecitersCard
+                width={cardWidth}
+                count={availableQuranReciters.length}
+                onPress={openAllReciters}
+              />
+            </ScrollView>
+
+            {quranUnavailable ? (
+              <TouchableOpacity onPress={retryQuranCatalog} activeOpacity={0.75} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 9, paddingVertical: 8 }}>
+                <Ionicons name="cloud-offline-outline" size={16} color="#E4D6A8" />
+                <Text style={{ color: '#A1A1A6', fontSize: 12, marginLeft: 7 }}>Couldn’t load the Quran catalog. Tap to retry.</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 37, marginBottom: 15 }}>
+              <View style={{ width: 37, height: 37, borderRadius: 19, backgroundColor: '#211925', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                <Ionicons name="sparkles" size={19} color="#D4B2E4" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Genres</Text>
+                <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 3 }}>Explore genre mixes and let them play</Text>
+              </View>
+              {genreLoading ? <ActivityIndicator color="#D4B2E4" size="small" /> : (
+                <TouchableOpacity onPress={refreshGenres} hitSlop={10} accessibilityRole="button" accessibilityLabel="Refresh genre mixes" style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: '#171719', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="refresh" size={17} color="#B7B7BC" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 7, paddingBottom: 2 }}>
+              {GENRE_MIXES.map((genreMix) => (
+                <GenreMixCard
+                  key={genreMix.id}
+                  genreMix={genreMix}
+                  tracks={genreTracks[genreMix.id]}
+                  loading={genreLoading}
+                  width={cardWidth}
+                  onPress={() => playGenreMix(genreMix.id)}
+                />
+              ))}
+            </ScrollView>
+
+            {genreUnavailable && !genreLoading ? (
+              <TouchableOpacity onPress={refreshGenres} activeOpacity={0.75} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 9, paddingVertical: 8 }}>
+                <Ionicons name="cloud-offline-outline" size={16} color="#D4B2E4" />
+                <Text style={{ color: '#A1A1A6', fontSize: 12, marginLeft: 7 }}>Couldn’t load genre mixes. Tap to retry.</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 37, marginBottom: 15 }}>
+              <Text style={{ flex: 1, color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Live Radio Stations</Text>
+              <TouchableOpacity onPress={() => navigation.navigate('Radio')} hitSlop={8} accessibilityRole="button" accessibilityLabel="See all radio stations" style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 5, paddingLeft: 7 }}>
+                <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700' }}>See all</Text>
+                <Ionicons name="chevron-forward" size={15} color="#FA5265" style={{ marginLeft: 2 }} />
+              </TouchableOpacity>
+            </View>
+
+            {radioLoading && stations.length === 0 ? (
+              <View style={{ height: cardWidth + 51, flexDirection: 'row', alignItems: 'flex-start', gap: 13 }}>
+                {[0, 1].map((item) => (
+                  <View key={item} style={{ width: cardWidth, height: cardWidth, borderRadius: 20, backgroundColor: '#141416', alignItems: 'center', justifyContent: 'center' }}>
+                    {item === 0 ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="radio-outline" size={25} color="#343438" />}
+                  </View>
+                ))}
+              </View>
+            ) : stations.length > 0 ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 7, paddingBottom: 2 }}>
+                {stations.map((station) => (
+                  <LiveRadioCard
+                    key={station.stationuuid}
+                    station={station}
+                    active={activeTrack?.id === `radio:${station.stationuuid}`}
+                    width={cardWidth}
+                    onPress={() => playStation(station)}
+                  />
+                ))}
+              </ScrollView>
+            ) : (
+              <TouchableOpacity onPress={refreshDiscovery} activeOpacity={0.75} style={{ minHeight: 125, borderRadius: 20, backgroundColor: '#121214', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 20 }}>
+                <Ionicons name={radioUnavailable ? 'cloud-offline-outline' : 'radio-outline'} size={20} color="#FA5265" />
+                <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '600' }}>{radioUnavailable ? 'Couldn’t load stations · tap to retry' : 'No stations available right now'}</Text>
+              </TouchableOpacity>
+            )}
+
+            <PressableCard
+              style={{ width: '100%', marginTop: 34 }}
+              onPress={() => void openDonationLink()}
+              accessibilityLabel="Support Music app with a PayPal donation"
             >
-              <View style={{ position: 'absolute', width: 185, height: 185, borderRadius: 93, right: -66, top: 73, backgroundColor: 'rgba(103,196,255,0.13)' }} />
-              <View style={{ position: 'absolute', width: 118, height: 118, borderRadius: 59, left: -48, bottom: 24, backgroundColor: 'rgba(2,24,69,0.18)' }} />
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 17 }}>
-                <FontAwesome name="paypal" size={18} color="white" />
-                <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 12, fontWeight: '800', letterSpacing: 1.1, marginLeft: 8 }}>MUSIC · SUPPORT</Text>
-              </View>
-              <Text style={{ color: 'white', fontSize: 27, lineHeight: 32, fontWeight: '800', letterSpacing: -0.65 }}>
-                Help keep the{ '\n' }music going.
-              </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 14, lineHeight: 20, fontWeight: '500', marginTop: 8 }}>
-                Enjoying Musiqapp? A voluntary donation helps support its development.
-              </Text>
-              <View style={{ flex: 1, minHeight: 115, alignItems: 'center', justifyContent: 'center' }}>
-                <View style={{ width: 130, height: 98, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-5deg' }] }}>
-                  <FontAwesome name="paypal" size={61} color="white" />
+              <LinearGradient
+                colors={['#123879', '#0757C8', '#087BBE']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{ minHeight: 348, borderRadius: 27, paddingHorizontal: 23, paddingVertical: 22, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(128,190,255,0.32)' }}
+              >
+                <View style={{ position: 'absolute', width: 185, height: 185, borderRadius: 93, right: -66, top: 73, backgroundColor: 'rgba(103,196,255,0.13)' }} />
+                <View style={{ position: 'absolute', width: 118, height: 118, borderRadius: 59, left: -48, bottom: 24, backgroundColor: 'rgba(2,24,69,0.18)' }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 17 }}>
+                  <FontAwesome name="paypal" size={18} color="white" />
+                  <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 12, fontWeight: '800', letterSpacing: 1.1, marginLeft: 8 }}>MUSIC · SUPPORT</Text>
                 </View>
-                <View style={{ position: 'absolute', right: '26%', bottom: 12, width: 42, height: 42, borderRadius: 21, backgroundColor: '#FA5265', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#1766B7' }}>
-                  <Ionicons name="heart" size={20} color="white" />
+                <Text style={{ color: 'white', fontSize: 27, lineHeight: 32, fontWeight: '800', letterSpacing: -0.65 }}>
+                  Help keep the{ '\n' }music going.
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 14, lineHeight: 20, fontWeight: '500', marginTop: 8 }}>
+                  Enjoying Musiqapp? A voluntary donation helps support its development.
+                </Text>
+                <View style={{ flex: 1, minHeight: 115, alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{ width: 130, height: 98, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-5deg' }] }}>
+                    <FontAwesome name="paypal" size={61} color="white" />
+                  </View>
+                  <View style={{ position: 'absolute', right: '26%', bottom: 12, width: 42, height: 42, borderRadius: 21, backgroundColor: '#FA5265', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#1766B7' }}>
+                    <Ionicons name="heart" size={20} color="white" />
+                  </View>
                 </View>
-              </View>
-              <View style={{ minHeight: 51, borderRadius: 26, paddingHorizontal: 18, backgroundColor: 'white', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ color: '#123879', fontSize: 15, fontWeight: '800' }}>Donate with PayPal</Text>
-                <View style={{ width: 31, height: 31, borderRadius: 16, backgroundColor: '#E8F1FF', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="arrow-forward" size={17} color="#0757C8" />
+                <View style={{ minHeight: 51, borderRadius: 26, paddingHorizontal: 18, backgroundColor: 'white', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ color: '#123879', fontSize: 15, fontWeight: '800' }}>Donate with PayPal</Text>
+                  <View style={{ width: 31, height: 31, borderRadius: 16, backgroundColor: '#E8F1FF', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="arrow-forward" size={17} color="#0757C8" />
+                  </View>
                 </View>
-              </View>
-              <Text style={{ color: 'rgba(255,255,255,0.72)', fontSize: 11, fontWeight: '500', textAlign: 'center', marginTop: 10 }}>
-                Payment is completed securely on PayPal
-              </Text>
-            </LinearGradient>
-          </PressableCard>
+                <Text style={{ color: 'rgba(255,255,255,0.72)', fontSize: 11, fontWeight: '500', textAlign: 'center', marginTop: 10 }}>
+                  Payment is completed securely on PayPal
+                </Text>
+              </LinearGradient>
+            </PressableCard>
 
-          <View style={{ height: 18 }} />
+            <View style={{ height: 18 }} />
+          </Animated.View>
+        </Animated.ScrollView>
+
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: -24,
+            left: 0,
+            right: 0,
+            height: 170,
+            zIndex: 15,
+            elevation: 15,
+            opacity: topFadeOpacity,
+          }}
+        >
+          <LinearGradient
+            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            locations={[0, 0.32, 0.68, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          />
         </Animated.View>
-      </ScrollView>
+      </View>
 
       <Modal
         visible={allRecitersVisible}

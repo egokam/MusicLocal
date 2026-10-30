@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Alert,
-  FlatList,
   KeyboardAvoidingView,
   Modal,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GlassSurface } from '../../glass';
 import { LrcCheckerRow, type LrcCheckState } from '../components/library/LrcCheckerRow';
 import { LrcCheckerService } from '../services/LrcCheckerService';
 import type { Track } from '../types';
@@ -94,6 +97,18 @@ export const LrcCheckerScreen = ({
   onCheckTrack: (track: Track, forceOnline?: boolean) => Promise<Track>;
   onSaveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
 }) => {
+  const insets = useSafeAreaInsets();
+  const topInsetCompensation = Math.max(0, insets.top - 24);
+  const scrollY = useMemo(() => new Animated.Value(0), []);
+  const scrollHandler = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    [scrollY],
+  );
+  const topFadeOpacity = scrollY.interpolate({
+    inputRange: [0, 10, 26],
+    outputRange: [0, 0.75, 1],
+    extrapolate: 'clamp',
+  });
   const [scanSnapshot, setScanSnapshot] = useState(() => LrcCheckerService.getSnapshot());
   const [search, setSearch] = useState('');
   const [isApplyingAll, setIsApplyingAll] = useState(false);
@@ -312,27 +327,15 @@ export const LrcCheckerScreen = ({
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
-      <View style={{ flex: 1 }}>
-        <View style={{ height: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <TouchableOpacity
-            onPress={onBack}
-            accessibilityRole="button"
-            accessibilityLabel="Back to Library"
-            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Ionicons name="chevron-back" size={27} color="white" />
-          </TouchableOpacity>
-          <View style={{ height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Ionicons name="time-outline" size={19} color="#FA5265" />
-            <Text style={{ color: 'white', fontSize: 13, fontWeight: '700' }}>LYRICS</Text>
-          </View>
-        </View>
-
-        <FlatList
+      <View style={{ flex: 1, marginTop: -topInsetCompensation }}>
+        <Animated.FlatList<Track>
+          style={StyleSheet.absoluteFill}
           data={filteredTracks}
           keyExtractor={(item) => item.id}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 190 }}
+          contentContainerStyle={{ paddingTop: 58, paddingBottom: 190 }}
+          onScroll={scrollHandler}
+          scrollEventThrottle={16}
           ListHeaderComponent={(
             <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
               <Text style={{ color: 'white', fontSize: 36, lineHeight: 42, fontWeight: '800' }}>LRC Checker</Text>
@@ -454,6 +457,50 @@ export const LrcCheckerScreen = ({
             </View>
           )}
         />
+
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: -24,
+            left: 0,
+            right: 0,
+            height: 170,
+            zIndex: 15,
+            elevation: 15,
+            opacity: topFadeOpacity,
+          }}
+        >
+          <LinearGradient
+            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            locations={[0, 0.32, 0.68, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', top: 12, left: 0, right: 0, zIndex: 20, elevation: 20 }}
+        >
+          <View style={{ height: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <TouchableOpacity
+              onPress={onBack}
+              accessibilityRole="button"
+              accessibilityLabel="Back to Library"
+              style={{ position: 'relative', overflow: 'hidden', width: 44, height: 44, borderRadius: 22, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <GlassSurface style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 22 }} fallbackColor="rgba(28,28,30,0.84)" />
+              <Ionicons name="chevron-back" size={27} color="white" />
+            </TouchableOpacity>
+            <View style={{ position: 'relative', overflow: 'hidden', height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <GlassSurface style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 22 }} fallbackColor="rgba(28,28,30,0.84)" />
+              <Ionicons name="time-outline" size={19} color="#FA5265" />
+              <Text style={{ color: 'white', fontSize: 13, fontWeight: '700' }}>LYRICS</Text>
+            </View>
+          </View>
+        </View>
       </View>
 
       <Modal visible={Boolean(reviewTrack)} transparent animationType="fade" onRequestClose={discardReview}>

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, SectionList, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumGridItem } from '../components/library/AlbumGridItem';
 import { AlbumCollectionControls } from '../components/library/AlbumCollectionControls';
@@ -40,12 +41,22 @@ export const AlbumsScreen = ({
   onPlayAll: (queue: Track[]) => void;
   onShuffle: (queue: Track[]) => void;
 }) => {
-  const listRef = useRef<SectionList<AlbumGridRow, AlbumSection>>(null);
+  const listRef = useRef<Animated.SectionList<AlbumGridRow, AlbumSection>>(null);
   const insets = useSafeAreaInsets();
   const topInsetCompensation = Math.max(0, insets.top - 24);
   const [search, setSearch] = useState('');
   const [ascending, setAscending] = useState(true);
   const [sortBy, setSortBy] = useState<'album' | 'artist'>('album');
+  const scrollY = useMemo(() => new Animated.Value(0), []);
+  const scrollHandler = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    [scrollY],
+  );
+  const topFadeOpacity = scrollY.interpolate({
+    inputRange: [0, 10, 26],
+    outputRange: [0, 0.75, 1],
+    extrapolate: 'clamp',
+  });
 
   const allAlbums = useMemo(() => {
     const albumsByKey = new Map<string, Album>();
@@ -106,66 +117,90 @@ export const AlbumsScreen = ({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
       <View style={{ flex: 1, marginTop: -topInsetCompensation }}>
-      <SectionList
-        ref={listRef}
-        sections={sections}
-        keyExtractor={(row) => row.key}
-        renderItem={({ item }) => (
-          <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginTop: 18, marginBottom: 5 }}>
-            {item.albums.map((album) => (
-              <AlbumGridItem
-                key={album.key}
-                title={album.title}
-                artist={album.artist}
-                artwork={album.artwork}
-                onPress={() => onOpenAlbum(album.title, album.artist)}
-              />
-            ))}
-            {item.albums.length === 1 ? <View style={{ flex: 1 }} /> : null}
-          </View>
-        )}
-        renderSectionHeader={({ section }) => (
-          <Text style={{ color: 'white', fontSize: 20, lineHeight: 26, fontWeight: '700', marginTop: 23, paddingHorizontal: 20 }}>
-            {section.title}
-          </Text>
-        )}
-        ListHeaderComponent={(
-          <AlbumCollectionControls
-            search={search}
-            onSearchChange={setSearch}
-            onPlay={() => onPlayAll(visibleTracks)}
-            onShuffle={() => onShuffle(visibleTracks)}
-          />
-        )}
-        ListEmptyComponent={(
-          <View style={{ paddingHorizontal: 20, paddingTop: 24, alignItems: loading ? 'center' : 'flex-start' }}>
-            {loading ? <ActivityIndicator color="#FA243C" /> : (
-              <Text style={{ color: '#8E8E93', fontSize: 16 }}>
-                {search ? 'No albums match your search.' : 'Albums from your library will appear here.'}
-              </Text>
-            )}
-          </View>
-        )}
-        stickySectionHeadersEnabled={false}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingTop: 84, paddingBottom: 190 }}
-        initialNumToRender={8}
-        windowSize={7}
-        style={StyleSheet.absoluteFill}
-      />
+        <Animated.SectionList<AlbumGridRow, AlbumSection>
+          ref={listRef}
+          sections={sections}
+          keyExtractor={(row) => row.key}
+          renderItem={({ item }) => (
+            <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 20, marginTop: 18, marginBottom: 5 }}>
+              {item.albums.map((album) => (
+                <AlbumGridItem
+                  key={album.key}
+                  title={album.title}
+                  artist={album.artist}
+                  artwork={album.artwork}
+                  onPress={() => onOpenAlbum(album.title, album.artist)}
+                />
+              ))}
+              {item.albums.length === 1 ? <View style={{ flex: 1 }} /> : null}
+            </View>
+          )}
+          renderSectionHeader={({ section }) => (
+            <Text style={{ color: 'white', fontSize: 20, lineHeight: 26, fontWeight: '700', marginTop: 23, paddingHorizontal: 20 }}>
+              {section.title}
+            </Text>
+          )}
+          ListHeaderComponent={(
+            <AlbumCollectionControls
+              search={search}
+              onSearchChange={setSearch}
+              onPlay={() => onPlayAll(visibleTracks)}
+              onShuffle={() => onShuffle(visibleTracks)}
+            />
+          )}
+          ListEmptyComponent={(
+            <View style={{ paddingHorizontal: 20, paddingTop: 24, alignItems: loading ? 'center' : 'flex-start' }}>
+              {loading ? <ActivityIndicator color="#FA243C" /> : (
+                <Text style={{ color: '#8E8E93', fontSize: 16 }}>
+                  {search ? 'No albums match your search.' : 'Albums from your library will appear here.'}
+                </Text>
+              )}
+            </View>
+          )}
+          stickySectionHeadersEnabled={false}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          onScroll={scrollHandler}
+          scrollEventThrottle={16}
+          contentContainerStyle={{ paddingTop: 84, paddingBottom: 190 }}
+          initialNumToRender={8}
+          windowSize={7}
+          style={StyleSheet.absoluteFill}
+        />
 
-      <SongsHeader
-        onBack={onBack}
-        onToggleSort={() => setAscending((current) => !current)}
-        sortAccessibilityLabel="Toggle album order"
-        liquidGlass
-        moreMenuItems={[
-          { label: 'Sort by Album Title', icon: 'albums-outline', onPress: () => setSortBy('album') },
-          { label: 'Sort by Artist', icon: 'person-outline', onPress: () => setSortBy('artist') },
-        ]}
-      />
-      <AlphabetIndex onSelectLetter={jumpToLetter} />
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: -24,
+            left: 0,
+            right: 0,
+            height: 170,
+            zIndex: 15,
+            elevation: 15,
+            opacity: topFadeOpacity,
+          }}
+        >
+          <LinearGradient
+            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            locations={[0, 0.32, 0.68, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+
+        <SongsHeader
+          onBack={onBack}
+          onToggleSort={() => setAscending((current) => !current)}
+          sortAccessibilityLabel="Toggle album order"
+          liquidGlass
+          moreMenuItems={[
+            { label: 'Sort by Album Title', icon: 'albums-outline', onPress: () => setSortBy('album') },
+            { label: 'Sort by Artist', icon: 'person-outline', onPress: () => setSortBy('artist') },
+          ]}
+        />
+        <AlphabetIndex onSelectLetter={jumpToLetter} />
       </View>
     </SafeAreaView>
   );
