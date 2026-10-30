@@ -8,6 +8,8 @@ import {
   Image,
   Linking,
   Modal,
+  PanResponder,
+  Pressable,
   RefreshControl,
   ScrollView,
   Text,
@@ -22,6 +24,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
+import { BlurTargetView, BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
@@ -624,7 +627,7 @@ LiveRadioCard.displayName = 'LiveRadioCard';
 export const HomeScreen = () => {
   const navigation = useNavigation<HomeNavigation>();
   const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const { activeTrack, playTrack, togglePlayback } = usePlaybackActions();
   const [mixTracks, setMixTracks] = useState<MixTracks>(emptyMixTracks);
   const [quranSurahs, setQuranSurahs] = useState<QuranSurah[]>([]);
@@ -638,12 +641,21 @@ export const HomeScreen = () => {
   const [reciterSearch, setReciterSearch] = useState('');
   const [selectedQuranReciter, setSelectedQuranReciter] = useState<QuranReciter | null>(null);
   const [returnToReciterList, setReturnToReciterList] = useState(false);
+  const quranSheetTranslateY = useMemo(() => new Animated.Value(0), []);
+  const [quranSheetHeight, setQuranSheetHeight] = useState(screenHeight * 0.88);
+  const quranBackdropOpacity = useMemo(() => quranSheetTranslateY.interpolate({
+    inputRange: [0, Math.max(quranSheetHeight, 1)],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  }), [quranSheetHeight, quranSheetTranslateY]);
+  const [quranSheetClosing, setQuranSheetClosing] = useState(false);
   const [genreRetryKey, setGenreRetryKey] = useState(0);
   const [genreTracks, setGenreTracks] = useState<GenreMixTracks>(emptyGenreMixTracks);
   const [genreLoading, setGenreLoading] = useState(true);
   const [genreUnavailable, setGenreUnavailable] = useState(false);
   const genreRequestId = useRef(0);
   const quranReciterCatalogRequest = useRef(false);
+  const quranBlurTarget = useRef<View | null>(null);
   const [stations, setStations] = useState<RadioStation[]>([]);
   const [mixLoading, setMixLoading] = useState(true);
   const [radioLoading, setRadioLoading] = useState(true);
@@ -781,24 +793,85 @@ export const HomeScreen = () => {
   }, []);
 
   const openAllReciters = useCallback(() => {
+    setQuranSheetClosing(false);
+    quranSheetTranslateY.setValue(screenHeight);
     setSelectedQuranReciter(null);
     setReturnToReciterList(false);
     setAllRecitersVisible(true);
     setReciterSearch('');
     if (availableQuranReciters.length === 0) void loadAllReciters();
-  }, [availableQuranReciters.length, loadAllReciters]);
+  }, [availableQuranReciters.length, loadAllReciters, quranSheetTranslateY, screenHeight]);
 
   const openQuranReciter = useCallback((reciter: QuranReciter, fromReciterList = false) => {
+    if (!allRecitersVisible) {
+      setQuranSheetClosing(false);
+      quranSheetTranslateY.setValue(screenHeight);
+    }
     setSelectedQuranReciter(reciter);
     setReturnToReciterList(fromReciterList);
     setAllRecitersVisible(true);
-  }, []);
+  }, [allRecitersVisible, quranSheetTranslateY, screenHeight]);
+
+  const animateQuranSheetIn = useCallback(() => {
+    Animated.spring(quranSheetTranslateY, {
+      toValue: 0,
+      useNativeDriver: true,
+      damping: 26,
+      stiffness: 250,
+      mass: 0.85,
+    }).start();
+  }, [quranSheetTranslateY]);
 
   const closeQuranReciters = useCallback(() => {
-    setAllRecitersVisible(false);
-    setSelectedQuranReciter(null);
-    setReturnToReciterList(false);
-  }, []);
+    if (quranSheetClosing) return;
+    setQuranSheetClosing(true);
+    quranSheetTranslateY.stopAnimation();
+    Animated.timing(quranSheetTranslateY, {
+      toValue: screenHeight,
+      duration: 240,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setAllRecitersVisible(false);
+      setSelectedQuranReciter(null);
+      setReturnToReciterList(false);
+      setQuranSheetClosing(false);
+    });
+  }, [quranSheetClosing, quranSheetTranslateY, screenHeight]);
+
+  const quranSheetPanResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponder: (_event, gesture) => (
+      gesture.dy > 5 && Math.abs(gesture.dy) > Math.abs(gesture.dx)
+    ),
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_event, gesture) => {
+      if (gesture.dy > 0) quranSheetTranslateY.setValue(gesture.dy);
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy > 80 || (gesture.dy > 24 && gesture.vy > 0.7)) {
+        closeQuranReciters();
+        return;
+      }
+      Animated.spring(quranSheetTranslateY, {
+        toValue: 0,
+        useNativeDriver: true,
+        damping: 24,
+        stiffness: 260,
+        mass: 0.8,
+      }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(quranSheetTranslateY, {
+        toValue: 0,
+        useNativeDriver: true,
+        damping: 24,
+        stiffness: 260,
+        mass: 0.8,
+      }).start();
+    },
+  }), [closeQuranReciters, quranSheetTranslateY]);
 
   const goBackFromQuranReciter = useCallback(() => {
     if (returnToReciterList) {
@@ -915,6 +988,7 @@ export const HomeScreen = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
+      <BlurTargetView ref={quranBlurTarget} style={{ flex: 1 }}>
       <View style={{ flex: 1, marginTop: -topInsetCompensation }}>
         <Animated.ScrollView
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
@@ -1150,15 +1224,57 @@ export const HomeScreen = () => {
           />
         </Animated.View>
       </View>
+      </BlurTargetView>
 
       <Modal
         visible={allRecitersVisible}
         transparent
-        animationType="slide"
+        animationType="none"
+        onShow={animateQuranSheetIn}
         onRequestClose={closeQuranReciters}
       >
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.64)' }}>
-          <SafeAreaView edges={selectedQuranReciter ? ['top', 'bottom'] : ['bottom']} style={{ height: selectedQuranReciter ? '100%' : '88%', backgroundColor: '#171719', borderTopLeftRadius: selectedQuranReciter ? 0 : 28, borderTopRightRadius: selectedQuranReciter ? 0 : 28, paddingTop: 18, overflow: 'hidden' }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'transparent' }}>
+          <Animated.View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: quranBackdropOpacity }}
+          >
+            <BlurView
+              blurTarget={quranBlurTarget}
+              blurMethod="dimezisBlurView"
+              blurReductionFactor={2}
+              intensity={32}
+              tint="dark"
+              style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+            />
+            <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.12)' }} />
+          </Animated.View>
+          <Pressable
+            onPress={closeQuranReciters}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss Quran sheet"
+            style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+          />
+          <Animated.View
+            onLayout={(event) => setQuranSheetHeight(event.nativeEvent.layout.height)}
+            style={{
+              height: selectedQuranReciter ? '84%' : '88%',
+              width: '100%',
+              backgroundColor: '#171719',
+              borderTopLeftRadius: 28,
+              borderTopRightRadius: 28,
+              overflow: 'hidden',
+              transform: [{ translateY: quranSheetTranslateY }],
+            }}
+          >
+            <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: '#171719', paddingTop: 8 }}>
+            <View
+              {...quranSheetPanResponder.panHandlers}
+              accessibilityRole="button"
+              accessibilityLabel={selectedQuranReciter ? 'Drag down to close Surahs' : 'Drag down to close Quran reciters'}
+              style={{ height: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 2 }}
+            >
+              <View style={{ width: 43, height: 5, borderRadius: 3, backgroundColor: '#626267' }} />
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, marginBottom: 18 }}>
               {selectedQuranReciter ? (
                 <TouchableOpacity
@@ -1372,7 +1488,8 @@ export const HomeScreen = () => {
                 )}
               />
             )}
-          </SafeAreaView>
+            </SafeAreaView>
+          </Animated.View>
         </View>
       </Modal>
     </SafeAreaView>
