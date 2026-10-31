@@ -106,6 +106,7 @@ const PlayerOverlayView = ({
   onToggleRepeat,
   onToggleAutoplay,
   onClearQueue,
+  onRemoveQueueTrack,
 }: {
   visible: boolean;
   player: Parameters<typeof useAudioPlayerStatus>[0];
@@ -132,6 +133,7 @@ const PlayerOverlayView = ({
   onToggleRepeat: () => void;
   onToggleAutoplay: () => void;
   onClearQueue: () => void;
+  onRemoveQueueTrack: (track: Track) => void;
 }) => {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const progress = useSharedValue(0);
@@ -923,6 +925,7 @@ const PlayerOverlayView = ({
                   onToggleRepeat={onToggleRepeat}
                   onToggleAutoplay={onToggleAutoplay}
                   onClearQueue={onClearQueue}
+                  onRemoveTrack={onRemoveQueueTrack}
                 />
               </ReanimatedAnimated.View>
             ) : null}
@@ -948,6 +951,7 @@ const PlayerOverlayView = ({
                   onToggleRepeat={onToggleRepeat}
                   onToggleAutoplay={onToggleAutoplay}
                   onClearQueue={onClearQueue}
+                  onRemoveTrack={onRemoveQueueTrack}
                 />
               </ReanimatedAnimated.View>
             ) : null}
@@ -1445,7 +1449,8 @@ const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: 
     previous.onToggleShuffle !== next.onToggleShuffle ||
     previous.onToggleRepeat !== next.onToggleRepeat ||
     previous.onToggleAutoplay !== next.onToggleAutoplay ||
-    previous.onClearQueue !== next.onClearQueue
+    previous.onClearQueue !== next.onClearQueue ||
+    previous.onRemoveQueueTrack !== next.onRemoveQueueTrack
   ) return false;
 
   if (!next.visible) return true;

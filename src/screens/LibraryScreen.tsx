@@ -326,7 +326,7 @@ const DeveloperProfileScreen = ({
           {'© 2026 Egokam. All rights reserved.\nEnjoy, don\'t try to make it commercial, contact admin for support.'}
         </Text>
         <Text style={{ color: '#55555A', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
-          Version {Constants.expoConfig?.version ?? '1.0.6'}
+          Version {Constants.expoConfig?.version ?? '1.1.7'}
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -434,7 +434,7 @@ const SongCatalogRoute = ({
   onSearchOverride?: (query?: string) => Promise<void>;
 }) => {
   const actions = usePlaybackActions();
-  const { loadPlaylists } = actions;
+  const { loadPlaylists, apiInitializing: libraryInitializing } = actions;
   const favoriteTrackIds = useMemo(() => new Set([
     ...actions.favoriteTracks.map((track) => track.id),
     ...actions.tracks.filter((track) => track.isFavorite).map((track) => track.id),
@@ -445,8 +445,8 @@ const SongCatalogRoute = ({
   })), [favoriteTrackIds, tracks]);
 
   useEffect(() => {
-    if (apiConnected && showTrackActions) void loadPlaylists().catch(() => undefined);
-  }, [loadPlaylists, apiConnected, showTrackActions]);
+    if (apiConnected && !libraryInitializing && showTrackActions) void loadPlaylists().catch(() => undefined);
+  }, [loadPlaylists, apiConnected, libraryInitializing, showTrackActions]);
 
   return (
     <SongsScreen
@@ -498,11 +498,11 @@ const SongCatalogRoute = ({
   );
 };
 
-const useLoadFullCatalog = (apiConnected: boolean, loadAllTracks: () => Promise<Track[]>) => {
+const useLoadFullCatalog = (apiConnected: boolean, apiInitializing: boolean, loadAllTracks: () => Promise<Track[]>) => {
   const [loadingFullCatalog, setLoadingFullCatalog] = useState(false);
 
   useFocusEffect(useCallback(() => {
-    if (!apiConnected) {
+    if (!apiConnected || apiInitializing) {
       setLoadingFullCatalog(false);
       return;
     }
@@ -514,14 +514,14 @@ const useLoadFullCatalog = (apiConnected: boolean, loadAllTracks: () => Promise<
     return () => {
       mounted = false;
     };
-  }, [apiConnected, loadAllTracks]));
+  }, [apiConnected, apiInitializing, loadAllTracks]));
 
   return loadingFullCatalog;
 };
 
 const SongsRoute = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'Songs'>) => {
   const actions = usePlaybackActions();
-  const loadingFullCatalog = useLoadFullCatalog(actions.apiConnected, actions.loadAllTracks);
+  const loadingFullCatalog = useLoadFullCatalog(actions.apiConnected, actions.apiInitializing, actions.loadAllTracks);
   const skipRemoteSearch = useCallback(async () => undefined, []);
   return (
     <SongCatalogRoute
@@ -539,7 +539,7 @@ const SongsRoute = ({ navigation }: NativeStackScreenProps<LibraryStackParamList
 
 const AlbumsRoute = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'Albums'>) => {
   const actions = usePlaybackActions();
-  const loadingFullCatalog = useLoadFullCatalog(actions.apiConnected, actions.loadAllTracks);
+  const loadingFullCatalog = useLoadFullCatalog(actions.apiConnected, actions.apiInitializing, actions.loadAllTracks);
   return (
     <AlbumsScreen
       tracks={actions.tracks}
@@ -554,7 +554,7 @@ const AlbumsRoute = ({ navigation }: NativeStackScreenProps<LibraryStackParamLis
 
 const ArtistsRoute = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'Artists'>) => {
   const actions = usePlaybackActions();
-  const loadingFullCatalog = useLoadFullCatalog(actions.apiConnected, actions.loadAllTracks);
+  const loadingFullCatalog = useLoadFullCatalog(actions.apiConnected, actions.apiInitializing, actions.loadAllTracks);
   return (
     <ArtistsScreen
       tracks={actions.tracks}

@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +8,7 @@ import { SongListItem, type SongMenuAnchor } from '../components/songs/SongListI
 import { SongsControls } from '../components/songs/SongsControls';
 import { SongsHeader } from '../components/songs/SongsHeader';
 import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
-import { TrackListSkeleton } from '../components/Skeleton';
+import { SkeletonBlock, SkeletonPulse, TrackListSkeleton } from '../components/Skeleton';
 import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
 import { LibrarySelectionBarContext } from '../contexts/PlaybackContext';
@@ -398,8 +398,23 @@ export const SongsScreen = ({
 
   if (apiInitializing) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color="#FA243C" />
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
+        <SongsHeader onBack={onBack} onToggleSort={() => undefined} liquidGlass />
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingTop: 112, paddingBottom: 190 }}
+        >
+          <SkeletonPulse style={{ paddingHorizontal: 20 }}>
+            <SkeletonBlock style={{ width: 176, height: 42, borderRadius: 12 }} />
+            <SkeletonBlock style={{ height: 46, borderRadius: 24, marginTop: 16 }} />
+            <View style={{ flexDirection: 'row', gap: 14, marginTop: 24 }}>
+              <SkeletonBlock style={{ flex: 1, height: 46, borderRadius: 24 }} />
+              <SkeletonBlock style={{ flex: 1, height: 46, borderRadius: 24 }} />
+            </View>
+            <SkeletonBlock style={{ width: 20, height: 24, borderRadius: 7, marginTop: 35, marginBottom: 4 }} />
+          </SkeletonPulse>
+          <TrackListSkeleton count={8} />
+        </ScrollView>
       </SafeAreaView>
     );
   }
