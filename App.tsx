@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioStatus } from 'expo-audio';
 import { Directory, File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
 import { LibrarySelectionBarContext, PlaybackContext, RadioPlaybackStatusContext, type LibrarySelectionBarState } from './src/contexts/PlaybackContext';
@@ -43,11 +44,8 @@ const loadPlaybackCounts = async (): Promise<PlaybackCounts> => {
   }
 };
 
-const savePlaybackCounts = (counts: PlaybackCounts) => {
-  if (playbackCountsFile.exists) playbackCountsFile.delete();
-  playbackCountsFile.create({ intermediates: true });
-  playbackCountsFile.write(JSON.stringify(counts));
-};
+const savePlaybackCounts = (counts: PlaybackCounts) =>
+  FileSystem.writeAsStringAsync(playbackCountsFile.uri, JSON.stringify(counts));
 
 const mergeOfflineTrack = (remoteTrack: Track, offlineTrack?: Track): Track => {
   if (!offlineTrack) return remoteTrack;
@@ -157,11 +155,7 @@ export default function App() {
     };
     playCountsRef.current = nextCounts;
     setPlayCounts(nextCounts);
-    try {
-      savePlaybackCounts(nextCounts);
-    } catch {
-      // Keep playback working if local play history cannot be saved.
-    }
+    void savePlaybackCounts(nextCounts).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -250,6 +244,8 @@ export default function App() {
         merged.push(...downloadsRef.current
           .filter((track) => !presentIds.has(track.id))
           .map((track) => ({ ...track, isFavorite: favoriteIdsRef.current.has(track.id) })));
+        downloadsRef.current = merged;
+        setDownloadedTracks(merged);
       }
       tracksRef.current = merged;
       setTracks(merged);
@@ -278,7 +274,9 @@ export default function App() {
       .filter((track) => !presentIds.has(track.id))
       .map((track) => ({ ...track, isFavorite: favoriteIdsRef.current.has(track.id) })));
     tracksRef.current = merged;
+    downloadsRef.current = merged;
     setTracks(merged);
+    setDownloadedTracks(merged);
     void NowPlayingWidgetService.initialize(merged).catch(() => undefined);
     return merged;
   }, []);
@@ -343,28 +341,34 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
+    let backgroundLoadTimer: ReturnType<typeof setTimeout> | null = null;
     void Promise.all([
-      OfflineMusicService.getDownloadedTracks(),
+      OfflineMusicService.getIndexedDownloadedTracks(),
       loadPlaybackCounts(),
-    ]).then(async ([savedTracks, savedPlayCounts]) => {
+    ]).then(([savedTracks, savedPlayCounts]) => {
       if (!mounted) return;
-      const savedPlaylists = await PlaylistStorageService.reconcileWithLocalTracks(savedTracks);
       playCountsRef.current = savedPlayCounts;
       setPlayCounts(savedPlayCounts);
       downloadsRef.current = savedTracks;
+      tracksRef.current = savedTracks;
       setDownloadedTracks(savedTracks);
       favoriteIdsRef.current = new Set(savedTracks.filter((track) => track.isFavorite).map((track) => track.id));
       setTracks(savedTracks);
-      setPlaylists(savedPlaylists);
+      setFavoriteTracks(savedTracks.filter((track) => track.isFavorite));
       setApiConnected(true);
       favoriteStateLoaded.current = true;
-      setIsLoadingTracks(false);
-      void searchTracks();
-      void loadFavoriteTracks().catch(() => undefined);
-      void loadPlaylists();
-      void LrcCheckerService.resumeIfNeeded().catch(() => undefined);
-      void NowPlayingWidgetService.initialize(savedTracks).catch(() => undefined);
+      setIsLoadingTracks(savedTracks.length === 0);
       setApiInitializing(false);
+
+      // Show the indexed library immediately, then do discovery and reconciliation
+      // after the first screen has had a chance to render and accept input.
+      backgroundLoadTimer = setTimeout(() => {
+        if (!mounted) return;
+        void searchTracks();
+        void loadPlaylists().catch(() => undefined);
+        void LrcCheckerService.resumeIfNeeded().catch(() => undefined);
+        void NowPlayingWidgetService.initialize(savedTracks).catch(() => undefined);
+      }, 100);
     }).catch(() => {
       if (mounted) {
         setIsLoadingTracks(false);
@@ -373,8 +377,9 @@ export default function App() {
     });
     return () => {
       mounted = false;
+      if (backgroundLoadTimer) clearTimeout(backgroundLoadTimer);
     };
-  }, [loadFavoriteTracks, loadPlaylists, searchTracks]);
+  }, [loadPlaylists, searchTracks]);
 
   const connectToLibrary = useCallback(async (value: string) => {
     // Pairing is intentionally retired in local mode. Keep the callback so old
@@ -667,6 +672,13 @@ export default function App() {
     setShuffleEnabled(false);
   }, [updatePlaybackQueue]);
 
+  const removeQueuedTrack = useCallback((track: Track) => {
+    const activeTrackId = activeTrackRef.current?.id;
+    updatePlaybackQueue(queueRef.current.filter((queuedTrack) => (
+      queuedTrack.id === activeTrackId || queuedTrack.id !== track.id
+    )));
+  }, [updatePlaybackQueue]);
+
   const playQueueTrack = useCallback((track: Track) => {
     const currentQueue = queueRef.current.length > 0 ? queueRef.current : tracksRef.current;
     playSelectedTrack(track, currentQueue);
@@ -772,8 +784,6 @@ export default function App() {
       : item,
     );
     setDownloadedTracks(downloadsRef.current);
-    await OfflineMusicService.updateTrack(trackWithFavoriteState);
-    await PlaylistStorageService.updateTrack(trackWithFavoriteState);
     setFavoriteTracks((current) => {
       if (trackWithFavoriteState.isFavorite) {
         return [trackWithFavoriteState, ...current.filter((item) => !matchesTrack(item))];
@@ -785,6 +795,10 @@ export default function App() {
       activeTrackRef.current = active;
       setActiveTrack(active);
     }
+    await Promise.all([
+      OfflineMusicService.updateTrack(trackWithFavoriteState),
+      PlaylistStorageService.updateTrack(trackWithFavoriteState),
+    ]);
     return trackWithFavoriteState;
   }, [updatePlaybackQueue]);
 
@@ -796,11 +810,11 @@ export default function App() {
     if (isFavorite) favoriteIdsRef.current.add(track.id);
     else favoriteIdsRef.current.delete(track.id);
     try {
-      await MusicCatalogService.setFavorite(track, isFavorite);
       return await updateTrackEverywhere({ ...track, isFavorite });
     } catch (error) {
       if (currentFavorite) favoriteIdsRef.current.add(track.id);
       else favoriteIdsRef.current.delete(track.id);
+      await updateTrackEverywhere({ ...track, isFavorite: currentFavorite }).catch(() => undefined);
       throw error;
     }
   }, [updateTrackEverywhere]);
@@ -1228,6 +1242,7 @@ export default function App() {
           onToggleRepeat={toggleRepeatMode}
           onToggleAutoplay={toggleQueueAutoplay}
           onClearQueue={clearUpcomingQueue}
+          onRemoveQueueTrack={removeQueuedTrack}
         />
       ) : null}
     </GestureHandlerRootView>

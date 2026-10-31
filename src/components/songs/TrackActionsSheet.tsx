@@ -253,6 +253,17 @@ export const TrackActionsSheet = ({
     }
   };
 
+  const toggleFavorite = () => {
+    if (busy) return;
+    try {
+      const saving = onToggleFavorite(track);
+      dismiss();
+      void saving.catch((error) => showError(error, 'Could not update favorite'));
+    } catch (error) {
+      showError(error, 'Could not update favorite');
+    }
+  };
+
   const saveChanges = () => {
     const changes: TrackEditChanges = { title: title.trim(), artist: artist.trim(), album: album.trim(), artworkUrl: artworkUrl.trim() };
     if (lyricsDirty) changes.lyrics = lyrics;
@@ -388,7 +399,7 @@ export const TrackActionsSheet = ({
                     <ActionRow
                       icon={track.isFavorite ? 'star' : 'star-outline'}
                       title={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                      onPress={() => void runAction(() => onToggleFavorite(track), 'Could not update favorite')}
+                      onPress={toggleFavorite}
                       disabled={busy}
                     />
                     <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
@@ -415,7 +426,7 @@ export const TrackActionsSheet = ({
                         <Ionicons name="create-outline" size={29} color="#F5F5F7" />
                       </TouchableOpacity>
                       <TouchableOpacity
-                        onPress={() => void runAction(() => onToggleFavorite(track), 'Could not update favorite')}
+                        onPress={toggleFavorite}
                         disabled={busy}
                         accessibilityRole="button"
                         accessibilityLabel={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}

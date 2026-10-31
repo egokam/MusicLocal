@@ -1,4 +1,5 @@
 import { Directory, File, FileMode, Paths, type FileHandle } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { parseBuffer } from 'music-metadata';
 import { deduplicateSyncedLyrics, parseLyrics } from './LyricsParser';
 import { cacheArtworkForTrack } from './ArtworkService';
@@ -7,10 +8,35 @@ import type { Track } from '../types';
 // This directory stays inside the app's private Documents container.
 const downloadsDirectory = new Directory(Paths.document, 'Musiqapp');
 const indexFile = new File(downloadsDirectory, 'downloads.json');
+let downloadedTracksCache: Track[] | null = null;
+let downloadedTracksLoad: Promise<Track[]> | null = null;
+let downloadedTracksRevision = 0;
+let indexWriteQueue: Promise<void> = Promise.resolve();
 
 const ensureDirectory = () => {
   if (!downloadsDirectory.exists) {
     downloadsDirectory.create({ idempotent: true, intermediates: true });
+  }
+};
+
+const writeIndexToDisk = (tracks: Track[]) => {
+  const contents = JSON.stringify(tracks);
+  const operation = indexWriteQueue.then(async () => {
+    ensureDirectory();
+    await FileSystem.writeAsStringAsync(indexFile.uri, contents);
+  });
+  indexWriteQueue = operation.catch(() => undefined);
+  return operation;
+};
+
+const saveIndexedTracks = async (tracks: Track[]) => {
+  downloadedTracksRevision += 1;
+  downloadedTracksCache = tracks;
+  try {
+    await writeIndexToDisk(tracks);
+  } catch (error) {
+    if (downloadedTracksCache === tracks) downloadedTracksCache = null;
+    throw error;
   }
 };
 
@@ -371,6 +397,7 @@ const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { 
 };
 
 const readIndexedTracks = async (): Promise<Track[]> => {
+  await indexWriteQueue;
   if (!indexFile.exists) return [];
   try {
     return JSON.parse(await indexFile.text()) as Track[];
@@ -379,10 +406,11 @@ const readIndexedTracks = async (): Promise<Track[]> => {
   }
 };
 
-const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
+const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[]; changed: boolean }> => {
   let indexChanged = false;
   const refreshed: Track[] = [];
   for (const track of indexed) {
+    await yieldToUi();
     if (!track.localUri) {
       refreshed.push(track);
       continue;
@@ -441,6 +469,7 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
   const knownUris = new Set(refreshed.map((track) => track.localUri).filter(Boolean));
   const discovered: Track[] = [];
   for (const item of downloadsDirectory.list()) {
+    await yieldToUi();
     if (!(item instanceof File) || !supportedAudio.test(item.name) || knownUris.has(item.uri)) continue;
     const baseName = item.name.replace(/\.[^.]+$/, '');
     const fallback = metadataFromFile(item.name);
@@ -477,20 +506,50 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<Track[]> => {
     });
   }
   if (discovered.length === 0) {
-    if (indexChanged) writeTextFile(indexFile, JSON.stringify(refreshed));
-    return refreshed;
+    return { tracks: refreshed, changed: indexChanged };
   }
   const merged = [...refreshed, ...discovered];
-  writeTextFile(indexFile, JSON.stringify(merged));
-  return merged;
+  return { tracks: merged, changed: true };
 };
 
 export const OfflineMusicService = {
   async getDownloadedTracks(): Promise<Track[]> {
+    if (downloadedTracksCache) return downloadedTracksCache;
+    if (downloadedTracksLoad) return downloadedTracksLoad;
+
+    const load = (async () => {
+      while (true) {
+        const revision = downloadedTracksRevision;
+        const indexed = await readIndexedTracks();
+        if (revision !== downloadedTracksRevision) continue;
+
+        const scan = await scanLooseAudioFiles(indexed);
+        if (revision !== downloadedTracksRevision) continue;
+
+        const tracks: Track[] = [];
+        for (const track of scan.tracks) {
+          await yieldToUi();
+          if (track.localUri && new File(track.localUri).exists) tracks.push(track);
+        }
+
+        if (scan.changed || tracks.length !== scan.tracks.length) await writeIndexToDisk(tracks);
+        if (revision !== downloadedTracksRevision) continue;
+        downloadedTracksCache = tracks;
+        return tracks;
+      }
+    })();
+    downloadedTracksLoad = load;
+    try {
+      return await load;
+    } finally {
+      if (downloadedTracksLoad === load) downloadedTracksLoad = null;
+    }
+  },
+
+  /** Read the already indexed library without scanning audio metadata. */
+  async getIndexedDownloadedTracks(): Promise<Track[]> {
     ensureDirectory();
-    const indexed = await readIndexedTracks();
-    const tracks = await scanLooseAudioFiles(indexed);
-    return tracks.filter((track) => track.localUri && new File(track.localUri).exists);
+    return (await readIndexedTracks()).filter((track) => Boolean(track.localUri));
   },
 
   async exportDownloadedTracksAsZip(destinationDirectory: Directory): Promise<{ fileName: string; exportedCount: number; lyricCount: number; artworkCount: number }> {
@@ -735,7 +794,7 @@ export const OfflineMusicService = {
     const downloadedTrack: Track = { ...track, ...(artwork ? { artwork } : {}), localUri: audioFile.uri, lyricsFileUri };
     const current = await this.getDownloadedTracks();
     const updated = [...current.filter((item) => item.id !== track.id), downloadedTrack];
-    writeTextFile(indexFile, JSON.stringify(updated));
+    await saveIndexedTracks(updated);
     return downloadedTrack;
   },
 
@@ -779,7 +838,7 @@ export const OfflineMusicService = {
     };
     const current = await this.getDownloadedTracks();
     const updated = [...current.filter((item) => item.id !== id), track];
-    writeTextFile(indexFile, JSON.stringify(updated));
+    await saveIndexedTracks(updated);
     onProgress({ progress: 1, message: 'Saved to this device.', bytesDownloaded: audioFile.size ?? 0, totalBytes: audioFile.size ?? null });
     return track;
   },
@@ -828,7 +887,7 @@ export const OfflineMusicService = {
       hasPlainLyrics: embedded.hasPlainLyrics,
     };
     const current = await this.getDownloadedTracks();
-    writeTextFile(indexFile, JSON.stringify([...current.filter((item) => item.id !== id), track]));
+    await saveIndexedTracks([...current.filter((item) => item.id !== id), track]);
     return track;
   },
 
@@ -921,7 +980,7 @@ export const OfflineMusicService = {
     if (imported.length > 0) {
       const byId = new Map(current.map((track) => [track.id, track]));
       imported.forEach((track) => byId.set(track.id, track));
-      writeTextFile(indexFile, JSON.stringify([...byId.values()]));
+      await saveIndexedTracks([...byId.values()]);
     }
     return { importedCount: imported.length, skippedCount, artworkCount: imported.filter((track) => Boolean(track.artwork)).length };
   },
@@ -952,7 +1011,7 @@ export const OfflineMusicService = {
       lyricsFileUri: lyricsFile.uri,
     };
     const updatedTracks = [...current.filter((item) => item.id !== track.id), updatedTrack];
-    writeTextFile(indexFile, JSON.stringify(updatedTracks));
+    await saveIndexedTracks(updatedTracks);
     return updatedTrack;
   },
 
@@ -1034,13 +1093,13 @@ export const OfflineMusicService = {
   },
 
   async updateTrack(track: Track): Promise<void> {
-    const current = await this.getDownloadedTracks();
+    const current = await this.getIndexedDownloadedTracks();
     if (!current.some((item) => item.id === track.id)) return;
     const updatedTracks = current.map((item) => item.id === track.id
       ? { ...item, ...track, localUri: item.localUri }
       : item,
     );
-    writeTextFile(indexFile, JSON.stringify(updatedTracks));
+    await saveIndexedTracks(updatedTracks);
   },
 
   async removeDownloadedTracks(trackIds: string[]): Promise<{ removedTrackIds: string[]; freedBytes: number }> {
@@ -1095,7 +1154,7 @@ export const OfflineMusicService = {
       removedTrackIds.push(track.id);
     }
 
-    writeTextFile(indexFile, JSON.stringify(remaining));
+    await saveIndexedTracks(remaining);
     return { removedTrackIds, freedBytes };
   },
 

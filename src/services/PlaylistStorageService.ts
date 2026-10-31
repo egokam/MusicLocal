@@ -1,4 +1,5 @@
 import { Directory, File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import type { PlaylistSummary, Track } from '../types';
 
 type PlaylistState = {
@@ -30,18 +31,16 @@ const readState = async (): Promise<PlaylistState> => {
   }
 };
 
-const writeState = (state: PlaylistState) => {
+const writeState = async (state: PlaylistState) => {
   ensureDirectory();
-  if (stateFile.exists) stateFile.delete();
-  stateFile.create({ intermediates: true });
-  stateFile.write(JSON.stringify(state));
+  await FileSystem.writeAsStringAsync(stateFile.uri, JSON.stringify(state));
 };
 
 const updateState = async <T,>(mutate: (state: PlaylistState) => T | Promise<T>): Promise<T> => {
   const operation = writeQueue.then(async () => {
     const state = await readState();
     const result = await mutate(state);
-    writeState(state);
+    await writeState(state);
     return result;
   });
   writeQueue = operation.catch(() => undefined);
