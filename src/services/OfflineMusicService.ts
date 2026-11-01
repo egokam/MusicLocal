@@ -604,7 +604,14 @@ export const OfflineMusicService = {
   /** Read the already indexed library without scanning audio metadata. */
   async getIndexedDownloadedTracks(): Promise<Track[]> {
     ensureDirectory();
-    return (await readIndexedTracks()).filter((track) => Boolean(track.localUri));
+    return (await readIndexedTracks()).filter((track) => {
+      if (!track.localUri) return false;
+      try {
+        return new File(track.localUri).exists;
+      } catch {
+        return false;
+      }
+    });
   },
 
   async exportDownloadedTracksAsZip(destinationDirectory: Directory): Promise<{ fileName: string; exportedCount: number; lyricCount: number; artworkCount: number }> {

@@ -17,6 +17,7 @@ type SongSection = { title: string; data: Track[] };
 type SongSortMode = 'name' | 'dateAdded' | 'artist';
 
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+const SONGS_SKELETON_DELAY_MS = 300;
 
 const normalizeSearchText = (value: string) => value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase();
 
@@ -35,6 +36,101 @@ const getDateAddedTimestamp = (track: Track) => {
     return Number.isFinite(timestamp) ? timestamp : null;
   }
   return null;
+};
+
+const SongsLoadingSkeleton = ({
+  onBack,
+  title,
+  topInsetCompensation,
+}: {
+  onBack: () => void;
+  title: string;
+  topInsetCompensation: number;
+}) => {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setVisible(true), SONGS_SKELETON_DELAY_MS);
+    return () => clearTimeout(timeout);
+  }, []);
+
+  if (!visible) return <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']} />;
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
+      <View style={{ flex: 1, marginTop: -topInsetCompensation }}>
+      <ScrollView
+        style={StyleSheet.absoluteFill}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingTop: 58, paddingBottom: 190 }}
+      >
+        <SkeletonPulse style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 }}>
+          <View style={{ height: 46 }} />
+          <SkeletonBlock style={{ height: 44, borderRadius: 24, marginTop: 14 }} />
+          <View style={{ flexDirection: 'row', gap: 14, marginTop: 24 }}>
+            <SkeletonBlock style={{ flex: 1, height: 46, borderRadius: 24 }} />
+            <SkeletonBlock style={{ flex: 1, height: 46, borderRadius: 24 }} />
+          </View>
+        </SkeletonPulse>
+
+        <SkeletonPulse style={{ paddingTop: 20 }}>
+          <View style={{ height: 27, paddingHorizontal: 20, justifyContent: 'center' }}>
+            <SkeletonBlock style={{ width: 23, height: 23, borderRadius: 7 }} />
+          </View>
+          {Array.from({ length: 9 }, (_, index) => (
+            <View
+              key={index}
+              style={{ minHeight: 64, paddingLeft: 20, flexDirection: 'row', alignItems: 'center' }}
+            >
+              <SkeletonBlock style={{ width: 50, height: 50, borderRadius: 7 }} />
+              <View
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: 64,
+                  marginLeft: 12,
+                  paddingRight: 8,
+                  borderBottomWidth: index === 8 ? 0 : 1,
+                  borderBottomColor: '#2C2C2E',
+                  justifyContent: 'center',
+                }}
+              >
+                <SkeletonBlock style={{ width: `${index % 2 === 0 ? 72 : 60}%`, height: 18, borderRadius: 8 }} />
+                <SkeletonBlock style={{ width: '42%', height: 14, borderRadius: 7, marginTop: 4 }} />
+              </View>
+              <View
+                style={{
+                  width: 86,
+                  height: 64,
+                  paddingLeft: 8,
+                  paddingRight: 16,
+                  borderBottomWidth: index === 8 ? 0 : 1,
+                  borderBottomColor: '#2C2C2E',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <SkeletonBlock style={{ width: 19, height: 19, borderRadius: 10 }} />
+                <SkeletonBlock style={{ width: 26, height: 26, borderRadius: 13 }} />
+              </View>
+            </View>
+          ))}
+        </SkeletonPulse>
+      </ScrollView>
+
+      <View
+        pointerEvents="none"
+        style={{ position: 'absolute', top: 80, left: 20, right: 20, height: 46, zIndex: 16, elevation: 16 }}
+      >
+        <SkeletonPulse>
+          <SkeletonBlock style={{ width: Math.min(230, Math.max(116, title.length * 21)), height: 40, borderRadius: 10 }} />
+        </SkeletonPulse>
+      </View>
+      <SongsHeader onBack={onBack} onToggleSort={() => undefined} liquidGlass />
+      </View>
+    </SafeAreaView>
+  );
 };
 
 export const SongsScreen = ({
@@ -128,6 +224,7 @@ export const SongsScreen = ({
   const [selectedDownloadIds, setSelectedDownloadIds] = useState<Set<string>>(() => new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
   const [freedStorageMessage, setFreedStorageMessage] = useState<string | null>(null);
+  const waitingForInitialTracks = (apiInitializing || isLoadingTracks) && tracks.length === 0;
   const freedMessageTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectionToolbarActive = selectionMode && selectionType !== null;
   const selectionBarContext = useContext(LibrarySelectionBarContext);
@@ -396,27 +493,8 @@ export const SongsScreen = ({
     extrapolate: 'clamp',
   });
 
-  if (apiInitializing || isLoadingTracks) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
-        <SongsHeader onBack={onBack} onToggleSort={() => undefined} liquidGlass />
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingTop: 112, paddingBottom: 190 }}
-        >
-          <SkeletonPulse style={{ paddingHorizontal: 20 }}>
-            <SkeletonBlock style={{ width: 176, height: 42, borderRadius: 12 }} />
-            <SkeletonBlock style={{ height: 46, borderRadius: 24, marginTop: 16 }} />
-            <View style={{ flexDirection: 'row', gap: 14, marginTop: 24 }}>
-              <SkeletonBlock style={{ flex: 1, height: 46, borderRadius: 24 }} />
-              <SkeletonBlock style={{ flex: 1, height: 46, borderRadius: 24 }} />
-            </View>
-            <SkeletonBlock style={{ width: 20, height: 24, borderRadius: 7, marginTop: 35, marginBottom: 4 }} />
-          </SkeletonPulse>
-          <TrackListSkeleton count={8} />
-        </ScrollView>
-      </SafeAreaView>
-    );
+  if (waitingForInitialTracks) {
+    return <SongsLoadingSkeleton onBack={onBack} title={title} topInsetCompensation={topInsetCompensation} />;
   }
 
   if ((!apiConnected || showPairingForm) && !offlineMode) {

@@ -234,16 +234,11 @@ export default function App() {
         ? await MusicCatalogService.searchTracks(query)
         : await MusicCatalogService.searchAllTracks();
       if (generation !== searchGeneration.current) return;
-      const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
       const merged = remoteTracks.map((track) => ({
-        ...mergeOfflineTrack(track, offlineById.get(track.id)),
+        ...track,
         isFavorite: favoriteIdsRef.current.has(track.id),
       }));
       if (!query.trim()) {
-        const presentIds = new Set(merged.map((track) => track.id));
-        merged.push(...downloadsRef.current
-          .filter((track) => !presentIds.has(track.id))
-          .map((track) => ({ ...track, isFavorite: favoriteIdsRef.current.has(track.id) })));
         downloadsRef.current = merged;
         setDownloadedTracks(merged);
       }
@@ -264,15 +259,10 @@ export default function App() {
 
   const loadAllTracks = useCallback(async () => {
     const remoteTracks = await MusicCatalogService.searchAllTracks();
-    const offlineById = new Map(downloadsRef.current.map((track) => [track.id, track]));
     const merged = remoteTracks.map((track) => ({
-      ...mergeOfflineTrack(track, offlineById.get(track.id)),
+      ...track,
       isFavorite: favoriteIdsRef.current.has(track.id),
     }));
-    const presentIds = new Set(merged.map((track) => track.id));
-    merged.push(...downloadsRef.current
-      .filter((track) => !presentIds.has(track.id))
-      .map((track) => ({ ...track, isFavorite: favoriteIdsRef.current.has(track.id) })));
     tracksRef.current = merged;
     downloadsRef.current = merged;
     setTracks(merged);
@@ -284,7 +274,7 @@ export default function App() {
   const loadFavoriteTracks = useCallback(async () => {
     const localFavorites = await MusicCatalogService.getFavoriteTracks();
     const favorites = localFavorites.map((track) => ({
-      ...mergeOfflineTrack(track, downloadsRef.current.find((saved) => saved.id === track.id)),
+      ...track,
       isFavorite: true,
     }));
     const favoriteIds = new Set(favorites.map((track) => track.id));
