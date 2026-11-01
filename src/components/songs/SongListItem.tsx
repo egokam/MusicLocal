@@ -1,4 +1,6 @@
-import { ActivityIndicator, Image, Text, TouchableOpacity, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import type { Track } from '../../types';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
@@ -38,6 +40,8 @@ export const SongListItem = ({
   onAddToPlaylist?: () => void;
   isLast: boolean;
 }) => {
+  const [failedArtworkUri, setFailedArtworkUri] = useState<string | null>(null);
+
   return (
   <View
     style={{
@@ -47,10 +51,12 @@ export const SongListItem = ({
       alignItems: 'center',
     }}
   >
-    {track.artwork ? (
+    {track.artwork && failedArtworkUri !== track.artwork ? (
       <Image
         source={{ uri: track.artwork, ...(track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
-        resizeMode="cover"
+        contentFit="cover"
+        transition={140}
+        onError={() => setFailedArtworkUri(track.artwork)}
         style={{ width: 50, height: 50, borderRadius: 7, backgroundColor: '#2C2C2E' }}
       />
     ) : (

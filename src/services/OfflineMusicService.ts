@@ -438,6 +438,15 @@ const readIndexedTracks = async (): Promise<Track[]> => {
   }
 };
 
+const isArtworkUriAvailable = (uri: string | undefined) => {
+  if (!uri?.startsWith('file://')) return true;
+  try {
+    return new File(uri).exists;
+  } catch {
+    return false;
+  }
+};
+
 const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[]; changed: boolean }> => {
   let indexChanged = false;
   const refreshed: Track[] = [];
@@ -467,6 +476,10 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[];
           ? txt.uri
           : (track.lyricsFileUri && new File(track.lyricsFileUri).exists ? track.lyricsFileUri : embedded?.lyricsFileUri);
       const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, track.id, track.artwork);
+      const fallbackArtwork = isArtworkUriAvailable(track.artwork) ? track.artwork : '';
+      const artworkFileUri = isArtworkUriAvailable(track.artworkFileUri)
+        ? track.artworkFileUri || embedded?.artworkFileUri || artwork
+        : embedded?.artworkFileUri || artwork;
       const next = {
         ...track,
         title: (isGeneratedLocalId(track.title) || !track.title.trim()) && isUsefulEmbeddedText(embedded?.title)
@@ -486,8 +499,8 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[];
           ? formatDuration(embedded.durationSeconds)
           : track.duration,
         lyricsFileUri,
-        artwork: artwork || embedded?.artwork || track.artwork,
-        artworkFileUri: track.artworkFileUri || embedded?.artworkFileUri || artwork,
+        artwork: artwork || embedded?.artwork || fallbackArtwork,
+        artworkFileUri,
         lyricsAvailable: Boolean(track.lyricsAvailable || lyricsFileUri),
         hasSyncedLyrics: Boolean(track.hasSyncedLyrics || lrc.exists || embedded?.hasSyncedLyrics),
         hasPlainLyrics: Boolean(track.hasPlainLyrics || (!lrc.exists && txt.exists) || embedded?.hasPlainLyrics),
