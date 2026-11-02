@@ -590,6 +590,7 @@ export const SearchScreen = () => {
       </KeyboardAvoidingView>
 
       <TrackActionsSheet
+        key={selectedTrack?.track.id ?? 'track-actions'}
         track={selectedTrack?.track ?? null}
         anchor={selectedTrack?.anchor ?? { x: 0, y: 0, width: 0, height: 0 }}
         visible={selectedTrack !== null}

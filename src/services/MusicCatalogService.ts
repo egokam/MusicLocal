@@ -30,7 +30,8 @@ export type TrackEditChanges = {
   title: string;
   artist: string;
   album: string;
-  artworkUrl: string;
+  artworkUri?: string;
+  artworkMimeType?: string;
   lyrics?: string;
 };
 
@@ -43,7 +44,7 @@ const mergeTrackChanges = (track: Track, changes: TrackEditChanges): Track => {
       title: changes.title.trim() || track.title,
       artist: changes.artist.trim() || track.artist,
       album: changes.album.trim(),
-      artwork: changes.artworkUrl.trim() || track.artwork,
+      artwork: changes.artworkUri ?? track.artwork,
     };
   }
   const lyrics = changes.lyrics.trim();
@@ -56,7 +57,7 @@ const mergeTrackChanges = (track: Track, changes: TrackEditChanges): Track => {
     title: changes.title.trim() || track.title,
     artist: changes.artist.trim() || track.artist,
     album: changes.album.trim(),
-    artwork: changes.artworkUrl.trim() || track.artwork,
+    artwork: changes.artworkUri ?? track.artwork,
     syncedLyrics,
     plainLyrics,
     lyrics: parseLyrics(syncedLyrics, plainLyrics),
@@ -171,8 +172,10 @@ export const MusicCatalogService = {
 
   async updateTrack(track: Track, changes: TrackEditChanges): Promise<Track> {
     const updated = mergeTrackChanges(track, changes);
-    await OfflineMusicService.updateTrack(updated);
-    return updated;
+    return OfflineMusicService.updateTrack(
+      updated,
+      changes.artworkUri ? { uri: changes.artworkUri, mimeType: changes.artworkMimeType } : undefined,
+    );
   },
 
   async deleteTrack(track: Track): Promise<void> {

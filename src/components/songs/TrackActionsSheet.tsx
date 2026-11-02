@@ -17,6 +17,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { GlassSurface } from '../../../glass';
 import type { PlaylistSummary, Track } from '../../types';
 import type { TrackEditChanges } from '../../services/MusicCatalogService';
@@ -137,7 +138,8 @@ export const TrackActionsSheet = ({
   const [title, setTitle] = useState(track?.title ?? '');
   const [artist, setArtist] = useState(track?.artist ?? '');
   const [album, setAlbum] = useState(track?.album ?? '');
-  const [artworkUrl, setArtworkUrl] = useState(track?.artwork ?? '');
+  const [artworkSelection, setArtworkSelection] = useState<{ uri: string; mimeType?: string } | null>(null);
+  const [choosingArtwork, setChoosingArtwork] = useState(false);
   const [lyrics, setLyrics] = useState(track?.syncedLyrics ?? track?.plainLyrics ?? '');
   const [lyricsDirty, setLyricsDirty] = useState(false);
   const lyricsTouched = useRef(false);
@@ -265,7 +267,11 @@ export const TrackActionsSheet = ({
   };
 
   const saveChanges = () => {
-    const changes: TrackEditChanges = { title: title.trim(), artist: artist.trim(), album: album.trim(), artworkUrl: artworkUrl.trim() };
+    const changes: TrackEditChanges = { title: title.trim(), artist: artist.trim(), album: album.trim() };
+    if (artworkSelection) {
+      changes.artworkUri = artworkSelection.uri;
+      changes.artworkMimeType = artworkSelection.mimeType;
+    }
     if (lyricsDirty) changes.lyrics = lyrics;
     void runAction(() => onSaveTrack(track, changes), 'Could not save track');
   };
@@ -287,6 +293,28 @@ export const TrackActionsSheet = ({
 
   const addToPlaylist = (playlistId: string) => {
     void runAction(() => onAddToPlaylist(playlistId, track), 'Could not add to playlist');
+  };
+
+  const localTrack = track.provider === 'local' || Boolean(track.localUri);
+  const visibleArtworkUri = artworkSelection?.uri || track.artwork;
+  const chooseArtwork = async () => {
+    if (busy || choosingArtwork || !localTrack) return;
+    setChoosingArtwork(true);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.9,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (asset) setArtworkSelection({ uri: asset.uri, ...(asset.mimeType ? { mimeType: asset.mimeType } : {}) });
+    } catch (error) {
+      showError(error, 'Could not open Photos');
+    } finally {
+      setChoosingArtwork(false);
+    }
   };
 
   const createAndAddPlaylist = () => {
@@ -456,13 +484,47 @@ export const TrackActionsSheet = ({
 
             {page === 'edit' ? (
               <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 14 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                {track.artwork ? (
-                  <Image source={{ uri: artworkUrl || track.artwork }} style={{ width: 72, height: 72, borderRadius: 12, backgroundColor: '#29292D', marginTop: 12 }} />
-                ) : null}
                 <Field label="Title" value={title} onChangeText={setTitle} />
                 <Field label="Artist" value={artist} onChangeText={setArtist} />
                 <Field label="Album" value={album} onChangeText={setAlbum} />
-                <Field label="Artwork HTTPS URL" value={artworkUrl} onChangeText={setArtworkUrl} autoCapitalize="none" placeholder="https://…" />
+                <View style={{ marginTop: 16 }}>
+                  <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '700', marginBottom: 7 }}>Artwork</Text>
+                  <TouchableOpacity
+                    onPress={() => void chooseArtwork()}
+                    disabled={busy || choosingArtwork || !localTrack}
+                    accessibilityRole="button"
+                    accessibilityLabel={visibleArtworkUri ? 'Replace track artwork' : 'Add track artwork'}
+                    style={{
+                      minHeight: 88,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      padding: 8,
+                      borderRadius: 16,
+                      backgroundColor: '#242427',
+                      opacity: busy || !localTrack ? 0.55 : 1,
+                    }}
+                  >
+                    <View style={{ width: 72, height: 72, borderRadius: 12, overflow: 'hidden', backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center' }}>
+                      {visibleArtworkUri ? (
+                        <Image source={{ uri: visibleArtworkUri }} style={{ width: '100%', height: '100%' }} />
+                      ) : (
+                        <Ionicons name="musical-notes-outline" size={27} color="#A1A1A6" />
+                      )}
+                      <View style={{ position: 'absolute', right: 4, bottom: 4, width: 25, height: 25, borderRadius: 13, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
+                        {choosingArtwork ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="camera" size={14} color="white" />}
+                      </View>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0, marginLeft: 12 }}>
+                      <Text style={{ color: 'white', fontSize: 15, fontWeight: '700' }} numberOfLines={1}>Album artwork</Text>
+                      <Text style={{ color: '#A1A1A6', fontSize: 13, marginTop: 4 }} numberOfLines={2}>
+                        {localTrack
+                          ? visibleArtworkUri ? 'Tap the cover to replace it' : 'Tap to add a cover image'
+                          : 'Save this track to your library to change its artwork'}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={17} color="#8E8E93" />
+                  </TouchableOpacity>
+                </View>
                 <Field
                   label="Lyrics · synced LRC or plain text"
                   value={lyrics}
@@ -480,8 +542,8 @@ export const TrackActionsSheet = ({
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={saveChanges}
-                    disabled={busy || !title.trim() || !artist.trim()}
-                    style={{ flex: 1, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FA243C', opacity: busy || !title.trim() || !artist.trim() ? 0.5 : 1 }}
+                    disabled={busy || choosingArtwork || !title.trim() || !artist.trim()}
+                    style={{ flex: 1, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FA243C', opacity: busy || choosingArtwork || !title.trim() || !artist.trim() ? 0.5 : 1 }}
                   >
                     {busy ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontSize: 15, fontWeight: '700' }}>Save</Text>}
                   </TouchableOpacity>

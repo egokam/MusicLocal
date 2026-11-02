@@ -1154,14 +1154,78 @@ export const OfflineMusicService = {
     }
   },
 
-  async updateTrack(track: Track): Promise<void> {
+  async updateTrack(
+    track: Track,
+    artworkSelection?: { uri: string; mimeType?: string },
+  ): Promise<Track> {
     const current = await this.getIndexedDownloadedTracks();
-    if (!current.some((item) => item.id === track.id)) return;
+    const previousTrack = current.find((item) => item.id === track.id);
+    if (!previousTrack) {
+      if (artworkSelection) throw new Error('Save this track to your library before changing its artwork.');
+      return track;
+    }
+
+    let updatedTrack = track;
+    let copiedArtwork: File | undefined;
+    if (artworkSelection) {
+      ensureDirectory();
+      const sourceArtwork = new File(artworkSelection.uri);
+      if (!sourceArtwork.exists) throw new Error('The selected artwork is no longer available. Please choose it again.');
+
+      const mimeType = artworkSelection.mimeType?.toLowerCase().split(';')[0];
+      const mimeExtensions: Record<string, string> = {
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/png': '.png',
+        'image/webp': '.webp',
+        'image/heic': '.heic',
+        'image/heif': '.heif',
+        'image/avif': '.avif',
+      };
+      const sourceExtension = sourceArtwork.extension.toLowerCase();
+      const extension = mimeExtensions[mimeType ?? '']
+        ?? (['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.avif'].includes(sourceExtension) ? sourceExtension : '.jpg');
+      const artworkName = `${safeName(track.id)}-artwork-${Date.now()}-${Math.random().toString(36).slice(2, 7)}${extension}`;
+      copiedArtwork = new File(downloadsDirectory, artworkName);
+      await sourceArtwork.copy(copiedArtwork);
+      if (!copiedArtwork.exists || !copiedArtwork.size) {
+        if (copiedArtwork.exists) copiedArtwork.delete();
+        throw new Error('Could not save the selected artwork. Please try another image.');
+      }
+      updatedTrack = {
+        ...track,
+        artwork: copiedArtwork.uri,
+        artworkFileUri: copiedArtwork.uri,
+      };
+    }
+
     const updatedTracks = current.map((item) => item.id === track.id
-      ? { ...item, ...track, localUri: item.localUri }
+      ? { ...item, ...updatedTrack, localUri: item.localUri }
       : item,
     );
-    await saveIndexedTracks(updatedTracks);
+    try {
+      await saveIndexedTracks(updatedTracks);
+    } catch (error) {
+      if (copiedArtwork?.exists) copiedArtwork.delete();
+      throw error;
+    }
+
+    if (copiedArtwork) {
+      const managedArtworkPrefix = downloadsDirectory.uri.endsWith('/')
+        ? downloadsDirectory.uri
+        : `${downloadsDirectory.uri}/`;
+      const previousArtworkUris = new Set([previousTrack.artworkFileUri, previousTrack.artwork]);
+      previousArtworkUris.forEach((uri) => {
+        if (!uri || uri === copiedArtwork?.uri || !uri.startsWith(managedArtworkPrefix)) return;
+        try {
+          const previousArtwork = new File(uri);
+          if (previousArtwork.exists) previousArtwork.delete();
+        } catch {
+          // Removing an old cover is best-effort; the new indexed cover is already saved.
+        }
+      });
+    }
+    return updatedTrack;
   },
 
   async removeDownloadedTracks(trackIds: string[]): Promise<{ removedTrackIds: string[]; freedBytes: number }> {

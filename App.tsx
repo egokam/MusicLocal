@@ -784,13 +784,23 @@ export default function App() {
       const active = { ...activeTrackRef.current, ...trackWithFavoriteState, localUri: activeTrackRef.current.localUri };
       activeTrackRef.current = active;
       setActiveTrack(active);
+      try {
+        player.updateLockScreenMetadata({
+          title: active.title,
+          artist: active.artist,
+          albumTitle: active.album,
+          ...(active.artwork ? { artworkUrl: active.artwork } : {}),
+        });
+      } catch {
+        // Keep track editing successful if lock-screen metadata is unavailable.
+      }
     }
     await Promise.all([
       OfflineMusicService.updateTrack(trackWithFavoriteState),
       PlaylistStorageService.updateTrack(trackWithFavoriteState),
     ]);
     return trackWithFavoriteState;
-  }, [updatePlaybackQueue]);
+  }, [player, updatePlaybackQueue]);
 
   const toggleFavorite = useCallback(async (track: Track) => {
     const currentFavorite = favoriteStateLoaded.current
