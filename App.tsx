@@ -6,7 +6,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioLockScreenOptions, type AudioMetadata } from 'expo-audio';
-import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
@@ -118,7 +117,7 @@ const PlayerStatusBridge = ({
 
 export default function App() {
   const expoPlayer = useAudioPlayer(null, { updateInterval: 250 });
-  const PlayerAudioEngine = Constants.expoGoConfig ? null : getPlayerAudioEngine();
+  const PlayerAudioEngine = getPlayerAudioEngine();
   const audioApiEnabled = PlayerAudioEngine !== null;
   const audioEngineRef = useRef<PlayerAudioEngineHandle>(null);
   const player = useMemo(() => ({
