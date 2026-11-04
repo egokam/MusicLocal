@@ -14,7 +14,6 @@ import { PlayerLyrics } from './PlayerLyrics';
 import { PlayerOutputRouteButton } from './PlayerOutputRouteButton';
 import { PlayerQueuePanel } from './PlayerQueuePanel';
 import { PlayerSlider } from './PlayerSlider';
-import type { SongMenuAnchor } from '../songs/SongListItem';
 import { usePlayerPlaybackStatus } from '../../services/PlayerStatusStore';
 import type { Track } from '../../types';
 
@@ -126,7 +125,7 @@ const PlayerOverlayView = ({
   onSeek: (seconds: number) => void;
   onVolumeChange: (volume: number) => void;
   onToggleFavorite: () => void;
-  onOpenEffects: (anchor: SongMenuAnchor) => void;
+  onOpenEffects: () => void;
   onPlayQueueTrack: (track: Track) => void;
   onToggleShuffle: () => void;
   onToggleRepeat: () => void;
@@ -167,7 +166,6 @@ const PlayerOverlayView = ({
   }, []);
   const [queueView, setQueueView] = useState({ trackId: track.id, expanded: false });
   const queueViewRef = useRef(queueView);
-  const effectsAnchorRef = useRef<View>(null);
   const setTrackedQueueView = useCallback((nextView: typeof queueView) => {
     queueViewRef.current = nextView;
     setQueueView(nextView);
@@ -785,11 +783,7 @@ const PlayerOverlayView = ({
     setTrackedQueueView({ trackId: renderedTrack.id, expanded: !queueExpanded });
   };
 
-  const openEffects = () => {
-    effectsAnchorRef.current?.measureInWindow((x, y, width, height) => {
-      onOpenEffects({ x, y, width, height });
-    });
-  };
+  const openEffects = () => onOpenEffects();
 
   return (
     <ReanimatedAnimated.View
@@ -1270,24 +1264,22 @@ const PlayerOverlayView = ({
               >
                 <Ionicons name={isFavorite ? 'star' : 'star-outline'} size={24} color={isFavorite ? '#FA5265' : 'white'} />
               </TouchableOpacity>
-              <View ref={effectsAnchorRef} collapsable={false}>
-                <TouchableOpacity
-                  onPress={openEffects}
-                  hitSlop={8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Audio effects"
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 22,
-                    backgroundColor: 'rgba(255, 255, 255, 0.13)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
+              <TouchableOpacity
+                onPress={openEffects}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Audio effects"
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: 'rgba(255, 255, 255, 0.13)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
                 <Ionicons name="options-outline" size={24} color="white" />
-                </TouchableOpacity>
-              </View>
+              </TouchableOpacity>
             </View>
           </ReanimatedAnimated.View>
 

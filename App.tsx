@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Linking, NativeModules } from 'react-native';
+import { Alert, Linking, NativeModules, TurboModuleRegistry } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioLockScreenOptions, type AudioMetadata } from 'expo-audio';
 import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
-import { PlayerAudioEngine, type PlayerAudioEngineHandle } from './src/components/player/PlayerAudioEngine';
+import type { PlayerAudioEngineHandle } from './src/components/player/PlayerAudioEngine';
 import { PlayerEffectsSheet, type PlayerEffectsSettings } from './src/components/player/PlayerEffectsSheet';
-import type { SongMenuAnchor } from './src/components/songs/SongListItem';
 import { publishPlayerPlaybackStatus, type PlayerPlaybackStatus } from './src/services/PlayerStatusStore';
 import { LibrarySelectionBarContext, PlaybackContext, RadioPlaybackStatusContext, type LibrarySelectionBarState } from './src/contexts/PlaybackContext';
 import { systemMediaControls } from './src/native/SystemMediaControls';
@@ -34,6 +34,25 @@ type SystemVolumeManager = typeof import('react-native-volume-manager').VolumeMa
 
 const Tab = createBottomTabNavigator();
 const playbackCountsFile = new File(Paths.document, 'musiqapp-play-counts.json');
+let cachedPlayerAudioEngine: typeof import('./src/components/player/PlayerAudioEngine').PlayerAudioEngine | null | undefined;
+
+const getPlayerAudioEngine = () => {
+  if (cachedPlayerAudioEngine !== undefined) return cachedPlayerAudioEngine;
+
+  try {
+    if (!TurboModuleRegistry.get('AudioAPIModule')) {
+      cachedPlayerAudioEngine = null;
+      return cachedPlayerAudioEngine;
+    }
+
+    cachedPlayerAudioEngine = require('./src/components/player/PlayerAudioEngine').PlayerAudioEngine;
+  } catch (error) {
+    cachedPlayerAudioEngine = null;
+    if (__DEV__) console.warn('Native audio effects are unavailable; using the standard audio player.', error);
+  }
+
+  return cachedPlayerAudioEngine;
+};
 
 type PlaybackCounts = Record<string, number>;
 
@@ -99,7 +118,8 @@ const PlayerStatusBridge = ({
 
 export default function App() {
   const expoPlayer = useAudioPlayer(null, { updateInterval: 250 });
-  const audioApiEnabled = !Constants.expoGoConfig;
+  const PlayerAudioEngine = Constants.expoGoConfig ? null : getPlayerAudioEngine();
+  const audioApiEnabled = PlayerAudioEngine !== null;
   const audioEngineRef = useRef<PlayerAudioEngineHandle>(null);
   const player = useMemo(() => ({
     replace: (source: Parameters<typeof expoPlayer.replace>[0]) => {
@@ -142,7 +162,7 @@ export default function App() {
   const [favoriteTracks, setFavoriteTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
-  const [playerEffectsAnchor, setPlayerEffectsAnchor] = useState<SongMenuAnchor | null>(null);
+  const [playerEffectsOpen, setPlayerEffectsOpen] = useState(false);
   const playerEffectsRef = useRef<PlayerEffectsSettings>({ muffling: 0, reverb: 0, speed: 1, pitch: 0 });
   const [librarySelectionBar, setLibrarySelectionBar] = useState<LibrarySelectionBarState | null>(null);
   const selectionTransitionProgress = useSharedValue(0);
@@ -577,8 +597,8 @@ export default function App() {
     setPlayerVisible(false);
   }, []);
 
-  const openPlayerEffects = useCallback((anchor: SongMenuAnchor) => {
-    setPlayerEffectsAnchor(anchor);
+  const openPlayerEffects = useCallback(() => {
+    setPlayerEffectsOpen((isOpen) => !isOpen);
   }, []);
 
   const applyPlayerEffects = useCallback((settings: PlayerEffectsSettings) => {
@@ -597,7 +617,7 @@ export default function App() {
 
   const closePlayerEffects = useCallback((settings: PlayerEffectsSettings) => {
     playerEffectsRef.current = settings;
-    setPlayerEffectsAnchor(null);
+    setPlayerEffectsOpen(false);
   }, []);
 
   const toggleQueueAutoplay = useCallback(() => {
@@ -1259,8 +1279,9 @@ export default function App() {
   ]);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      {audioApiEnabled ? (
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+      {PlayerAudioEngine ? (
         <PlayerAudioEngine
           ref={audioEngineRef}
           onStatus={handlePlayerStatus}
@@ -1332,14 +1353,14 @@ export default function App() {
           onRemoveQueueTrack={removeQueuedTrack}
         />
       ) : null}
-      {playerEffectsAnchor ? (
+      {playerEffectsOpen ? (
         <PlayerEffectsSheet
-          anchor={playerEffectsAnchor}
           initialSettings={playerEffectsRef.current}
           onChange={applyPlayerEffects}
           onClose={closePlayerEffects}
         />
       ) : null}
-    </GestureHandlerRootView>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }
