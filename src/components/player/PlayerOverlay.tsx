@@ -5,7 +5,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { BackHandler, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
-import { useAudioPlayerStatus } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -15,6 +14,8 @@ import { PlayerLyrics } from './PlayerLyrics';
 import { PlayerOutputRouteButton } from './PlayerOutputRouteButton';
 import { PlayerQueuePanel } from './PlayerQueuePanel';
 import { PlayerSlider } from './PlayerSlider';
+import type { SongMenuAnchor } from '../songs/SongListItem';
+import { usePlayerPlaybackStatus } from '../../services/PlayerStatusStore';
 import type { Track } from '../../types';
 
 const HAS_LIQUID_GLASS = isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
@@ -33,17 +34,15 @@ const formatTime = (seconds: number) =>
   `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 
 const PlayerProgress = ({
-  player,
   isLiveRadio,
   fallbackDurationSeconds,
   onSeek,
 }: {
-  player: Parameters<typeof useAudioPlayerStatus>[0];
   isLiveRadio: boolean;
   fallbackDurationSeconds: number;
   onSeek: (seconds: number) => void;
 }) => {
-  const status = useAudioPlayerStatus(player);
+  const status = usePlayerPlaybackStatus();
   const elapsedSeconds = Math.max(0, status.currentTime);
   const totalSeconds = Math.max(0, status.duration || fallbackDurationSeconds);
   const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
@@ -82,7 +81,6 @@ const PlayerProgress = ({
 
 const PlayerOverlayView = ({
   visible,
-  player,
   track,
   lyricsLoadingTrackId,
   isFavorite,
@@ -101,6 +99,7 @@ const PlayerOverlayView = ({
   onSeek,
   onVolumeChange,
   onToggleFavorite,
+  onOpenEffects,
   onPlayQueueTrack,
   onToggleShuffle,
   onToggleRepeat,
@@ -109,7 +108,6 @@ const PlayerOverlayView = ({
   onRemoveQueueTrack,
 }: {
   visible: boolean;
-  player: Parameters<typeof useAudioPlayerStatus>[0];
   track: Track;
   lyricsLoadingTrackId: string | null;
   isFavorite: boolean;
@@ -128,6 +126,7 @@ const PlayerOverlayView = ({
   onSeek: (seconds: number) => void;
   onVolumeChange: (volume: number) => void;
   onToggleFavorite: () => void;
+  onOpenEffects: (anchor: SongMenuAnchor) => void;
   onPlayQueueTrack: (track: Track) => void;
   onToggleShuffle: () => void;
   onToggleRepeat: () => void;
@@ -168,6 +167,7 @@ const PlayerOverlayView = ({
   }, []);
   const [queueView, setQueueView] = useState({ trackId: track.id, expanded: false });
   const queueViewRef = useRef(queueView);
+  const effectsAnchorRef = useRef<View>(null);
   const setTrackedQueueView = useCallback((nextView: typeof queueView) => {
     queueViewRef.current = nextView;
     setQueueView(nextView);
@@ -785,6 +785,12 @@ const PlayerOverlayView = ({
     setTrackedQueueView({ trackId: renderedTrack.id, expanded: !queueExpanded });
   };
 
+  const openEffects = () => {
+    effectsAnchorRef.current?.measureInWindow((x, y, width, height) => {
+      onOpenEffects({ x, y, width, height });
+    });
+  };
+
   return (
     <ReanimatedAnimated.View
       pointerEvents="box-none"
@@ -964,7 +970,6 @@ const PlayerOverlayView = ({
             >
               {visible ? (
                 <PlayerProgress
-                  player={player}
                   isLiveRadio={isLiveRadio}
                   fallbackDurationSeconds={durationSeconds}
                   onSeek={onSeek}
@@ -1245,7 +1250,7 @@ const PlayerOverlayView = ({
               actionsStyle,
             ]}
           >
-            <View style={{ position: 'absolute', right: 30, flexDirection: 'row' }}>
+            <View style={{ position: 'absolute', right: 30, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TouchableOpacity
                 onPress={onToggleFavorite}
                 disabled={!canFavoriteTrack}
@@ -1265,6 +1270,24 @@ const PlayerOverlayView = ({
               >
                 <Ionicons name={isFavorite ? 'star' : 'star-outline'} size={24} color={isFavorite ? '#FA5265' : 'white'} />
               </TouchableOpacity>
+              <View ref={effectsAnchorRef} collapsable={false}>
+                <TouchableOpacity
+                  onPress={openEffects}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Audio effects"
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    backgroundColor: 'rgba(255, 255, 255, 0.13)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                <Ionicons name="options-outline" size={24} color="white" />
+                </TouchableOpacity>
+              </View>
             </View>
           </ReanimatedAnimated.View>
 
@@ -1376,7 +1399,6 @@ const PlayerOverlayView = ({
             <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
               <PlayerLyrics
                 key={renderedTrack.id}
-                player={player}
                 trackId={renderedTrack.id}
                 lyrics={lyrics}
                 pauseAutoScroll={pauseLyricsAutoScroll}
@@ -1406,7 +1428,6 @@ const PlayerOverlayView = ({
             <ReanimatedAnimated.View pointerEvents="auto" style={{ flex: 1 }}>
               <PlayerLyrics
                 key={track.id}
-                player={player}
                 trackId={track.id}
                 lyrics={incomingLyrics}
                 pauseAutoScroll={pauseLyricsAutoScroll}
@@ -1432,7 +1453,6 @@ type PlayerOverlayViewProps = React.ComponentProps<typeof PlayerOverlayView>;
 const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: PlayerOverlayViewProps) => {
   if (
     previous.visible !== next.visible ||
-    previous.player !== next.player ||
     previous.track !== next.track ||
     previous.lyricsLoadingTrackId !== next.lyricsLoadingTrackId ||
     previous.isFavorite !== next.isFavorite ||
@@ -1445,6 +1465,7 @@ const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: 
     previous.onSeek !== next.onSeek ||
     previous.onVolumeChange !== next.onVolumeChange ||
     previous.onToggleFavorite !== next.onToggleFavorite ||
+    previous.onOpenEffects !== next.onOpenEffects ||
     previous.onPlayQueueTrack !== next.onPlayQueueTrack ||
     previous.onToggleShuffle !== next.onToggleShuffle ||
     previous.onToggleRepeat !== next.onToggleRepeat ||

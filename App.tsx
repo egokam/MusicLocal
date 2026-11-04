@@ -4,11 +4,16 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
-import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioStatus } from 'expo-audio';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioLockScreenOptions, type AudioMetadata } from 'expo-audio';
+import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
+import { PlayerAudioEngine, type PlayerAudioEngineHandle } from './src/components/player/PlayerAudioEngine';
+import { PlayerEffectsSheet, type PlayerEffectsSettings } from './src/components/player/PlayerEffectsSheet';
+import type { SongMenuAnchor } from './src/components/songs/SongListItem';
+import { publishPlayerPlaybackStatus, type PlayerPlaybackStatus } from './src/services/PlayerStatusStore';
 import { LibrarySelectionBarContext, PlaybackContext, RadioPlaybackStatusContext, type LibrarySelectionBarState } from './src/contexts/PlaybackContext';
 import { systemMediaControls } from './src/native/SystemMediaControls';
 import { NowPlayingWidgetService } from './src/services/NowPlayingWidgetService';
@@ -74,20 +79,62 @@ const PlayerStatusBridge = ({
   onStatus,
 }: {
   player: ReturnType<typeof useAudioPlayer>;
-  onStatus: (status: AudioStatus) => void;
+  onStatus: (status: PlayerPlaybackStatus) => void;
 }) => {
   const status = useAudioPlayerStatus(player);
 
   useEffect(() => {
-    onStatus(status);
+    const nextStatus = {
+      currentTime: status.currentTime,
+      duration: status.duration,
+      playing: status.playing,
+      didJustFinish: status.didJustFinish,
+    };
+    publishPlayerPlaybackStatus(nextStatus);
+    onStatus(nextStatus);
   }, [onStatus, status]);
 
   return null;
 };
 
 export default function App() {
-  const player = useAudioPlayer(null, { updateInterval: 250 });
-  const [playerVolume, setPlayerVolumeState] = useState(player.volume);
+  const expoPlayer = useAudioPlayer(null, { updateInterval: 250 });
+  const audioApiEnabled = !Constants.expoGoConfig;
+  const audioEngineRef = useRef<PlayerAudioEngineHandle>(null);
+  const player = useMemo(() => ({
+    replace: (source: Parameters<typeof expoPlayer.replace>[0]) => {
+      if (audioApiEnabled) audioEngineRef.current?.replace(source as Exclude<Parameters<typeof expoPlayer.replace>[0], null>);
+      else expoPlayer.replace(source);
+    },
+    play: () => {
+      if (audioApiEnabled) audioEngineRef.current?.play();
+      else expoPlayer.play();
+    },
+    pause: () => {
+      if (audioApiEnabled) audioEngineRef.current?.pause();
+      else expoPlayer.pause();
+    },
+    seekTo: (seconds: number) => audioApiEnabled
+      ? audioEngineRef.current?.seekTo(seconds) ?? Promise.resolve()
+      : expoPlayer.seekTo(seconds),
+    setVolume: (volume: number) => {
+      if (audioApiEnabled) audioEngineRef.current?.setVolume(volume);
+      else expoPlayer.volume = volume;
+    },
+    setActiveForLockScreen: (active: boolean, metadata?: AudioMetadata, options?: AudioLockScreenOptions) => {
+      if (audioApiEnabled) audioEngineRef.current?.setActiveForLockScreen(active, metadata, options);
+      else expoPlayer.setActiveForLockScreen(active, metadata, options);
+    },
+    updateLockScreenMetadata: (metadata: AudioMetadata) => {
+      if (audioApiEnabled) audioEngineRef.current?.updateLockScreenMetadata(metadata);
+      else expoPlayer.updateLockScreenMetadata(metadata);
+    },
+    setPlaybackRate: (rate: number, quality?: 'low' | 'medium' | 'high') => {
+      if (audioApiEnabled) audioEngineRef.current?.setPlaybackEffects(rate, 0);
+      else expoPlayer.setPlaybackRate(rate, quality);
+    },
+  }), [audioApiEnabled, expoPlayer]);
+  const [playerVolume, setPlayerVolumeState] = useState(1);
   const [playerIsPlaying, setPlayerIsPlaying] = useState(false);
   const [playerDuration, setPlayerDuration] = useState(0);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -95,6 +142,8 @@ export default function App() {
   const [favoriteTracks, setFavoriteTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
+  const [playerEffectsAnchor, setPlayerEffectsAnchor] = useState<SongMenuAnchor | null>(null);
+  const playerEffectsRef = useRef<PlayerEffectsSettings>({ muffling: 0, reverb: 0, speed: 1, pitch: 0 });
   const [librarySelectionBar, setLibrarySelectionBar] = useState<LibrarySelectionBarState | null>(null);
   const selectionTransitionProgress = useSharedValue(0);
   const selectionBarVisible = librarySelectionBar !== null;
@@ -120,6 +169,7 @@ export default function App() {
   const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
+
   const tracksRef = useRef<Track[]>([]);
   const downloadsRef = useRef<Track[]>([]);
   const favoriteIdsRef = useRef<Set<string>>(new Set());
@@ -191,12 +241,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (audioApiEnabled) return;
     void setAudioModeAsync({
       playsInSilentMode: true,
       shouldPlayInBackground: true,
       interruptionMode: 'doNotMix',
     }).catch(() => undefined);
-  }, []);
+  }, [audioApiEnabled]);
 
   useEffect(() => {
     let mounted = true;
@@ -526,6 +577,29 @@ export default function App() {
     setPlayerVisible(false);
   }, []);
 
+  const openPlayerEffects = useCallback((anchor: SongMenuAnchor) => {
+    setPlayerEffectsAnchor(anchor);
+  }, []);
+
+  const applyPlayerEffects = useCallback((settings: PlayerEffectsSettings) => {
+    playerEffectsRef.current = settings;
+    if (audioApiEnabled) {
+      audioEngineRef.current?.setMuffling(settings.muffling);
+      audioEngineRef.current?.setReverb(settings.reverb);
+      audioEngineRef.current?.setPlaybackEffects(settings.speed, settings.pitch);
+      return;
+    }
+    expoPlayer.setPlaybackRate(
+      settings.speed * (2 ** (settings.pitch / 12)),
+      settings.pitch === 0 ? 'high' : 'low',
+    );
+  }, [audioApiEnabled, expoPlayer]);
+
+  const closePlayerEffects = useCallback((settings: PlayerEffectsSettings) => {
+    playerEffectsRef.current = settings;
+    setPlayerEffectsAnchor(null);
+  }, []);
+
   const toggleQueueAutoplay = useCallback(() => {
     setAutoplayEnabled((enabled) => !enabled);
   }, []);
@@ -614,7 +688,7 @@ export default function App() {
     }
   }, [autoplayEnabled, loadMoreAudiusMixTracks, player, playSelectedTrack, repeatMode]);
 
-  const handlePlayerStatus = useCallback((status: AudioStatus) => {
+  const handlePlayerStatus = useCallback((status: PlayerPlaybackStatus) => {
     playerCurrentTimeRef.current = status.currentTime;
 
     if (playerPlayingRef.current !== status.playing) {
@@ -698,6 +772,7 @@ export default function App() {
   }, [playSelectedTrack, player]);
 
   useEffect(() => {
+    if (audioApiEnabled) return;
     const mediaControls = systemMediaControls;
     if (!mediaControls) return;
 
@@ -710,7 +785,7 @@ export default function App() {
       previousTrackSubscription.remove();
       mediaControls.setEnabled(false);
     };
-  }, [skipNext, skipPrevious]);
+  }, [audioApiEnabled, skipNext, skipPrevious]);
 
   const seekTo = useCallback((seconds: number) => {
     void player.seekTo(Math.max(0, seconds));
@@ -729,8 +804,7 @@ export default function App() {
     }
 
     // Keep the Expo Go preview usable when its binary lacks the native volume module.
-    // eslint-disable-next-line react-hooks/immutability
-    player.volume = nextVolume;
+    player.setVolume(nextVolume);
   }, [player]);
 
   const updateTrackWithLyrics = useCallback(async (track: Track, syncedLyrics: string) => {
@@ -1186,7 +1260,20 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PlayerStatusBridge player={player} onStatus={handlePlayerStatus} />
+      {audioApiEnabled ? (
+        <PlayerAudioEngine
+          ref={audioEngineRef}
+          onStatus={handlePlayerStatus}
+          onPlayRequested={player.play}
+          onPauseRequested={player.pause}
+          onStopRequested={player.pause}
+          onNextRequested={skipNext}
+          onPreviousRequested={skipPrevious}
+          onSeekRequested={seekTo}
+        />
+      ) : (
+        <PlayerStatusBridge player={expoPlayer} onStatus={handlePlayerStatus} />
+      )}
       <AndroidUpdatePrompt />
       <PlaybackContext.Provider value={playbackActions}>
         <LibrarySelectionBarContext.Provider value={librarySelectionBarContextValue}>
@@ -1217,7 +1304,6 @@ export default function App() {
       </PlaybackContext.Provider>
       {activeTrack && !isLrcSynchronizerActive && (librarySelectionBar === null || playerVisible) ? (
         <PlayerOverlay
-          player={player}
           visible={playerVisible}
           track={activeTrack}
           lyricsLoadingTrackId={lyricsLoadingTrackId}
@@ -1237,12 +1323,21 @@ export default function App() {
           onSeek={seekTo}
           onVolumeChange={setPlayerVolume}
           onToggleFavorite={toggleActiveTrackFavorite}
+          onOpenEffects={openPlayerEffects}
           onPlayQueueTrack={playQueueTrack}
           onToggleShuffle={toggleQueueShuffle}
           onToggleRepeat={toggleRepeatMode}
           onToggleAutoplay={toggleQueueAutoplay}
           onClearQueue={clearUpcomingQueue}
           onRemoveQueueTrack={removeQueuedTrack}
+        />
+      ) : null}
+      {playerEffectsAnchor ? (
+        <PlayerEffectsSheet
+          anchor={playerEffectsAnchor}
+          initialSettings={playerEffectsRef.current}
+          onChange={applyPlayerEffects}
+          onClose={closePlayerEffects}
         />
       ) : null}
     </GestureHandlerRootView>
