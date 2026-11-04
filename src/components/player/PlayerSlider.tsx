@@ -2,6 +2,7 @@
 /* eslint-disable react-hooks/immutability, react-hooks/refs */
 
 import { useEffect, useMemo, useRef } from 'react';
+import { View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   interpolate,
@@ -19,6 +20,7 @@ type PlayerSliderProps = {
   inactiveColor?: string;
   disabled?: boolean;
   thumbAlwaysVisible?: boolean;
+  graduationCount?: number;
   onValueChange?: (value: number) => void;
   onSlidingComplete?: (value: number) => void;
 };
@@ -35,6 +37,7 @@ export const PlayerSlider = ({
   inactiveColor = 'rgba(255,255,255,0.25)',
   disabled = false,
   thumbAlwaysVisible = false,
+  graduationCount = 0,
   onValueChange,
   onSlidingComplete,
 }: PlayerSliderProps) => {
@@ -68,7 +71,15 @@ export const PlayerSlider = ({
   const sliderGesture = useMemo(() => {
     const progressAtX = (x: number) => {
       'worklet';
-      return sliderWidth.value > 0 ? clamp(x / sliderWidth.value) : 0;
+      const progress = sliderWidth.value > 0 ? clamp(x / sliderWidth.value) : 0;
+      if (graduationCount <= 1) return progress;
+
+      const nearestIndex = Math.round(progress * graduationCount);
+      const nearestMark = nearestIndex / graduationCount;
+      const isInteriorMark = nearestIndex > 0 && nearestIndex < graduationCount;
+      return isInteriorMark && Math.abs(progress - nearestMark) <= 0.035
+        ? nearestMark
+        : progress;
     };
 
     const tap = Gesture.Tap()
@@ -126,6 +137,7 @@ export const PlayerSlider = ({
     sliderValue,
     sliderWidth,
     thumbAlwaysVisible,
+    graduationCount,
     thumbOpacity,
   ]);
 
@@ -183,6 +195,16 @@ export const PlayerSlider = ({
             fillStyle,
           ]}
         />
+        {graduationCount > 1 && Array.from({ length: graduationCount + 1 }, (_, index) => (
+          <View
+            key={index}
+            pointerEvents="none"
+            style={[
+              styles.graduationMark,
+              { left: `${(index / graduationCount) * 100}%` },
+            ]}
+          />
+        ))}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -204,4 +226,16 @@ export const PlayerSlider = ({
       </Animated.View>
     </GestureDetector>
   );
+};
+
+const styles = {
+  graduationMark: {
+    position: 'absolute' as const,
+    top: 14,
+    width: 2,
+    height: 8,
+    marginLeft: -1,
+    borderRadius: 1,
+    backgroundColor: 'rgba(255,255,255,0.48)',
+  },
 };
