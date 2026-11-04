@@ -201,7 +201,7 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
       graph.reverbConnected = false;
     }
 
-    graph.wetGain.gain.setTargetAtTime(normalized * 0.42, context.currentTime, 0.06);
+    graph.wetGain.gain.setTargetAtTime(normalized * 1.4, context.currentTime, 0.06);
   }, []);
 
   const routeAudioThroughEffects = useCallback(() => {
