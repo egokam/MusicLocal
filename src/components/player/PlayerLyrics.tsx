@@ -6,11 +6,10 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { GestureDetector, type NativeGesture } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 import Animated, { useAnimatedReaction, useAnimatedScrollHandler, type SharedValue } from 'react-native-reanimated';
-import { useAudioPlayerStatus } from 'expo-audio';
 import type { LyricLine } from '../../types';
+import { usePlayerPlaybackStatus } from '../../services/PlayerStatusStore';
 
 type PlayerLyricsProps = {
-  player: Parameters<typeof useAudioPlayerStatus>[0];
   trackId: string;
   lyrics: LyricLine[];
   pauseAutoScroll: SharedValue<boolean>;
@@ -204,7 +203,7 @@ const areLyricsListPropsEqual = (previous: PlayerLyricsListProps, next: PlayerLy
 const PlayerLyricsList = React.memo(PlayerLyricsView, areLyricsListPropsEqual);
 
 const PlayerLyricsStatusView = (props: PlayerLyricsProps) => {
-  const { currentTime } = useAudioPlayerStatus(props.player);
+  const { currentTime } = usePlayerPlaybackStatus();
   const activeLineIndex = props.lyrics.reduce((activeIndex, line, index) =>
     line.text.trim().length > 0 && line.timeMs !== null && line.timeMs <= currentTime * 1000
       ? index

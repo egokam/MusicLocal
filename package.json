@@ -33,6 +33,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-audio-api": "^1.0.0",
     "react-native-avroutepickerview": "^0.4.0",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-reanimated": "4.5.1",
@@ -57,6 +58,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint"
+  },
+  "react-native-audio-api": {
+    "enableFFmpeg": true
   },
   "private": true
 }

@@ -79,7 +79,23 @@
         }
       ],
       "expo-background-task",
-      "expo-image"
+      "expo-image",
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": true,
+          "androidPermissions": [
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+          ],
+          "androidForegroundService": true,
+          "androidFSTypes": [
+            "mediaPlayback"
+          ],
+          "enableFFmpeg": true
+        }
+      ]
     ],
     "extra": {
       "eas": {
