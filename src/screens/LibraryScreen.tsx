@@ -44,7 +44,7 @@ const Stack = createNativeStackNavigator<LibraryStackParamList>();
 const LibraryHomeScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'LibraryHome'>) => {
-  const { mostPlayedTracks, playTrack, isLoadingTracks, apiInitializing } = usePlaybackActions();
+  const { recentlyAddedTracks, playTrack, isLoadingTracks, apiInitializing } = usePlaybackActions();
 
   return (
     <SafeAreaView className="flex-1 bg-black" edges={['top']}>
@@ -63,16 +63,16 @@ const LibraryHomeScreen = ({
         />
         <View style={{ marginTop: 26, marginBottom: 12 }}>
           <Text style={{ color: 'white', fontSize: 22, fontWeight: '700', marginHorizontal: 20, marginBottom: 14 }}>
-            Most Played
+            Recently Added
           </Text>
-          {mostPlayedTracks.length > 0 ? (
+          {recentlyAddedTracks.length > 0 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 14 }}>
-              {mostPlayedTracks.map((track) => (
+              {recentlyAddedTracks.map((track) => (
                 <TouchableOpacity
                   key={track.id}
-                  onPress={() => playTrack(track, mostPlayedTracks)}
+                  onPress={() => playTrack(track, recentlyAddedTracks)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Play ${track.title} by ${track.artist}, played ${track.playCount} times`}
+                  accessibilityLabel={`Play ${track.title} by ${track.artist}`}
                   style={{ width: 148 }}
                 >
                   <View style={{ width: 148, height: 148, borderRadius: 15, overflow: 'hidden', backgroundColor: '#202024' }}>
@@ -94,9 +94,6 @@ const LibraryHomeScreen = ({
                   <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 13, fontWeight: '500', marginTop: 3 }}>
                     {track.artist}
                   </Text>
-                  <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 4 }}>
-                    {track.playCount} plays
-                  </Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -115,7 +112,7 @@ const LibraryHomeScreen = ({
               </ScrollView>
             ) : (
               <Text style={{ color: '#8E8E93', fontSize: 14, marginHorizontal: 20 }}>
-                Your most played tracks will appear here as you listen.
+                Tracks you download or add to your library will appear here.
               </Text>
             )
           )}

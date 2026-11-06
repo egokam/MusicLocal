@@ -1130,7 +1130,9 @@ export default function App() {
       await PlaylistStorageService.updateTrack(savedTrack);
       downloadsRef.current = [...downloadsRef.current.filter((item) => item.id !== savedTrack.id), savedTrack];
       setDownloadedTracks(downloadsRef.current);
-      setTracks((current) => current.map((item) => item.id === savedTrack.id ? savedTrack : item));
+      const nextTracks = [savedTrack, ...tracksRef.current.filter((item) => item.id !== savedTrack.id)];
+      tracksRef.current = nextTracks;
+      setTracks(nextTracks);
       return savedTrack;
     } finally {
       setDownloadingTrackIds((current) => current.filter((id) => id !== track.id));
@@ -1237,16 +1239,23 @@ export default function App() {
     return result;
   }, []);
 
-  const mostPlayedTracks = useMemo(() => tracks
-    .map((track) => ({ ...track, playCount: playCounts[track.id] ?? 0 }))
-    .filter((track) => track.playCount > 0)
-    .sort((first, second) => (second.playCount ?? 0) - (first.playCount ?? 0) || first.title.localeCompare(second.title))
-    .slice(0, 12), [playCounts, tracks]);
+  const recentlyAddedTracks = useMemo(() => tracks
+    .map((track) => {
+      const dateAdded = typeof track.dateAdded === 'number'
+        ? track.dateAdded
+        : typeof track.dateAdded === 'string'
+          ? Date.parse(track.dateAdded)
+          : 0;
+      return { track, dateAdded: Number.isFinite(dateAdded) ? dateAdded : 0 };
+    })
+    .sort((first, second) => second.dateAdded - first.dateAdded || first.track.title.localeCompare(second.track.title))
+    .slice(0, 10)
+    .map(({ track }) => track), [tracks]);
 
   const playbackActions = useMemo(() => ({
     tracks,
     activeTrack,
-    mostPlayedTracks,
+    recentlyAddedTracks,
     downloadedTracks,
     hasActiveTrack: Boolean(activeTrack),
     favoriteTracks,
@@ -1316,7 +1325,7 @@ export default function App() {
     connectToLibrary,
     disconnectFromLibrary,
     tracks,
-    mostPlayedTracks,
+    recentlyAddedTracks,
     activeTrack,
     playlists,
     loadFavoriteTracks,
