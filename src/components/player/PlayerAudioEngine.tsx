@@ -332,8 +332,16 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
       liveStreamRef.current = Boolean(options?.isLiveStream);
       if (!active) {
         void PlaybackNotificationManager.hide().catch(() => undefined);
-      } else if (metadata && statusRef.current.playing) {
-        updateNotification(statusRef.current, true);
+      } else {
+        // Prefer track navigation in iOS Control Center over the audio API's
+        // default 15-second skip commands.
+        void PlaybackNotificationManager.enableControl('skipForward', false).catch(() => undefined);
+        void PlaybackNotificationManager.enableControl('skipBackward', false).catch(() => undefined);
+        void PlaybackNotificationManager.enableControl('nextTrack', true).catch(() => undefined);
+        void PlaybackNotificationManager.enableControl('previousTrack', true).catch(() => undefined);
+        if (metadata && statusRef.current.playing) {
+          updateNotification(statusRef.current, true);
+        }
       }
     },
     updateLockScreenMetadata: (metadata) => {

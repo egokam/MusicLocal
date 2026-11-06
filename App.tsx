@@ -200,6 +200,7 @@ export default function App() {
   const playerPlayingRef = useRef(false);
   const playerCurrentTimeRef = useRef(0);
   const playerDurationRef = useRef(0);
+  const rewindSeekIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchGeneration = useRef(0);
   const handledFinishedTrack = useRef<string | null>(null);
   const loadingAudiusMixPages = useRef(new Set<string>());
@@ -625,6 +626,14 @@ export default function App() {
     );
   }, [audioApiEnabled, expoPlayer]);
 
+  const beginFastForward = useCallback(() => {
+    player.setPlaybackRate(2, 'high');
+  }, [player]);
+
+  const endFastForward = useCallback(() => {
+    applyPlayerEffects(playerEffectsRef.current);
+  }, [applyPlayerEffects]);
+
   const closePlayerEffects = useCallback((settings: PlayerEffectsSettings) => {
     playerEffectsRef.current = settings;
     setPlayerEffectsOpen(false);
@@ -821,6 +830,32 @@ export default function App() {
     void player.seekTo(Math.max(0, seconds));
   }, [player]);
 
+  const beginRewind = useCallback(() => {
+    if (rewindSeekIntervalRef.current) clearInterval(rewindSeekIntervalRef.current);
+    const startPosition = playerCurrentTimeRef.current;
+    const startedAt = Date.now();
+    rewindSeekIntervalRef.current = setInterval(() => {
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const targetPosition = startPosition - elapsed * 2;
+      seekTo(targetPosition);
+      if (targetPosition <= 0 && rewindSeekIntervalRef.current) {
+        clearInterval(rewindSeekIntervalRef.current);
+        rewindSeekIntervalRef.current = null;
+      }
+    }, 100);
+  }, [seekTo]);
+
+  const endRewind = useCallback(() => {
+    if (rewindSeekIntervalRef.current) {
+      clearInterval(rewindSeekIntervalRef.current);
+      rewindSeekIntervalRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (rewindSeekIntervalRef.current) clearInterval(rewindSeekIntervalRef.current);
+  }, []);
+
   // AudioPlayer.volume is its documented mutable API; Expo's hooks lint rule does not recognize it.
   // eslint-disable-next-line react-hooks/immutability
   const setPlayerVolume = useCallback((volume: number) => {
@@ -837,14 +872,18 @@ export default function App() {
     player.setVolume(nextVolume);
   }, [player]);
 
-  const updateTrackWithLyrics = useCallback(async (track: Track, syncedLyrics: string) => {
-    const updated = await OfflineMusicService.saveSyncedLyrics({
+  const updateTrackWithLyrics = useCallback(async (track: Track, syncedLyrics: string, embeddedOnly = false) => {
+    const lyricsTrack = {
       ...track,
       syncedLyrics,
       lyrics: parseLyrics(syncedLyrics),
       lyricsAvailable: true,
       hasSyncedLyrics: true,
-    }, syncedLyrics);
+      lyricsSource: embeddedOnly ? 'embedded_lrc' : track.lyricsSource,
+    };
+    const updated = embeddedOnly
+      ? await OfflineMusicService.saveEmbeddedSyncedLyrics(lyricsTrack, syncedLyrics)
+      : await OfflineMusicService.saveSyncedLyrics(lyricsTrack, syncedLyrics);
     const trackWithFavoriteState = {
       ...updated,
       isFavorite: favoriteIdsRef.current.has(updated.id),
@@ -1025,7 +1064,7 @@ export default function App() {
 
       try {
         await OfflineMusicService.replaceTrackAudio(track, preparedMp3Uri);
-        return await updateTrackWithLyrics({ ...track, lyricsSource: 'saved_lrc' }, syncedLyrics);
+        return await updateTrackWithLyrics({ ...track, lyricsSource: 'embedded_lrc' }, syncedLyrics, true);
       } finally {
         if (isActiveTrack && track.localUri) {
           try {
@@ -1047,8 +1086,8 @@ export default function App() {
     );
     const namedTrack = { ...importedTrack, title: `${track.title} (Synced)` };
     await OfflineMusicService.updateTrack(namedTrack);
-    const updated = await OfflineMusicService.saveSyncedLyrics(
-      { ...namedTrack, lyricsSource: 'saved_lrc' },
+    const updated = await OfflineMusicService.saveEmbeddedSyncedLyrics(
+      { ...namedTrack, lyricsSource: 'embedded_lrc' },
       syncedLyrics,
     );
     const trackWithFavoriteState = {
@@ -1068,7 +1107,7 @@ export default function App() {
     const result = await MusicCatalogService.getLyrics(track, true, forceOnline);
     if (!result.syncedLyrics?.trim()) return result;
 
-    if (result.lyricsSource === 'local_lrc' || result.lyricsSource === 'embedded_lrc') {
+    if (result.lyricsSource === 'local_lrc') {
       return updateTrackWithLyrics(result, result.syncedLyrics);
     }
     return result;
@@ -1351,6 +1390,10 @@ export default function App() {
           onTogglePlayback={togglePlayback}
           onSkipPrevious={skipPrevious}
           onSkipNext={skipNext}
+          onHoldPreviousStart={beginRewind}
+          onHoldPreviousEnd={endRewind}
+          onHoldNextStart={beginFastForward}
+          onHoldNextEnd={endFastForward}
           onSeek={seekTo}
           onVolumeChange={setPlayerVolume}
           onToggleFavorite={toggleActiveTrackFavorite}

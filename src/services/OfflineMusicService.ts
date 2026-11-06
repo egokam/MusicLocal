@@ -41,6 +41,35 @@ const saveIndexedTracks = async (tracks: Track[]) => {
 };
 
 const safeName = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+const lyricSidecarsForTrack = (track: Track) => {
+  const candidates = new Map<string, File>();
+  const add = (uri: string | undefined) => {
+    if (!uri) return;
+    try {
+      const file = new File(uri);
+      if (file.extension.toLowerCase() === '.lrc' || file.extension.toLowerCase() === '.txt') {
+        candidates.set(file.uri, file);
+      }
+    } catch {
+      // Ignore stale or malformed lyric file references.
+    }
+  };
+
+  add(track.lyricsFileUri);
+  if (track.localUri) {
+    try {
+      const audioFile = new File(track.localUri);
+      const baseName = audioFile.name.replace(/\.[^.]+$/, '');
+      add(new File(audioFile.parentDirectory, `${baseName}.lrc`).uri);
+      add(new File(audioFile.parentDirectory, `${baseName}.txt`).uri);
+    } catch {
+      // A missing audio file does not prevent using a linked lyric sidecar.
+    }
+  }
+  add(new File(downloadsDirectory, `${safeName(track.id)}.lrc`).uri);
+  add(new File(downloadsDirectory, `${safeName(track.id)}.txt`).uri);
+  return [...candidates.values()];
+};
 const safeExportName = (value: string) => value
   .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
   .replace(/[. ]+$/g, '')
@@ -1013,6 +1042,76 @@ export const OfflineMusicService = {
     const updatedTracks = [...current.filter((item) => item.id !== track.id), updatedTrack];
     await saveIndexedTracks(updatedTracks);
     return updatedTrack;
+  },
+
+  /** Remove competing local lyric files, optionally keeping the selected sidecar. */
+  async removeLyricsSidecars(track: Track, preserveUri?: string): Promise<Track> {
+    const current = await this.getDownloadedTracks();
+    const savedTrack = current.find((item) => item.id === track.id);
+    const baseTrack = savedTrack ? { ...savedTrack, ...track, localUri: savedTrack.localUri } : track;
+    const candidates = lyricSidecarsForTrack(baseTrack);
+    if (preserveUri) {
+      try {
+        const preservedFile = new File(preserveUri);
+        if (preservedFile.extension.toLowerCase() === '.lrc' || preservedFile.extension.toLowerCase() === '.txt') {
+          candidates.push(preservedFile);
+        }
+      } catch {
+        throw new Error('The selected lyric sidecar is no longer available.');
+      }
+    }
+
+    const preserved = preserveUri ? new File(preserveUri) : undefined;
+    for (const file of candidates) {
+      if (preserved?.uri === file.uri || !file.exists) continue;
+      try {
+        file.delete();
+      } catch {
+        throw new Error(`Could not remove the duplicate lyrics file “${file.name}”.`);
+      }
+    }
+
+    const preservedUri = preserved?.exists ? preserved.uri : undefined;
+    const extension = preserved?.extension.toLowerCase();
+    const cleanedTrack: Track = {
+      ...baseTrack,
+      lyricsFileUri: preservedUri,
+      syncedLyrics: undefined,
+      plainLyrics: undefined,
+      lyrics: undefined,
+      lyricsAvailable: Boolean(preservedUri),
+      hasSyncedLyrics: extension === '.lrc' ? undefined : false,
+      hasPlainLyrics: extension === '.txt' ? undefined : false,
+      lyricsSource: undefined,
+    };
+
+    if (!savedTrack) return cleanedTrack;
+    await saveIndexedTracks(current.map((item) => item.id === track.id ? cleanedTrack : item));
+    return cleanedTrack;
+  },
+
+  /** Store synchronized lyrics only in the MP3 metadata, without creating a duplicate sidecar. */
+  async saveEmbeddedSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {
+    const replacementLyrics = deduplicateSyncedLyrics(syncedLyrics);
+    const cleanedTrack = await this.removeLyricsSidecars(track);
+    const current = await this.getDownloadedTracks();
+    const savedTrack = current.find((item) => item.id === track.id);
+    const updatedTrack: Track = {
+      ...cleanedTrack,
+      syncedLyrics: replacementLyrics,
+      plainLyrics: undefined,
+      lyrics: parseLyrics(replacementLyrics),
+      lyricsFileUri: undefined,
+      lyricsAvailable: true,
+      hasSyncedLyrics: true,
+      hasPlainLyrics: false,
+      lyricsSource: 'embedded_lrc',
+    };
+    if (!savedTrack) return updatedTrack;
+
+    const persistedTrack = { ...savedTrack, ...updatedTrack, localUri: savedTrack.localUri };
+    await saveIndexedTracks(current.map((item) => item.id === track.id ? persistedTrack : item));
+    return persistedTrack;
   },
 
   async replaceTrackAudio(track: Track, replacementUri: string): Promise<void> {
