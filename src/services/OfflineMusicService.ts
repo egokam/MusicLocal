@@ -528,6 +528,7 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[];
           ? formatDuration(embedded.durationSeconds)
           : track.duration,
         lyricsFileUri,
+        dateAdded: track.dateAdded ?? audioFile.modificationTime ?? audioFile.creationTime ?? Date.now(),
         artwork: artwork || embedded?.artwork || fallbackArtwork,
         artworkFileUri,
         lyricsAvailable: Boolean(track.lyricsAvailable || lyricsFileUri),
@@ -576,7 +577,7 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[];
       lyricsAvailable: lrc.exists || txt.exists || Boolean(embedded.lyricsFileUri),
       hasSyncedLyrics: lrc.exists || embedded.hasSyncedLyrics,
       hasPlainLyrics: !lrc.exists && (txt.exists || embedded.hasPlainLyrics),
-      dateAdded: Date.now(),
+      dateAdded: item.modificationTime ?? item.creationTime ?? Date.now(),
     });
   }
   if (discovered.length === 0) {
@@ -882,7 +883,13 @@ export const OfflineMusicService = {
       lyricsFileUri = lyricsFile.uri;
     }
 
-    const downloadedTrack: Track = { ...track, ...(artwork ? { artwork } : {}), localUri: audioFile.uri, lyricsFileUri };
+    const downloadedTrack: Track = {
+      ...track,
+      ...(artwork ? { artwork } : {}),
+      localUri: audioFile.uri,
+      lyricsFileUri,
+      dateAdded: Date.now(),
+    };
     const current = await this.getDownloadedTracks();
     const updated = [...current.filter((item) => item.id !== track.id), downloadedTrack];
     await saveIndexedTracks(updated);

@@ -565,10 +565,8 @@ const PlayerOverlayView = ({
   );
 
   const frameStyle = useAnimatedStyle(() => ({
-    left: interpolate(progress.value, [0, 1], [16, 0]),
-    right: interpolate(progress.value, [0, 1], [16, 0]),
-    top: interpolate(progress.value, [0, 1], [miniTop, 0]),
-    bottom: interpolate(progress.value, [0, 1], [miniBottom, 0]),
+    width: interpolate(progress.value, [0, 1], [windowWidth - 32, windowWidth]),
+    height: interpolate(progress.value, [0, 1], [windowHeight - miniTop - miniBottom, windowHeight]),
     borderWidth: interpolate(progress.value, [0, 1], [1, 0]),
     borderColor: interpolateColor(
       progress.value,
@@ -579,6 +577,10 @@ const PlayerOverlayView = ({
     borderTopRightRadius: interpolate(progress.value, [0, 1], [32, 40]),
     borderBottomLeftRadius: interpolate(progress.value, [0, 1], [32, 0]),
     borderBottomRightRadius: interpolate(progress.value, [0, 1], [32, 0]),
+    transform: [
+      { translateX: interpolate(progress.value, [0, 1], [16, 0]) },
+      { translateY: interpolate(progress.value, [0, 1], [miniTop, 0]) },
+    ],
   }));
   const backgroundArtworkPositionStyle = useAnimatedStyle(() => ({
     transform: [
@@ -614,11 +616,15 @@ const PlayerOverlayView = ({
     const expandedSize = interpolate(lyricsProgress.value, [0, 1], [artworkSize, 72]);
 
     return {
-      left: interpolate(progress.value, [0, 1], [12, expandedLeft]),
-      top: interpolate(progress.value, [0, 1], [9, expandedTop]),
+      left: expandedLeft,
+      top: expandedTop,
       width: interpolate(progress.value, [0, 1], [40, expandedSize]),
       height: interpolate(progress.value, [0, 1], [40, expandedSize]),
       borderRadius: interpolate(progress.value, [0, 1], [8, 18]),
+      transform: [
+        { translateX: interpolate(progress.value, [0, 1], [12 - expandedLeft, 0]) },
+        { translateY: interpolate(progress.value, [0, 1], [9 - expandedTop, 0]) },
+      ],
     };
   });
   const artworkImageFrameStyle = useAnimatedStyle(() => {
@@ -640,9 +646,13 @@ const PlayerOverlayView = ({
     const expandedRight = interpolate(lyricsProgress.value, [0, 1], [138, 138]);
 
     return {
-      left: interpolate(progress.value, [0, 1], [60, expandedLeft]),
-      top: interpolate(progress.value, [0, 1], [12, expandedTop]),
-      right: interpolate(progress.value, [0, 1], [112, expandedRight]),
+      left: expandedLeft,
+      top: expandedTop,
+      right: expandedRight,
+      transform: [
+        { translateX: interpolate(progress.value, [0, 1], [60 - expandedLeft, 0]) },
+        { translateY: interpolate(progress.value, [0, 1], [12 - expandedTop, 0]) },
+      ],
     };
   });
   const oldTrackDetailsStyle = useAnimatedStyle(() => ({
@@ -684,9 +694,13 @@ const PlayerOverlayView = ({
     );
 
     return {
-      left: interpolate(progress.value, [0, 1], [windowWidth - 144, windowWidth / 2 - 26]),
-      top: interpolate(progress.value, [0, 1], [3, fullCenter - 26]),
+      left: windowWidth / 2 - 26,
+      top: fullCenter - 26,
       width: interpolate(progress.value, [0, 1], [48, 52]),
+      transform: [
+        { translateX: interpolate(progress.value, [0, 1], [windowWidth - 144 - (windowWidth / 2 - 26), 0]) },
+        { translateY: interpolate(progress.value, [0, 1], [3 - (fullCenter - 26), 0]) },
+      ],
     };
   });
   const nextStyle = useAnimatedStyle(() => {
@@ -697,8 +711,11 @@ const PlayerOverlayView = ({
     );
 
     return {
-      left: interpolate(progress.value, [0, 1], [windowWidth - 88, windowWidth - 88]),
-      top: interpolate(progress.value, [0, 1], [7, fullCenter - 22]),
+      left: windowWidth - 88,
+      top: fullCenter - 22,
+      transform: [
+        { translateY: interpolate(progress.value, [0, 1], [7 - (fullCenter - 22), 0]) },
+      ],
     };
   });
   const playIconStyle = useAnimatedStyle(() => ({
@@ -821,6 +838,10 @@ const PlayerOverlayView = ({
             {
               position: 'absolute',
               overflow: 'hidden',
+              top: 0,
+              left: 0,
+              width: windowWidth,
+              height: windowHeight,
               backgroundColor: 'transparent',
               shadowColor: '#000000',
               shadowOpacity: 0.28,

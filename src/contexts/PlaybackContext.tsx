@@ -6,7 +6,7 @@ import type { ImportProgress, TrackEditChanges } from '../services/MusicCatalogS
 type PlaybackActions = {
   tracks: Track[];
   activeTrack: Track | null;
-  mostPlayedTracks: Track[];
+  recentlyAddedTracks: Track[];
   downloadedTracks: Track[];
   hasActiveTrack: boolean;
   favoriteTracks: Track[];
