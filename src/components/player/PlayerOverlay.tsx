@@ -95,6 +95,10 @@ const PlayerOverlayView = ({
   onTogglePlayback,
   onSkipPrevious,
   onSkipNext,
+  onHoldPreviousStart,
+  onHoldPreviousEnd,
+  onHoldNextStart,
+  onHoldNextEnd,
   onSeek,
   onVolumeChange,
   onToggleFavorite,
@@ -122,6 +126,10 @@ const PlayerOverlayView = ({
   onTogglePlayback: () => void;
   onSkipPrevious: () => void;
   onSkipNext: () => void;
+  onHoldPreviousStart: () => void;
+  onHoldPreviousEnd: () => void;
+  onHoldNextStart: () => void;
+  onHoldNextEnd: () => void;
   onSeek: (seconds: number) => void;
   onVolumeChange: (volume: number) => void;
   onToggleFavorite: () => void;
@@ -146,6 +154,8 @@ const PlayerOverlayView = ({
   const trackTransition = useSharedValue(1);
   const trackTransitionGeneration = useRef(0);
   const trackTransitionCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previousLongPressTriggered = useRef(false);
+  const nextLongPressTriggered = useRef(false);
   const onOpenRef = useRef(onOpen);
   const onCloseRef = useRef(onClose);
   const skipNextOpenAnimation = useRef(false);
@@ -986,14 +996,30 @@ const PlayerOverlayView = ({
                 expandedTransportStyle,
               ]}
             >
-                <TouchableOpacity
-                  onPress={onSkipPrevious}
+                <Pressable
+                  onPress={() => {
+                    if (previousLongPressTriggered.current) {
+                      previousLongPressTriggered.current = false;
+                      return;
+                    }
+                    onSkipPrevious();
+                  }}
+                  onPressIn={() => {
+                    previousLongPressTriggered.current = false;
+                  }}
+                  onLongPress={() => {
+                    if (isLiveRadio) return;
+                    previousLongPressTriggered.current = true;
+                    onHoldPreviousStart();
+                  }}
+                  onPressOut={onHoldPreviousEnd}
+                  delayLongPress={350}
                   accessibilityRole="button"
-                  accessibilityLabel="Previous track"
+                  accessibilityLabel="Previous track. Hold to rewind at double speed."
                   hitSlop={12}
                 >
                   <Ionicons name="play-skip-back" size={44} color="white" />
-                </TouchableOpacity>
+                </Pressable>
                 <View style={{ width: 52, height: 52 }} />
                 <View style={{ width: 44, height: 44 }} />
             </ReanimatedAnimated.View>
@@ -1337,9 +1363,25 @@ const PlayerOverlayView = ({
             ]}
           >
             <Pressable
-              onPress={onSkipNext}
+              onPress={() => {
+                if (nextLongPressTriggered.current) {
+                  nextLongPressTriggered.current = false;
+                  return;
+                }
+                onSkipNext();
+              }}
+              onPressIn={() => {
+                nextLongPressTriggered.current = false;
+              }}
+              onLongPress={() => {
+                if (isLiveRadio) return;
+                nextLongPressTriggered.current = true;
+                onHoldNextStart();
+              }}
+              onPressOut={onHoldNextEnd}
+              delayLongPress={350}
               accessibilityRole="button"
-              accessibilityLabel="Next track"
+              accessibilityLabel="Next track. Hold to fast-forward at double speed."
               hitSlop={4}
               style={({ pressed }) => [
                 { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
@@ -1454,6 +1496,10 @@ const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: 
     previous.onTogglePlayback !== next.onTogglePlayback ||
     previous.onSkipPrevious !== next.onSkipPrevious ||
     previous.onSkipNext !== next.onSkipNext ||
+    previous.onHoldPreviousStart !== next.onHoldPreviousStart ||
+    previous.onHoldPreviousEnd !== next.onHoldPreviousEnd ||
+    previous.onHoldNextStart !== next.onHoldNextStart ||
+    previous.onHoldNextEnd !== next.onHoldNextEnd ||
     previous.onSeek !== next.onSeek ||
     previous.onVolumeChange !== next.onVolumeChange ||
     previous.onToggleFavorite !== next.onToggleFavorite ||

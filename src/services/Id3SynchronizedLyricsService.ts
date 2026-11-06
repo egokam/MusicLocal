@@ -159,10 +159,9 @@ const createSyltFrame = (entries: SynchronizedLyricEntry[]) => {
 
 const createId3Tag = (sourceTag: Uint8Array, entries: SynchronizedLyricEntry[]) => {
   const { frames } = parseId3Frames(sourceTag);
-  // The user is rebuilding synchronized lyrics. Keep every unrelated frame and
-  // the original USLT text, but replace old SYLT frames so players don't see
-  // conflicting lyric timelines after export.
-  const frameBytes = frames.filter(({ id }) => id !== 'SYLT').map(({ id, payload }) => concatenate([
+  // Keep one lyric source in the exported file: the new synchronized frame.
+  // Leaving USLT beside SYLT can make some players render the lyrics twice.
+  const frameBytes = frames.filter(({ id }) => id !== 'USLT' && id !== 'SYLT').map(({ id, payload }) => concatenate([
     encodeUtf8(id),
     writeSynchsafeInteger(payload.length),
     new Uint8Array([0, 0]),
@@ -175,6 +174,23 @@ const createId3Tag = (sourceTag: Uint8Array, entries: SynchronizedLyricEntry[]) 
     writeSynchsafeInteger(frameData.length),
   ]);
   return concatenate([header, frameData]);
+};
+
+const createId3TagWithoutLyrics = (sourceTag: Uint8Array) => {
+  const { frames } = parseId3Frames(sourceTag);
+  const frameData = concatenate(frames
+    .filter(({ id }) => id !== 'USLT' && id !== 'SYLT')
+    .map(({ id, payload }) => concatenate([
+      encodeUtf8(id),
+      writeSynchsafeInteger(payload.length),
+      new Uint8Array([0, 0]),
+      payload,
+    ])));
+  return concatenate([
+    new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0]),
+    writeSynchsafeInteger(frameData.length),
+    frameData,
+  ]);
 };
 
 const readMetadataSample = async (file: File) => {
@@ -204,23 +220,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null
 );
 
-const lyricFrameText = (frame: ReturnType<typeof collectFrames>[number]) => {
-  const value = frame.value;
-  if (!isRecord(value) || typeof value.text !== 'string') return null;
-  return {
-    language: typeof value.language === 'string' ? value.language : '',
-    descriptor: typeof value.descriptor === 'string' ? value.descriptor : '',
-    text: value.text,
-  };
-};
-
-const verifyOutput = async (output: File, sourceMetadata: Awaited<ReturnType<typeof parseBuffer>>, expected: SynchronizedLyricEntry[]) => {
+const verifyOutput = async (output: File, expected: SynchronizedLyricEntry[]) => {
   if (!output.exists || (output.size ?? 0) === 0) throw new Error('The synchronized MP3 file could not be created.');
   const metadata = await parseBuffer(await readMetadataSample(output), 'audio/mpeg');
-  const originalUslt = collectFrames(sourceMetadata, 'USLT').map(lyricFrameText);
-  const outputUslt = collectFrames(metadata, 'USLT').map(lyricFrameText);
-  if (JSON.stringify(originalUslt) !== JSON.stringify(outputUslt)) {
-    throw new Error('The exported file did not preserve the original unsynchronized lyrics. Nothing was exported.');
+  if (collectFrames(metadata, 'USLT').length !== 0 || collectFrames(metadata, 'SYLT').length !== 1) {
+    throw new Error('The exported file contains conflicting lyric metadata frames. Nothing was exported.');
   }
 
   const syltFrame = collectFrames(metadata, 'SYLT').find((frame) => {
@@ -247,6 +251,72 @@ const verifyOutput = async (output: File, sourceMetadata: Awaited<ReturnType<typ
       || entry.timestampMs !== expected[index].timestampMs)
   ) {
     throw new Error('The exported lyric timestamps did not match. Nothing was exported.');
+  }
+};
+
+const verifyLyricsRemoved = async (output: File) => {
+  if (!output.exists || (output.size ?? 0) === 0) throw new Error('The cleaned MP3 file could not be created.');
+  const metadata = await parseBuffer(await readMetadataSample(output), 'audio/mpeg');
+  const hasNativeLyrics = Object.values(metadata.native).some((frames) => (
+    frames.some((frame) => frame.id === 'USLT' || frame.id === 'SYLT')
+  ));
+  if (hasNativeLyrics || metadata.common.lyrics?.some((entry) => Boolean(entry.text?.trim() || entry.syncText?.length))) {
+    throw new Error('Lyrics remain in another embedded metadata tag. The original MP3 was not changed.');
+  }
+};
+
+const rewriteMp3 = async (
+  sourceUri: string,
+  sourceFileName: string,
+  suffix: string,
+  createTag: (sourceTag: Uint8Array) => Uint8Array,
+  verify: (output: File) => Promise<void>,
+) => {
+  const source = new File(sourceUri);
+  if (!source.exists || (source.size ?? 0) === 0) throw new Error('The original MP3 is no longer available.');
+  const sourceHandle = source.open(FileMode.ReadOnly);
+  let sourceTag: Uint8Array;
+  let audioOffset: number;
+  try {
+    const sourceHeader = sourceHandle.readBytes(10);
+    if (sourceHeader[0] === 0x49 && sourceHeader[1] === 0x44 && sourceHeader[2] === 0x33) {
+      audioOffset = 10 + readSynchsafeInteger(sourceHeader, 6);
+      sourceHandle.offset = 0;
+      sourceTag = sourceHandle.readBytes(audioOffset);
+      if (sourceTag.length !== audioOffset) throw new Error('The MP3 has a truncated ID3 tag.');
+    } else {
+      audioOffset = 0;
+      sourceTag = new Uint8Array();
+    }
+  } finally {
+    sourceHandle.close();
+  }
+
+  const outputTag = createTag(sourceTag);
+  if (!OUTPUT_DIRECTORY.exists) OUTPUT_DIRECTORY.create({ idempotent: true, intermediates: true });
+  const baseName = safeFileName(sourceFileName.replace(/\.mp3$/i, ''));
+  const output = new File(OUTPUT_DIRECTORY, `${baseName}-${suffix}-${Date.now()}.mp3`);
+  try {
+    output.create({ intermediates: true });
+    output.write(outputTag);
+    const inputHandle = source.open(FileMode.ReadOnly);
+    try {
+      inputHandle.offset = audioOffset;
+      let remainingBytes = (source.size ?? 0) - audioOffset;
+      while (remainingBytes > 0) {
+        const chunk = inputHandle.readBytes(Math.min(1024 * 1024, remainingBytes));
+        if (chunk.length === 0) throw new Error('The original MP3 could not be copied completely.');
+        output.write(chunk, { append: true });
+        remainingBytes -= chunk.length;
+      }
+    } finally {
+      inputHandle.close();
+    }
+    await verify(output);
+    return output;
+  } catch (error) {
+    if (output.exists) output.delete();
+    throw error;
   }
 };
 
@@ -277,53 +347,23 @@ export const Id3SynchronizedLyricsService = {
       }
     }
 
-    const source = new File(sourceUri);
-    if (!source.exists || (source.size ?? 0) === 0) throw new Error('The original MP3 is no longer available.');
-    const sourceMetadata = await parseBuffer(await readMetadataSample(source), 'audio/mpeg');
-    const sourceHandle = source.open(FileMode.ReadOnly);
-    let sourceTag: Uint8Array;
-    let audioOffset: number;
-    try {
-      const sourceHeader = sourceHandle.readBytes(10);
-      if (sourceHeader[0] === 0x49 && sourceHeader[1] === 0x44 && sourceHeader[2] === 0x33) {
-        audioOffset = 10 + readSynchsafeInteger(sourceHeader, 6);
-        sourceHandle.offset = 0;
-        sourceTag = sourceHandle.readBytes(audioOffset);
-        if (sourceTag.length !== audioOffset) throw new Error('The MP3 has a truncated ID3 tag.');
-      } else {
-        audioOffset = 0;
-        sourceTag = new Uint8Array();
-      }
-    } finally {
-      sourceHandle.close();
-    }
-    const outputTag = createId3Tag(sourceTag, entries);
+    return rewriteMp3(
+      sourceUri,
+      sourceFileName,
+      'synchronized',
+      (sourceTag) => createId3Tag(sourceTag, entries),
+      (output) => verifyOutput(output, entries),
+    );
+  },
 
-    if (!OUTPUT_DIRECTORY.exists) OUTPUT_DIRECTORY.create({ idempotent: true, intermediates: true });
-    const baseName = safeFileName(sourceFileName.replace(/\.mp3$/i, ''));
-    const output = new File(OUTPUT_DIRECTORY, `${baseName}-synchronized-${Date.now()}.mp3`);
-    try {
-      output.create({ intermediates: true });
-      output.write(outputTag);
-      const inputHandle = source.open(FileMode.ReadOnly);
-      try {
-        inputHandle.offset = audioOffset;
-        let remainingBytes = (source.size ?? 0) - audioOffset;
-        while (remainingBytes > 0) {
-          const chunk = inputHandle.readBytes(Math.min(1024 * 1024, remainingBytes));
-          if (chunk.length === 0) throw new Error('The original MP3 could not be copied completely.');
-          output.write(chunk, { append: true });
-          remainingBytes -= chunk.length;
-        }
-      } finally {
-        inputHandle.close();
-      }
-      await verifyOutput(output, sourceMetadata, entries);
-      return output;
-    } catch (error) {
-      if (output.exists) output.delete();
-      throw error;
-    }
+  async createVerifiedMp3WithoutLyrics(sourceUri: string, sourceFileName: string) {
+    return rewriteMp3(
+      sourceUri,
+      sourceFileName,
+      'lyrics-removed',
+      createId3TagWithoutLyrics,
+      verifyLyricsRemoved,
+    );
   },
 
   async restoreLatestSynchronizedMp3(sourceFileName: string, destinationUri: string) {
@@ -380,8 +420,7 @@ export const Id3SynchronizedLyricsService = {
     const destination = new File(destinationDirectory, outputName);
     await verifiedMp3.copy(destination);
     try {
-      const stagedMetadata = await parseBuffer(await readMetadataSample(verifiedMp3), 'audio/mpeg');
-      await verifyOutput(destination, stagedMetadata, entries);
+      await verifyOutput(destination, entries);
       return destination;
     } catch (error) {
       if (destination.exists) destination.delete();

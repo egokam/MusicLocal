@@ -24,6 +24,8 @@ import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
+import { File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { BlurTargetView, BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -76,6 +78,8 @@ const emptyGenreMixTracks = (): GenreMixTracks => ({
 const GENRE_MIX_QUEUE_SIZE = 18;
 const QURAN_SURAHS_URL = 'https://api.alquran.cloud/v1/surah';
 const QURAN_AUDIO_URL = 'https://cdn.islamic.network/quran/audio-surah';
+const SUDAIS_SHURAIM_ARABIC_AUDIO_URL = 'https://www.quranurdu.com/Quran_PDF/Quran/Sudais';
+const SUDAIS_SHURAIM_TRANSLATION_EDITION = 'ar.sudaisshuraymnaeemsultan';
 const QURAN_RECITER_PHOTO_URL = 'https://juzzquran.com/images/reciters';
 const QURAN_COM_RECITER_PHOTO_URL = 'https://static.qurancdn.com/images/reciters';
 const QURAN_RECITER_CATALOG_URL = 'https://cdn.islamic.network/quran/info/by-surah/info.json';
@@ -159,13 +163,86 @@ const MAHER_AL_MUAIQLY_RECITER: QuranReciter = {
   surahAudioUrl: (surahNumber) => `https://cdn.mp3quran.net/audio/maher-muaiqly/r1/${String(surahNumber).padStart(3, '0')}.mp3`,
   artwork: getQuranReciterArtwork('ar.mahermuaiqly', 'Maher Al-Muaiqly'),
 };
+const SUDAIS_SHURAIM_ARABIC_SURAH_FILES = [
+  'AlFatiha', 'AlBaqarah', 'AalImran', 'AnNisa', 'AlMaida', 'AlAnaam', 'AlAaraf', 'AlAnfaal', 'AtTauba', 'Younus',
+  'Houd', 'Yousef', 'ArRaad', 'Ibrahim', 'AlHijr', 'AnNahal', 'AlIsra', 'AlKahf', 'Maryam', 'Taaha',
+  'AlAnbia', 'AlHajj', 'AlMominoon', 'AnNoor', 'AlFurqan', 'AshShuara', 'AnNamal', 'AlQasas', 'AlAnkaboot', 'ArRoom',
+  'Luqman', 'AsSajda', 'AlAhzab', 'Saba', 'Faatir', 'Yaseen', 'AsSaffat', 'Suad', 'AzZumur', 'AlMomin',
+  'HaMimSajda', 'AshShura', 'AzZukhruf', 'AdDukhan', 'AlJasia', 'AlAhqaf', 'Muhammad', 'AlFath', 'AlHujrat', 'Qaaf',
+  'AzZariat', 'AtToor', 'AnNajm', 'AlQamar', 'ArRahman', 'AlWaqiah', 'AlHadid', 'AlMujadilah', 'Alhashr', 'AlMumtahina',
+  'AsSaff', 'AlJuma', 'AlMunafiqoon', 'AtTaghabun', 'AtTalaq', 'AtTahrim', 'AlMulk', 'AlQalam', 'AlHaqqa', 'AlMaarij',
+  'Nooh', 'Aljin', 'AlMuzammil', 'AlMudassir', 'AlQiamah', 'AdDahr', 'AlMursalat', 'AnNaba', 'AnNaziat', 'Abasa',
+  'AtTakweer', 'AlInfitar', 'AlMutaffifin', 'AlInshiqaq', 'AlBurooj', 'AtTariq', 'AlAala', 'AlGhashia', 'AlFajr', 'AlBalad',
+  'AshShams', 'AlLail', 'AdDuha', 'AshSharah', 'AtTeen', 'AlAlaq', 'AlQadar', 'AlBayyana', 'AlZalzalah', 'AlAdiat',
+  'AlQaria', 'AtTakasur', 'AlAsr', 'AlHumazah', 'AlFeel', 'Quresh', 'AlMaoon', 'AlKausar', 'AlKafiroon', 'AnNasr',
+  'AlLahab', 'AlIkhlas', 'AlFalaq', 'AnNaas',
+] as const;
+const SUDAIS_SHURAIM_ARABIC_RECITER: QuranReciter = {
+  edition: 'ar.sudaisshuraym.arabic',
+  name: 'Al-Sudais & Al-Shuraim',
+  bitrate: 128,
+  surahAudioUrl: (surahNumber) => {
+    const surahFile = SUDAIS_SHURAIM_ARABIC_SURAH_FILES[surahNumber - 1];
+    return `${SUDAIS_SHURAIM_ARABIC_AUDIO_URL}/${String(surahNumber).padStart(3, '0')}_${surahFile}.mp3`;
+  },
+  artwork: getQuranReciterArtwork(SUDAIS_SHURAIM_TRANSLATION_EDITION, 'Al-Sudais & Al-Shuraim'),
+};
 const QURAN_RECITERS = [
   { edition: 'ar.alafasy', name: 'Mishary Alafasy', bitrate: 128, artwork: getQuranReciterArtwork('ar.alafasy', 'Mishary Alafasy') },
   MAHER_AL_MUAIQLY_RECITER,
   { edition: 'ar.abdulbasitmujawwad', name: 'Abdul Basit (Mujawwad)', bitrate: 128, artwork: getQuranReciterArtwork('ar.abdulbasitmujawwad', 'Abdul Basit (Mujawwad)') },
   { edition: 'ar.muhammadsiddiqalminshawimujawwad', name: 'Mohamed al-Minshawi', bitrate: 128, artwork: getQuranReciterArtwork('ar.muhammadsiddiqalminshawimujawwad', 'Mohamed al-Minshawi') },
-  { edition: 'ar.sudaisshuraymnaeemsultan', name: 'Al-Sudais & Al-Shuraim', bitrate: 128, artwork: getQuranReciterArtwork('ar.sudaisshuraymnaeemsultan', 'Al-Sudais & Al-Shuraim') },
+  SUDAIS_SHURAIM_ARABIC_RECITER,
 ] satisfies readonly QuranReciter[];
+const QURAN_RECITER_PINS_FILE = new File(Paths.document, 'musiqapp-pinned-quran-reciters.json');
+let quranReciterPinsWriteQueue: Promise<unknown> = Promise.resolve();
+
+const loadPinnedQuranReciters = async (): Promise<QuranReciter[]> => {
+  try {
+    if (!QURAN_RECITER_PINS_FILE.exists) return [...QURAN_RECITERS];
+    const savedPins = JSON.parse(await QURAN_RECITER_PINS_FILE.text()) as unknown;
+    if (!Array.isArray(savedPins)) return [...QURAN_RECITERS];
+
+    const reciters = savedPins.flatMap((value): QuranReciter[] => {
+      if (typeof value !== 'object' || value === null) return [];
+      const saved = value as Record<string, unknown>;
+      if (
+        typeof saved.edition !== 'string'
+        || typeof saved.name !== 'string'
+        || typeof saved.bitrate !== 'number'
+        || !Number.isFinite(saved.bitrate)
+      ) return [];
+
+      const curatedReciter = QURAN_RECITERS.find((reciter) => reciter.edition === saved.edition);
+      if (curatedReciter) return [curatedReciter];
+      return [{
+        edition: saved.edition,
+        name: saved.name,
+        bitrate: saved.bitrate,
+        ...(typeof saved.arabicName === 'string' ? { arabicName: saved.arabicName } : {}),
+        ...(typeof saved.artwork === 'string' ? { artwork: saved.artwork } : {}),
+      }];
+    });
+    return reciters.filter((reciter, index) => reciters.findIndex((item) => item.edition === reciter.edition) === index);
+  } catch {
+    return [...QURAN_RECITERS];
+  }
+};
+
+const persistPinnedQuranReciters = (reciters: QuranReciter[]) => {
+  const serializedPins = reciters.map(({ edition, name, bitrate, arabicName, artwork }) => ({
+    edition,
+    name,
+    bitrate,
+    arabicName,
+    artwork,
+  }));
+  const operation = quranReciterPinsWriteQueue.then(() => (
+    FileSystem.writeAsStringAsync(QURAN_RECITER_PINS_FILE.uri, JSON.stringify(serializedPins))
+  ));
+  quranReciterPinsWriteQueue = operation.catch(() => undefined);
+  return operation;
+};
 
 const QURAN_RECITER_NAME_OVERRIDES: Record<string, string> = {
   'ar.abdulmuhsinalqasim': 'Abdul Muhsin al-Qasim',
@@ -231,6 +308,7 @@ const loadAvailableQuranReciters = async (): Promise<QuranReciter[]> => {
   }
 
   const catalogReciters = Array.from(availableEditions, ([edition, bitrate]) => {
+    if (edition === SUDAIS_SHURAIM_TRANSLATION_EDITION) return SUDAIS_SHURAIM_ARABIC_RECITER;
     const metadata = editionMetadata.get(edition);
     return {
       edition,
@@ -635,6 +713,7 @@ export const HomeScreen = () => {
   const [quranUnavailable, setQuranUnavailable] = useState(false);
   const [quranRetryKey, setQuranRetryKey] = useState(0);
   const [availableQuranReciters, setAvailableQuranReciters] = useState<QuranReciter[]>([]);
+  const [pinnedQuranReciters, setPinnedQuranReciters] = useState<QuranReciter[]>(() => [...QURAN_RECITERS]);
   const [allRecitersVisible, setAllRecitersVisible] = useState(false);
   const [allRecitersLoading, setAllRecitersLoading] = useState(false);
   const [allRecitersError, setAllRecitersError] = useState('');
@@ -655,6 +734,8 @@ export const HomeScreen = () => {
   const [genreUnavailable, setGenreUnavailable] = useState(false);
   const genreRequestId = useRef(0);
   const quranReciterCatalogRequest = useRef(false);
+  const pinnedQuranRecitersRef = useRef<QuranReciter[]>([...QURAN_RECITERS]);
+  const editedQuranReciterPins = useRef(false);
   const quranBlurTarget = useRef<View | null>(null);
   const [stations, setStations] = useState<RadioStation[]>([]);
   const [mixLoading, setMixLoading] = useState(true);
@@ -676,6 +757,20 @@ export const HomeScreen = () => {
   const [introOpacity] = useState(() => new Animated.Value(0));
   const [introY] = useState(() => new Animated.Value(12));
   const cardWidth = Math.min(174, Math.max(142, Math.floor((screenWidth - 64) / 2)));
+  const pinnedQuranReciterIds = useMemo(
+    () => new Set(pinnedQuranReciters.map((reciter) => reciter.edition)),
+    [pinnedQuranReciters],
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    void loadPinnedQuranReciters().then((reciters) => {
+      if (!mounted || editedQuranReciterPins.current) return;
+      pinnedQuranRecitersRef.current = reciters;
+      setPinnedQuranReciters(reciters);
+    });
+    return () => { mounted = false; };
+  }, []);
 
   useEffect(() => {
     const intro = Animated.parallel([
@@ -790,6 +885,17 @@ export const HomeScreen = () => {
       quranReciterCatalogRequest.current = false;
       setAllRecitersLoading(false);
     }
+  }, []);
+
+  const toggleQuranReciterPin = useCallback((reciter: QuranReciter) => {
+    editedQuranReciterPins.current = true;
+    const current = pinnedQuranRecitersRef.current;
+    const next = current.some((item) => item.edition === reciter.edition)
+      ? current.filter((item) => item.edition !== reciter.edition)
+      : [...current, reciter];
+    pinnedQuranRecitersRef.current = next;
+    setPinnedQuranReciters(next);
+    void persistPinnedQuranReciters(next).catch(() => undefined);
   }, []);
 
   const openAllReciters = useCallback(() => {
@@ -1053,14 +1159,14 @@ export const HomeScreen = () => {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: 'white', fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.45 }}>Quran</Text>
-                  <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 2 }}>Surah recitations · Al Quran Cloud</Text>
+                  <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '500', marginTop: 2 }}>Surah recitations · Pin your favorites</Text>
                 </View>
                 {quranLoading ? <ActivityIndicator color="#E4D6A8" size="small" /> : null}
               </View>
             </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 7, paddingBottom: 2 }}>
-              {QURAN_RECITERS.map((reciter) => (
+              {pinnedQuranReciters.map((reciter) => (
                 <QuranReciterCard
                   key={reciter.edition}
                   reciter={reciter}
@@ -1442,6 +1548,7 @@ export const HomeScreen = () => {
               <FlatList
                 data={filteredQuranReciters}
                 keyExtractor={(reciter) => reciter.edition}
+                extraData={pinnedQuranReciterIds}
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 20, flexGrow: 1 }}
                 ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: '#303034', marginLeft: 64 }} />}
@@ -1450,42 +1557,57 @@ export const HomeScreen = () => {
                     <Text style={{ color: '#96969C', fontSize: 14, textAlign: 'center' }}>No reciters match that search.</Text>
                   </View>
                 )}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    onPress={() => {
-                      setReciterSearch('');
-                      openQuranReciter(item, true);
-                    }}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel={`View surahs recited by ${item.name}`}
-                    style={{ minHeight: 72, flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
-                  >
-                    <View style={{ width: 47, height: 47, borderRadius: 24, backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                      {item.artwork ? (
-                        <ExpoImage
-                          source={{ uri: item.artwork }}
-                          contentFit="cover"
-                          transition={180}
-                          style={{ width: '100%', height: '100%' }}
-                        />
-                      ) : (
-                        <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 19, fontWeight: '800' }}>{item.name.slice(0, 1).toUpperCase()}</Text>
-                      )}
+                renderItem={({ item }) => {
+                  const isPinned = pinnedQuranReciterIds.has(item.edition);
+                  return (
+                    <View style={{ minHeight: 72, flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setReciterSearch('');
+                          openQuranReciter(item, true);
+                        }}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View surahs recited by ${item.name}`}
+                        style={{ flex: 1, minWidth: 0, minHeight: 52, flexDirection: 'row', alignItems: 'center' }}
+                      >
+                        <View style={{ width: 47, height: 47, borderRadius: 24, backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                          {item.artwork ? (
+                            <ExpoImage
+                              source={{ uri: item.artwork }}
+                              contentFit="cover"
+                              transition={180}
+                              style={{ width: '100%', height: '100%' }}
+                            />
+                          ) : (
+                            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 19, fontWeight: '800' }}>{item.name.slice(0, 1).toUpperCase()}</Text>
+                          )}
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0, marginLeft: 14 }}>
+                          <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '700' }}>{item.name}</Text>
+                          <Text numberOfLines={1} style={{ color: '#89898F', fontSize: 12, fontWeight: '500', marginTop: 4 }}>
+                            {item.arabicName || '114 surahs'}
+                          </Text>
+                        </View>
+                        {activeTrack?.provider === 'quran' && activeTrack.providerId === item.edition ? (
+                          <Ionicons name="volume-high" size={20} color="#E4D6A8" />
+                        ) : (
+                          <Ionicons name="chevron-forward" size={20} color="#77777D" />
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => toggleQuranReciterPin(item)}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${isPinned ? 'Unpin' : 'Pin'} ${item.name} ${isPinned ? 'from' : 'to'} Home`}
+                        accessibilityState={{ selected: isPinned }}
+                        style={{ width: 44, height: 44, borderRadius: 22, marginLeft: 8, backgroundColor: isPinned ? 'rgba(228,214,168,0.14)' : 'transparent', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <Ionicons name={isPinned ? 'pin' : 'pin-outline'} size={20} color={isPinned ? '#E4D6A8' : '#89898F'} />
+                      </TouchableOpacity>
                     </View>
-                    <View style={{ flex: 1, minWidth: 0, marginLeft: 14 }}>
-                      <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '700' }}>{item.name}</Text>
-                      <Text numberOfLines={1} style={{ color: '#89898F', fontSize: 12, fontWeight: '500', marginTop: 4 }}>
-                        {item.arabicName || '114 surahs'}
-                      </Text>
-                    </View>
-                    {activeTrack?.provider === 'quran' && activeTrack.providerId === item.edition ? (
-                      <Ionicons name="volume-high" size={20} color="#E4D6A8" />
-                    ) : (
-                      <Ionicons name="chevron-forward" size={20} color="#77777D" />
-                    )}
-                  </TouchableOpacity>
-                )}
+                  );
+                }}
               />
             )}
             </SafeAreaView>

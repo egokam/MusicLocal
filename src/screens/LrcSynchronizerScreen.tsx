@@ -27,6 +27,7 @@ import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { SongsHeader } from '../components/songs/SongsHeader';
 import { TrackListSkeleton } from '../components/Skeleton';
 import { Id3SynchronizedLyricsService } from '../services/Id3SynchronizedLyricsService';
+import { OfflineMusicService } from '../services/OfflineMusicService';
 import type { Track } from '../types';
 
 type ImportedMp3 = {
@@ -36,10 +37,12 @@ type ImportedMp3 = {
   title: string;
   artist: string;
   lyrics: string | null;
-  lyricsSource: 'embedded' | 'pasted';
+  lyricsSource: 'embedded' | 'sidecar' | 'pasted';
   hadSyncedLyrics: boolean;
   duration: number;
 };
+
+type LyricSidecar = { file: File; text: string };
 
 type TimedLyricLine = {
   id: string;
@@ -58,6 +61,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
 const lrcTimestampPattern = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g;
 const lrcTimestampPrefixPattern = /^(?:\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\])+/;
 const lrcMetadataPattern = /^\[(?:ar|al|ti|au|by|re|ve|offset|length|la|kana|id):/i;
+const hasLrcTimestamps = (lyrics: string) => splitLyricText(lyrics).some((line) => lrcTimestampPrefixPattern.test(line));
 
 const clearEmbeddedTimestamps = (lyrics: string) => splitLyricText(lyrics)
   .flatMap((line) => {
@@ -83,32 +87,84 @@ const getEmbeddedLyrics = (metadata: Awaited<ReturnType<typeof parseBuffer>>) =>
       return frame.value.text.trim();
     })
     .filter(Boolean);
-  const syltLyrics = frames
-    .filter((frame) => frame.id === 'SYLT')
-    .flatMap((frame) => {
-      if (!isRecord(frame.value) || !Array.isArray(frame.value.syncText)) return [];
-      return frame.value.syncText.flatMap((entry) => (
-        isRecord(entry) && typeof entry.text === 'string' && entry.text.trim()
-          ? [entry.text.trim()]
-          : []
-      ));
-    });
+  const formatTimestamp = (timestamp: number, format: number) => {
+    const timestampMs = format === 1
+      ? timestamp * 1152 / (metadata.format.sampleRate || 44100) * 1000
+      : timestamp;
+    const totalCentiseconds = Math.max(0, Math.floor(timestampMs / 10));
+    const minutes = Math.floor(totalCentiseconds / 6000);
+    const seconds = Math.floor(totalCentiseconds / 100) % 60;
+    const centiseconds = totalCentiseconds % 100;
+    return `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}]`;
+  };
+  const syltLyrics = frames.flatMap((frame) => {
+    if (frame.id !== 'SYLT' || !isRecord(frame.value) || !Array.isArray(frame.value.syncText)) return [];
+    const format = typeof frame.value.timeStampFormat === 'number' ? frame.value.timeStampFormat : 2;
+    return frame.value.syncText.flatMap((entry) => (
+      isRecord(entry) && typeof entry.text === 'string' && entry.text.trim()
+        ? [`${formatTimestamp(typeof entry.timestamp === 'number' ? entry.timestamp : 0, format)} ${entry.text.trim()}`]
+        : []
+    ));
+  });
+  const commonLyrics = (metadata.common.lyrics ?? []).flatMap((entry) => {
+    if (entry.syncText?.length) {
+      const format = entry.timeStampFormat ?? 2;
+      return [entry.syncText.map((line) => (
+        `${formatTimestamp(line.timestamp ?? 0, format)} ${line.text}`
+      )).join('\n')];
+    }
+    return entry.text?.trim() ? [entry.text.trim()] : [];
+  });
 
-  const hasLrcTimestamps = usltLyrics.some((lyrics) => (
-    splitLyricText(lyrics).some((line) => lrcTimestampPrefixPattern.test(line))
-  ));
-  const hadSyncedLyrics = syltLyrics.length > 0 || hasLrcTimestamps;
-  const rawLyrics = usltLyrics.length > 0 ? usltLyrics.join('\n\n') : syltLyrics.join('\n');
-  const lyrics = rawLyrics ? (hadSyncedLyrics ? clearEmbeddedTimestamps(rawLyrics) : rawLyrics) : null;
+  const timestampedUslt = usltLyrics.find(hasLrcTimestamps);
+  const sourceLyrics = timestampedUslt
+    ?? (syltLyrics.length > 0 ? syltLyrics.join('\n') : null)
+    ?? (usltLyrics.length > 0 ? usltLyrics.join('\n\n') : commonLyrics.join('\n\n'));
+  const hadSyncedLyrics = Boolean(timestampedUslt || syltLyrics.length > 0 || commonLyrics.some(hasLrcTimestamps));
+  const lyrics = sourceLyrics
+    ? (hadSyncedLyrics ? clearEmbeddedTimestamps(sourceLyrics) : sourceLyrics)
+    : null;
 
-  return { lyrics, hadSyncedLyrics };
+  return { lyrics, sourceLyrics, hadSyncedLyrics };
+};
+
+const readLyricsSidecars = async (track: Track, audioFile: File): Promise<LyricSidecar[]> => {
+  const candidates = new Map<string, File>();
+  const add = (uri: string | undefined) => {
+    if (!uri) return;
+    try {
+      const file = new File(uri);
+      const extension = file.extension.toLowerCase();
+      if (extension === '.lrc' || extension === '.txt') candidates.set(file.uri, file);
+    } catch {
+      // Ignore stale references and keep checking the sibling file.
+    }
+  };
+
+  add(track.lyricsFileUri);
+  const audioBaseName = audioFile.name.replace(/\.[^.]+$/, '');
+  add(new File(audioFile.parentDirectory, `${audioBaseName}.lrc`).uri);
+  add(new File(audioFile.parentDirectory, `${audioBaseName}.txt`).uri);
+
+  const sidecars: LyricSidecar[] = [];
+  for (const file of candidates.values()) {
+    if (!file.exists) continue;
+    try {
+      const text = (await file.text()).replace(/^\uFEFF/, '').trim();
+      if (text) sidecars.push({ file, text });
+    } catch {
+      // An unreadable sidecar is not offered as a lyric source.
+    }
+  }
+  return sidecars.sort((first, second) => Number(second.file.extension.toLowerCase() === '.lrc')
+    - Number(first.file.extension.toLowerCase() === '.lrc'));
 };
 
 const parseLyrics = (lyrics: string): TimedLyricLine[] => splitLyricText(lyrics)
   .map((text, index) => ({ id: `${index}-${text}`, text, timeMs: null }));
 
 export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
-  const { downloadedTracks, isLoadingTracks, apiInitializing, saveSynchronizedTrack } = usePlaybackActions();
+  const { downloadedTracks, isLoadingTracks, apiInitializing, saveSynchronizedTrack, updateTrack } = usePlaybackActions();
   const scrollY = useMemo(() => new Animated.Value(0), []);
   const player = useAudioPlayer(null, { updateInterval: 200 });
   const playerStatus = useAudioPlayerStatus(player);
@@ -298,15 +354,72 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       if (!file.name.toLocaleLowerCase().endsWith('.mp3')) throw new Error('Only local MP3 tracks can be synchronized.');
 
       const metadata = await parseBuffer(await file.bytes(), 'audio/mpeg');
-      const { lyrics: embeddedLyrics, hadSyncedLyrics } = getEmbeddedLyrics(metadata);
+      const { lyrics: embeddedLyrics, sourceLyrics: embeddedSourceLyrics, hadSyncedLyrics: embeddedHadSyncedLyrics } = getEmbeddedLyrics(metadata);
+      const sidecars = await readLyricsSidecars(track, file);
+      const sidecar = sidecars[0];
+      const hasEmbeddedLyrics = Boolean(embeddedSourceLyrics?.trim());
+      const hasSidecarLyrics = Boolean(sidecar?.text.trim());
+      let source: 'embedded' | 'sidecar' | null = hasEmbeddedLyrics
+        ? 'embedded'
+        : hasSidecarLyrics
+          ? 'sidecar'
+          : null;
+
+      if (hasEmbeddedLyrics && hasSidecarLyrics) {
+        source = await new Promise<'embedded' | 'sidecar' | null>((resolve) => {
+          Alert.alert(
+            'Two lyric sources found',
+            `Choose which lyrics to resynchronize. The unused source will be deleted from “${track.title}”.`,
+            [
+              { text: 'Use MP3 lyrics', onPress: () => resolve('embedded') },
+              { text: `Use ${sidecar?.file.extension.toLowerCase() === '.txt' ? 'text' : 'LRC'} file`, onPress: () => resolve('sidecar') },
+              { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+            ],
+            { cancelable: false },
+          );
+        });
+        if (!source) return;
+      }
+
+      let libraryTrack = track;
+      if (source && hasEmbeddedLyrics && hasSidecarLyrics) {
+        if (source === 'embedded') {
+          libraryTrack = await OfflineMusicService.removeLyricsSidecars(track);
+        } else if (sidecar) {
+          const lyricsRemovedMp3 = await Id3SynchronizedLyricsService.createVerifiedMp3WithoutLyrics(file.uri, file.name);
+          try {
+            await OfflineMusicService.replaceTrackAudio(track, lyricsRemovedMp3.uri);
+          } finally {
+            if (lyricsRemovedMp3.exists) lyricsRemovedMp3.delete();
+          }
+          libraryTrack = await OfflineMusicService.removeLyricsSidecars(track, sidecar.file.uri);
+        }
+      }
+
+      const libraryLyrics = source === 'embedded' ? embeddedSourceLyrics : source === 'sidecar' ? sidecar?.text ?? null : null;
+      if (source && !libraryLyrics) throw new Error('The selected lyrics source is empty.');
+      if (libraryLyrics) {
+        libraryTrack = await updateTrack(libraryTrack, {
+          title: metadata.common.title?.trim() || track.title,
+          artist: metadata.common.artist?.trim() || metadata.common.albumartist?.trim() || track.artist || 'Unknown artist',
+          album: metadata.common.album?.trim() || track.album,
+          lyrics: libraryLyrics,
+        });
+      }
+      const editorLyrics = source === 'embedded'
+        ? embeddedLyrics
+        : source === 'sidecar' && libraryLyrics ? clearEmbeddedTimestamps(libraryLyrics) : null;
+      const hadSyncedLyrics = source === 'embedded'
+        ? embeddedHadSyncedLyrics
+        : source === 'sidecar' && libraryLyrics ? hasLrcTimestamps(libraryLyrics) : false;
       const imported: ImportedMp3 = {
-        libraryTrack: track,
+        libraryTrack,
         uri: file.uri,
         fileName: file.name,
         title: metadata.common.title?.trim() || track.title,
         artist: metadata.common.artist?.trim() || metadata.common.albumartist?.trim() || track.artist || 'Unknown artist',
-        lyrics: embeddedLyrics,
-        lyricsSource: 'embedded',
+        lyrics: editorLyrics,
+        lyricsSource: source ?? 'embedded',
         hadSyncedLyrics,
         duration: metadata.format.duration ?? track.durationSeconds ?? 0,
       };
@@ -314,7 +427,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       player.replace({ uri: imported.uri });
       await player.seekTo(0);
       setSelectedMp3(imported);
-      loadLyrics(embeddedLyrics);
+      loadLyrics(editorLyrics);
       dismissTrackPicker();
       setPlaybackError(null);
       setSaveError(null);
@@ -739,8 +852,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                         <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Lyrics</Text>
                         <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 3 }}>
                           {selectedMp3.hadSyncedLyrics
-                            ? 'From MP3 · previous timings cleared · '
-                            : selectedMp3.lyricsSource === 'embedded' ? 'From MP3 · ' : 'Pasted · '}
+                            ? `From ${selectedMp3.lyricsSource === 'sidecar' ? 'LRC file' : 'MP3'} · previous timings cleared · `
+                            : selectedMp3.lyricsSource === 'embedded'
+                              ? 'From MP3 · '
+                              : selectedMp3.lyricsSource === 'sidecar' ? 'From LRC file · ' : 'Pasted · '}
                           {lyricLines.filter((line) => line.text.trim()).length} lines
                         </Text>
                       </View>
@@ -860,10 +975,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                       <Ionicons name="document-text-outline" size={27} color="#FA5265" />
                     </View>
                     <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', marginTop: 15 }}>
-                      No embedded lyrics found
+                      No lyrics found
                     </Text>
                     <Text style={{ color: '#8E8E93', fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 7 }}>
-                      Paste the song lyrics to prepare them for synchronization.
+                      No embedded lyrics or matching lyric sidecar were found. Paste the song lyrics to prepare them for synchronization.
                     </Text>
                     <View style={{ flexDirection: 'row', gap: 9, marginTop: 19 }}>
                       <TouchableOpacity
@@ -1075,10 +1190,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
             <TouchableOpacity
-              onPress={() => void seekTo(playerStatus.currentTime - 10)}
+              onPress={() => void seekTo(playerStatus.currentTime - 3)}
               disabled={!selectedMp3}
               accessibilityRole="button"
-              accessibilityLabel="Seek backward ten seconds"
+              accessibilityLabel="Seek backward three seconds"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', opacity: selectedMp3 ? 1 : 0.4 }}
             >
               <Ionicons name="play-back" size={20} color="#D1D1D6" />
@@ -1105,10 +1220,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               <Ionicons name={playerStatus.playing ? 'pause' : 'play'} size={21} color="white" />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => void seekTo(playerStatus.currentTime + 10)}
+              onPress={() => void seekTo(playerStatus.currentTime + 3)}
               disabled={!selectedMp3}
               accessibilityRole="button"
-              accessibilityLabel="Seek forward ten seconds"
+              accessibilityLabel="Seek forward three seconds"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', opacity: selectedMp3 ? 1 : 0.4 }}
             >
               <Ionicons name="play-forward" size={20} color="#D1D1D6" />
