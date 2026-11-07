@@ -74,8 +74,12 @@ export const LrcCheckerRow = ({
               style={{ marginRight: 5 }}
             />
           )}
-          <Text numberOfLines={state === 'error' ? 2 : 1} style={{ color: stateColor[state], fontSize: 11, fontWeight: '600', flex: 1 }}>
-            {state === 'error' && errorMessage ? `Lookup failed: ${errorMessage}` : stateLabel[state]}
+          <Text numberOfLines={state === 'error' || errorMessage ? 2 : 1} style={{ color: stateColor[state], fontSize: 11, fontWeight: '600', flex: 1 }}>
+            {errorMessage
+              ? state === 'candidate'
+                ? `Match found; incomplete search: ${errorMessage}`
+                : `Lookup incomplete: ${errorMessage}`
+              : stateLabel[state]}
           </Text>
         </View>
       </View>

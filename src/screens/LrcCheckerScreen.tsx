@@ -29,6 +29,12 @@ const hasTimedLyrics = (track: Track) => Boolean(
   || track.lyrics?.some((line) => line.timeMs !== null && line.text.trim()),
 );
 
+const lyricsTextForTrack = (track: Track) => {
+  if (track.syncedLyrics?.trim()) return track.syncedLyrics;
+  if (track.plainLyrics?.trim()) return track.plainLyrics;
+  return track.lyrics?.map((line) => line.text).filter(Boolean).join('\n') ?? '';
+};
+
 const LRC_TIMESTAMP = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
 const LRC_PREFIX = /^\s*((?:\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]\s*)+)(.*)$/;
 const LRC_METADATA = /^\s*(?:\[(?:ar|al|ti|au|by|re|ve|length|offset|kana|la|id):[^\]]*\]\s*)+$/i;
@@ -81,18 +87,14 @@ const validateCustomLrc = (value: string, durationSeconds?: number) => {
 
 export const LrcCheckerScreen = ({
   onBack,
-  onConnect,
   tracks,
-  apiConnected,
   isLoadingTracks,
   onLoadAllTracks,
   onCheckTrack,
   onSaveTrackLyrics,
 }: {
   onBack: () => void;
-  onConnect: () => void;
   tracks: Track[];
-  apiConnected: boolean;
   isLoadingTracks: boolean;
   onLoadAllTracks: () => Promise<Track[]>;
   onCheckTrack: (track: Track, forceOnline?: boolean) => Promise<Track>;
@@ -145,9 +147,17 @@ export const LrcCheckerScreen = ({
         : 'unchecked'
   );
   const syncedCount = tracks.reduce((count, track) => count + (stateFor(track) === 'synced' ? 1 : 0), 0);
-  const checkedCount = tracks.reduce((count, track) => count + (['synced', 'plain', 'missing', 'candidate'].includes(stateFor(track)) ? 1 : 0), 0);
+  const checkedCount = tracks.reduce((count, track) => {
+    const record = scanSnapshot.records[track.id];
+    const state = stateFor(track);
+    const isComplete = ['synced', 'plain', 'missing'].includes(state)
+      || (state === 'candidate' && !record?.error);
+    return count + (isComplete ? 1 : 0);
+  }, 0);
   const pendingLyricMatches = tracks.filter((track) =>
-    stateFor(track) === 'candidate' && isTimedLrc(scanSnapshot.records[track.id]?.result?.syncedLyrics),
+    stateFor(track) === 'candidate'
+    && !scanSnapshot.records[track.id]?.error
+    && Boolean(lyricsTextForTrack(scanSnapshot.records[track.id]?.result ?? track).trim()),
   );
   const filteredTracks = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -163,11 +173,6 @@ export const LrcCheckerScreen = ({
 
   const scanAll = async () => {
     if (scanSnapshot.isScanning || scanSnapshot.isLoadingCatalog || applyAllRunning.current) return;
-    if (!apiConnected) {
-      onConnect();
-      return;
-    }
-
     await LrcCheckerService.startScan(onLoadAllTracks, onCheckTrack);
   };
 
@@ -179,8 +184,8 @@ export const LrcCheckerScreen = ({
     if (isBusy || applyAllRunning.current || pendingLyricMatches.length === 0) return;
 
     Alert.alert(
-      'Apply & Approve All?',
-      `This will save the found synced lyrics for ${pendingLyricMatches.length} ${pendingLyricMatches.length === 1 ? 'track' : 'tracks'} to your library. Continue?`,
+      'Apply Found Lyrics?',
+      `This will save the selected lyric result for ${pendingLyricMatches.length} ${pendingLyricMatches.length === 1 ? 'track' : 'tracks'} to your library. Continue?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -202,16 +207,17 @@ export const LrcCheckerScreen = ({
 
     for (let index = 0; index < pendingLyricMatches.length; index += 1) {
       const track = pendingLyricMatches[index];
-      const lyrics = scanSnapshot.records[track.id]?.result?.syncedLyrics;
-      if (!lyrics || !isTimedLrc(lyrics)) {
+      const candidate = scanSnapshot.records[track.id]?.result;
+      const lyrics = candidate ? lyricsTextForTrack(candidate) : '';
+      if (!candidate || !lyrics.trim()) {
         failedCount += 1;
         setApplyAllProgress({ completed: index + 1, total: pendingLyricMatches.length });
         continue;
       }
 
       try {
-        await onSaveTrackLyrics(track, lyrics);
-        await LrcCheckerService.updateRecord(track.id, { state: 'synced' });
+        await onSaveTrackLyrics(candidate, lyrics);
+        await LrcCheckerService.updateRecord(track.id, { state: candidate.lyricsFormat === 'plain' ? 'plain' : 'synced', result: candidate });
         savedCount += 1;
       } catch (error) {
         failedCount += 1;
@@ -232,19 +238,22 @@ export const LrcCheckerScreen = ({
         `${savedCount} ${savedCount === 1 ? 'track was' : 'tracks were'} updated. ${failedCount} ${failedCount === 1 ? 'match could' : 'matches could'} not be saved; you can retry those individually.`,
       );
     } else {
-      Alert.alert('Lyrics applied', `Synced lyrics were saved for ${savedCount} ${savedCount === 1 ? 'track' : 'tracks'}.`);
+      Alert.alert('Lyrics applied', `Lyrics were saved for ${savedCount} ${savedCount === 1 ? 'track' : 'tracks'}.`);
     }
   };
 
   const saveReview = async () => {
-    if (!reviewTrack?.syncedLyrics) return;
+    if (!reviewTrack || !lyricsTextForTrack(reviewTrack).trim()) return;
     setIsSavingReview(true);
     try {
-      const saved = await onSaveTrackLyrics(reviewTrack, reviewTrack.syncedLyrics);
-      await LrcCheckerService.updateRecord(reviewTrack.id, { state: 'synced', result: saved });
+      const saved = await onSaveTrackLyrics(reviewTrack, lyricsTextForTrack(reviewTrack));
+      await LrcCheckerService.updateRecord(reviewTrack.id, {
+        state: reviewTrack.lyricsFormat === 'plain' ? 'plain' : 'synced',
+        result: saved,
+      });
       setReviewTrack(null);
     } catch (error) {
-      Alert.alert('Could not save LRC', error instanceof Error ? error.message : 'Try saving this lyric file again.');
+      Alert.alert('Could not save lyrics', error instanceof Error ? error.message : 'Try saving this lyric file again.');
     } finally {
       setIsSavingReview(false);
     }
@@ -260,10 +269,6 @@ export const LrcCheckerScreen = ({
   };
 
   const openCustomLrc = (track: Track) => {
-    if (!apiConnected) {
-      onConnect();
-      return;
-    }
     if (track.provider !== 'local' || !track.providerId) {
       Alert.alert('Local track required', 'Custom LRC files are saved beside audio files in your local library.');
       return;
@@ -318,7 +323,10 @@ export const LrcCheckerScreen = ({
     setCustomLrcError(null);
   };
 
-  const reviewLines = reviewTrack?.syncedLyrics?.split(/\r?\n/).filter((line) => line.trim()).slice(0, 8) ?? [];
+  const reviewLines = reviewTrack?.lyrics?.map((line) => line.text).filter((line) => line.trim()).slice(0, 8)
+    ?? reviewTrack?.syncedLyrics?.split(/\r?\n/).filter((line) => line.trim()).slice(0, 8)
+    ?? reviewTrack?.plainLyrics?.split(/\r?\n/).filter((line) => line.trim()).slice(0, 8)
+    ?? [];
   const isScanning = scanSnapshot.isScanning;
   const isStopping = scanSnapshot.isStopping;
   const isLoadingCatalog = scanSnapshot.isLoadingCatalog;
@@ -341,7 +349,7 @@ export const LrcCheckerScreen = ({
             <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
               <Text style={{ color: 'white', fontSize: 36, lineHeight: 42, fontWeight: '800' }}>LRC Checker</Text>
               <Text style={{ color: '#A1A1A6', fontSize: 15, lineHeight: 21, marginTop: 7 }}>
-                Scan your local audio files for existing LRC sidecars, then optionally review a LRCLIB match before saving it locally.
+                Spicy Lyrics is checked first, followed by LiriQo, Better Lyrics, lrc.red, and LRCLIB. TTML and word-timed matches rank above line-synced lyrics, with plain text last.
               </Text>
 
               <View style={{ marginTop: 18, padding: 15, borderRadius: 18, backgroundColor: '#1C1C1E' }}>
@@ -375,7 +383,7 @@ export const LrcCheckerScreen = ({
                 >
                   {isBusy ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="scan-outline" size={19} color="#FA5265" />}
                   <Text style={{ color: 'white', fontSize: 15, fontWeight: '700', marginLeft: 9 }}>
-                    {isLoadingCatalog ? (isStopping ? 'Stopping…' : 'Loading your full library…') : isScanning ? (isStopping ? 'Finishing current track…' : 'Stop scan') : apiConnected ? 'Scan all tracks' : 'Connect library to scan'}
+                    {isLoadingCatalog ? (isStopping ? 'Stopping…' : 'Loading your full library…') : isScanning ? (isStopping ? 'Finishing current track…' : 'Stop scan') : 'Scan lyrics across all sources'}
                   </Text>
                 </TouchableOpacity>
 
@@ -400,19 +408,11 @@ export const LrcCheckerScreen = ({
                     <Text style={{ color: 'white', fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
                       {isApplyingAll
                         ? `Applying ${applyAllProgress.completed}/${applyAllProgress.total}…`
-                        : `Apply & Approve All (${pendingLyricMatches.length})`}
+                        : `Apply All (${pendingLyricMatches.length})`}
                     </Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
-
-              {!apiConnected ? (
-                <TouchableOpacity onPress={onConnect} style={{ marginTop: 13, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, backgroundColor: '#161618', flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="cloud-outline" size={18} color="#FA5265" />
-                  <Text style={{ color: '#B8B8BD', fontSize: 13, lineHeight: 18, marginLeft: 9, flex: 1 }}>Local mode reads and saves LRC files beside the audio on this device.</Text>
-                  <Ionicons name="chevron-forward" size={17} color="#77777C" />
-                </TouchableOpacity>
-              ) : null}
 
               <View style={{ height: 48, marginTop: 20, paddingHorizontal: 14, borderRadius: 24, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="search" size={20} color="#A1A1A6" />
@@ -443,7 +443,7 @@ export const LrcCheckerScreen = ({
                 state={state}
                 errorMessage={scanSnapshot.records[item.id]?.error}
                 disabled={isApplyingAll || (isScanning && state !== 'candidate')}
-                onCheck={() => apiConnected ? void checkTrack(item, undefined, true).catch(() => undefined) : onConnect()}
+                onCheck={() => void checkTrack(item, undefined, true).catch(() => undefined)}
                 onReview={() => result && setReviewTrack(result)}
                 onPaste={() => openCustomLrc(item)}
               />
@@ -511,14 +511,34 @@ export const LrcCheckerScreen = ({
           <View style={{ backgroundColor: '#1C1C1E', borderRadius: 22, padding: 20, maxHeight: '76%' }}>
             <Text style={{ color: 'white', fontSize: 21, lineHeight: 26, fontWeight: '800' }} numberOfLines={2}>{reviewTrack?.title}</Text>
             <Text style={{ color: '#A1A1A6', fontSize: 14, marginTop: 4 }}>{reviewTrack?.artist}</Text>
-            <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', letterSpacing: 0.6, marginTop: 20, marginBottom: 9 }}>SYNCED LYRICS PREVIEW</Text>
+            {reviewTrack?.lyricsAttribution?.provider ? (
+              <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 5 }}>
+                Source: {reviewTrack.lyricsAttribution.provider}
+              </Text>
+            ) : null}
+            {reviewTrack?.lyricsLookupIssues?.length ? (
+              <Text style={{ color: '#E6B94C', fontSize: 12, lineHeight: 17, marginTop: 8 }}>
+                Search incomplete. Some sources could not be checked, so a higher quality match may still exist.
+              </Text>
+            ) : null}
+            <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', letterSpacing: 0.6, marginTop: 20, marginBottom: 9 }}>
+              {reviewTrack?.lyricsFormat === 'ttml' ? 'TTML LYRICS PREVIEW' : reviewTrack?.lyricsFormat === 'word' ? 'WORD-SYNCED LYRICS PREVIEW' : reviewTrack?.lyricsFormat === 'plain' ? 'PLAIN LYRICS PREVIEW' : 'SYNCED LYRICS PREVIEW'}
+            </Text>
             <View style={{ maxHeight: 290 }}>
               {reviewLines.map((line, index) => (
                 <Text key={`${reviewTrack?.id}-preview-${index}`} numberOfLines={1} style={{ color: 'white', fontSize: 14, lineHeight: 23, fontWeight: '600' }}>{line}</Text>
               ))}
             </View>
             <Text style={{ color: '#8E8E93', fontSize: 12, lineHeight: 17, marginTop: 13 }}>
-              Review the match before applying it. The synced LRC will be saved beside the audio and used in place of plain lyrics.
+              {reviewTrack?.lyricsSource === 'spicy_lyrics_api'
+                ? 'This Spicy Lyrics result is cached in the app for playback and will not be exported to a separate file.'
+                : reviewTrack?.lyricsFormat === 'ttml'
+                  ? `Review the ${reviewTrack.lyricsAttribution?.provider ?? 'TTML'} match before applying it. Word timing and TTML source data will be kept in a .ttml sidecar.`
+                  : reviewTrack?.lyricsFormat === 'word'
+                    ? `Review the ${reviewTrack.lyricsAttribution?.provider ?? 'word-timed'} match before applying it. Word timing will be kept in a .ttml sidecar.`
+                  : reviewTrack?.lyricsFormat === 'plain'
+                    ? 'Review the plain text match before applying it. It will be saved as a text lyrics file.'
+                    : 'Review the match before applying it. The synchronized lyrics will be saved with your local track.'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
               <TouchableOpacity onPress={discardReview} disabled={isSavingReview} style={{ flex: 1, height: 46, borderRadius: 23, backgroundColor: '#303033', alignItems: 'center', justifyContent: 'center' }}>

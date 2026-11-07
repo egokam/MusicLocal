@@ -1,5 +1,6 @@
 import { File } from 'expo-file-system';
-import type { LyricsAttribution, LyricLine, LyricSyllable, LyricVoice, LyricWord, PlaylistSummary, Track } from '../types';
+import { parse as parseYaml } from 'yaml';
+import type { LyricsAttribution, LyricsFormat, LyricLine, LyricSyllable, LyricVoice, LyricWord, PlaylistSummary, Track } from '../types';
 import { deduplicateSyncedLyrics, parseLyrics } from './LyricsParser';
 import { OfflineMusicService, type SpicyLyricsCacheEntry } from './OfflineMusicService';
 import { PlaylistStorageService } from './PlaylistStorageService';
@@ -11,6 +12,7 @@ let spicyLyricsClientKey = '';
 const SPICY_LYRICS_API_BASE = 'https://api.spicylyrics.org/v1';
 const SPICY_API_MIN_REQUEST_INTERVAL_MS = 1_000;
 let spicyLyricsEnabled = false;
+let spicyLyricsAutoDownloadAllowed = false;
 let spicyLyricsCooldownUntil = 0;
 let spicyLyricsPrefetchGeneration = 0;
 let spicyLyricsPrefetchRunning = false;
@@ -78,6 +80,8 @@ const mergeTrackChanges = (track: Track, changes: TrackEditChanges): Track => {
     lyricsAvailable: Boolean(lyrics),
     hasSyncedLyrics,
     hasPlainLyrics: Boolean(plainLyrics),
+    lyricsFormat: hasSyncedLyrics ? 'line' : 'plain',
+    lyricsTtml: undefined,
     lyricsSource: hasSyncedLyrics ? 'saved_lrc' : undefined,
     lyricsAttribution: undefined,
   };
@@ -94,6 +98,10 @@ const withoutSpicyApiLyrics = (track: Track): Track => track.lyricsSource === 's
       hasPlainLyrics: false,
       lyricsSource: undefined,
       lyricsAttribution: undefined,
+      lyricsFormat: undefined,
+      lyricsTtml: undefined,
+      lyricsLookupProviders: undefined,
+      lyricsLookupIssues: undefined,
     }
   : track;
 
@@ -113,6 +121,430 @@ const hasRenderableLyrics = (track: Track) => Boolean(
 
 const hasTimedText = (text: string) => /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(text);
 
+const durationSecondsForTrack = (track: Track) => {
+  if (track.durationSeconds && Number.isFinite(track.durationSeconds) && track.durationSeconds > 0) {
+    return track.durationSeconds;
+  }
+  const parts = track.duration.trim().split(':');
+  if (parts.length < 2 || parts.some((part) => !/^\d+$/.test(part))) return undefined;
+  const numbers = parts.map(Number);
+  return numbers.length === 3
+    ? numbers[0] * 3600 + numbers[1] * 60 + numbers[2]
+    : numbers[0] * 60 + numbers[1];
+};
+
+const normalizeTrackText = (value: string) => value
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLocaleLowerCase()
+  .replace(/&/g, ' and ')
+  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+  .trim()
+  .replace(/\s+/g, ' ');
+
+const trackTextMatches = (actual: string, expected: string) => {
+  const left = normalizeTrackText(actual);
+  const right = normalizeTrackText(expected);
+  return Boolean(left && right && (left === right || left.startsWith(`${right} `) || right.startsWith(`${left} `)));
+};
+
+const xmlDecode = (value: string) => value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, name: string) => {
+  const normalized = name.toLowerCase();
+  if (normalized === 'amp') return '&';
+  if (normalized === 'lt') return '<';
+  if (normalized === 'gt') return '>';
+  if (normalized === 'quot') return '"';
+  if (normalized === 'apos') return "'";
+  const codePoint = normalized.startsWith('#x')
+    ? Number.parseInt(normalized.slice(2), 16)
+    : Number.parseInt(normalized.slice(1), 10);
+  return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
+});
+
+const xmlText = (value: string) => xmlDecode(value
+  .replace(/<br\b[^>]*\/?\s*>/gi, '\n')
+  .replace(/<[^>]*>/g, '')
+  .replace(/\s+/g, ' ')
+  .trim());
+
+const xmlAttributes = (value: string) => {
+  const attributes: Record<string, string> = {};
+  for (const match of value.matchAll(/([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    attributes[match[1].split(':').at(-1) ?? match[1]] = xmlDecode(match[2] ?? match[3] ?? '');
+  }
+  return attributes;
+};
+
+const ttmlTimeMs = (value?: string) => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const secondsUnit = trimmed.match(/^([\d.]+)s$/i);
+  if (secondsUnit) return Math.round(Number(secondsUnit[1]) * 1000);
+  const millisecondsUnit = trimmed.match(/^([\d.]+)ms$/i);
+  if (millisecondsUnit) return Math.round(Number(millisecondsUnit[1]));
+  const parts = trimmed.split(':');
+  if (parts.length === 3 && parts.every((part) => /^\d+(?:\.\d+)?$/.test(part))) {
+    return Math.round((Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2])) * 1000);
+  }
+  if (parts.length === 2 && parts.every((part) => /^\d+(?:\.\d+)?$/.test(part))) {
+    return Math.round((Number(parts[0]) * 60 + Number(parts[1])) * 1000);
+  }
+  return null;
+};
+
+const lrcTimestampFromMs = (timeMs: number) => {
+  const centiseconds = Math.max(0, Math.floor(timeMs / 10));
+  const minutes = Math.floor(centiseconds / 6000);
+  const remainingSeconds = Math.floor((centiseconds % 6000) / 100);
+  const fraction = String(centiseconds % 100).padStart(2, '0');
+  return `[${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}.${fraction}]`;
+};
+
+const lrcFromLyricLines = (lyrics: LyricLine[]) => lyrics
+  .filter((line) => line.timeMs !== null && line.text.trim())
+  .map((line) => `${lrcTimestampFromMs(line.timeMs!)}${line.text.trim()}`)
+  .join('\n');
+
+const parseTtmlLyrics = (ttml: string): LyricLine[] => {
+  const paragraphs = [...ttml.matchAll(/<(?:[\w.-]+:)?p\b([^>]*)>([\s\S]*?)<\/(?:[\w.-]+:)?p\s*>/gi)];
+  const lines: LyricLine[] = [];
+  for (const paragraph of paragraphs) {
+    const paragraphAttributes = xmlAttributes(paragraph[1]);
+    const rawContent = paragraph[2];
+    const text = xmlText(rawContent);
+    if (!text) continue;
+
+    const words: LyricWord[] = [];
+    let currentWordText = '';
+    let currentSyllables: LyricSyllable[] = [];
+    const flushWord = () => {
+      const trimmed = currentWordText.trim();
+      if (trimmed) {
+        const starts = currentSyllables.map((syllable) => syllable.startTimeMs).filter((time): time is number => time !== null);
+        const ends = currentSyllables.map((syllable) => syllable.endTimeMs).filter((time): time is number => time !== null);
+        words.push({
+          text: trimmed,
+          startTimeMs: starts.length ? Math.min(...starts) : null,
+          endTimeMs: ends.length ? Math.max(...ends) : null,
+          ...(currentSyllables.length ? { syllables: currentSyllables } : {}),
+        });
+      }
+      currentWordText = '';
+      currentSyllables = [];
+    };
+
+    // TTML commonly nests timed spans (for example, syllables inside a word).
+    // Tokenize the XML stream so nested span boundaries do not truncate timing.
+    const activeTimings: { startTimeMs: number | null; endTimeMs: number | null }[] = [];
+    const tokens = /<(\/)?(?:[\w.-]+:)?span\b([^>]*)>|<(?:[\w.-]+:)?br\b[^>]*\/?>|([^<]+)|<[^>]*>/gi;
+    for (const token of rawContent.matchAll(tokens)) {
+      const fullToken = token[0];
+      if (/^<\//.test(fullToken) && /span\b/i.test(fullToken)) {
+        activeTimings.pop();
+        continue;
+      }
+      if (/^<(?:(?:[\w.-]+:)?span)\b/i.test(fullToken)) {
+        const attributes = xmlAttributes(token[2] ?? '');
+        const parent = activeTimings.at(-1);
+        const timing = {
+          startTimeMs: ttmlTimeMs(attributes.begin) ?? ttmlTimeMs(attributes.start) ?? parent?.startTimeMs ?? ttmlTimeMs(paragraphAttributes.begin),
+          endTimeMs: ttmlTimeMs(attributes.end) ?? ttmlTimeMs(attributes.stop) ?? parent?.endTimeMs ?? ttmlTimeMs(paragraphAttributes.end),
+        };
+        if (!/\/\s*>$/.test(fullToken)) activeTimings.push(timing);
+        continue;
+      }
+      if (/^<(?:(?:[\w.-]+:)?br)\b/i.test(fullToken)) {
+        flushWord();
+        continue;
+      }
+      if (token[3] === undefined) continue;
+      const decoded = xmlDecode(token[3]).replace(/\u00a0/g, ' ');
+      const activeTiming = activeTimings.at(-1);
+      for (const part of decoded.matchAll(/\s+|\S+/gu)) {
+        if (/^\s+$/u.test(part[0])) {
+          flushWord();
+          continue;
+        }
+        currentWordText += part[0];
+        if (activeTiming) currentSyllables.push({ text: part[0], ...activeTiming });
+      }
+    }
+    flushWord();
+
+    const lineStart = ttmlTimeMs(paragraphAttributes.begin) ?? words.find((word) => word.startTimeMs !== null)?.startTimeMs ?? null;
+    const lineEnd = ttmlTimeMs(paragraphAttributes.end) ?? [...words].reverse().find((word) => word.endTimeMs !== null)?.endTimeMs ?? null;
+    lines.push({
+      timeMs: lineStart,
+      endTimeMs: lineEnd,
+      text,
+      ...(words.some((word) => word.startTimeMs !== null || word.endTimeMs !== null) ? { words } : {}),
+    });
+  }
+  return lines;
+};
+
+const escapeXmlText = (value: string) => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
+const ttmlTimeFromMs = (timeMs: number) => {
+  const safeTimeMs = Math.max(0, Math.round(timeMs));
+  const hours = Math.floor(safeTimeMs / 3_600_000);
+  const minutes = Math.floor((safeTimeMs % 3_600_000) / 60_000);
+  const seconds = ((safeTimeMs % 60_000) / 1_000).toFixed(3).padStart(6, '0');
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${seconds}`;
+};
+
+const serializeLyricsAsTtml = (lines: LyricLine[]) => {
+  const body = lines.map((line) => {
+    const begin = line.timeMs !== null ? ` begin="${ttmlTimeFromMs(line.timeMs)}"` : '';
+    const end = typeof line.endTimeMs === 'number' ? ` end="${ttmlTimeFromMs(line.endTimeMs)}"` : '';
+    const content = line.words?.length
+      ? line.words.map((word) => {
+          const wordBegin = word.startTimeMs !== null ? ` begin="${ttmlTimeFromMs(word.startTimeMs)}"` : '';
+          const wordEnd = word.endTimeMs !== null ? ` end="${ttmlTimeFromMs(word.endTimeMs)}"` : '';
+          return `<span${wordBegin}${wordEnd}>${escapeXmlText(word.text)}</span>`;
+        }).join('')
+      : escapeXmlText(line.text);
+    return `<p${begin}${end}>${content}</p>`;
+  }).join('');
+  return `<?xml version="1.0" encoding="UTF-8"?><tt xmlns="http://www.w3.org/ns/ttml"><body><div>${body}</div></body></tt>`;
+};
+
+const parseQrcLyrics = (qrc: string, track?: Pick<Track, 'title' | 'artist'>): LyricLine[] => {
+  const lyricElement = qrc.match(/<(?:[\w.-]+:)?Lyric_1\b([^>]*)\/?\s*>/i);
+  const qrcBody = lyricElement ? xmlAttributes(lyricElement[1]).LyricContent ?? qrc : qrc;
+  const parsed: LyricLine[] = [];
+  for (const rawLine of qrcBody.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const header = line.match(/^\[(\d+),(\d+)\]/);
+    if (!header) continue;
+    const startMs = Number(header[1]);
+    const durationMs = Number(header[2]);
+    const rest = line.slice(header[0].length);
+    const words: LyricWord[] = [];
+    let textStart = 0;
+    for (const token of rest.matchAll(/\((\d+),(\d+)\)/g)) {
+      const tokenIndex = token.index ?? 0;
+      const text = rest.slice(textStart, tokenIndex);
+      const wordStart = Number(token[1]);
+      const wordDuration = Number(token[2]);
+      if (text.trim()) words.push({
+        text,
+        startTimeMs: wordStart,
+        endTimeMs: wordDuration > 0 ? wordStart + wordDuration : null,
+      });
+      textStart = tokenIndex + token[0].length;
+    }
+    if (!words.length) continue;
+    const text = words.map((word) => word.text).join('').trim();
+    if (!text || /^(?:lyrics\s+by|composed\s+by|arranged\s+by|producer\s*[:：]|作词\s*[:：]|作曲\s*[:：]|编曲\s*[:：]|制作人\s*[:：])/i.test(text)) continue;
+    if (parsed.length < 3 && track && (
+      trackTextMatches(text.replace(/\s*[-–—]\s*.*$/, ''), track.title)
+      || trackTextMatches(text, track.artist)
+      || (normalizeTrackText(text).startsWith(normalizeTrackText(track.title))
+        && normalizeTrackText(text).includes(normalizeTrackText(track.artist)))
+    )) continue;
+    parsed.push({
+      timeMs: startMs,
+      endTimeMs: durationMs > 0 ? startMs + durationMs : null,
+      text,
+      words,
+    });
+  }
+  return parsed;
+};
+
+type ParsedLyricsPayload = {
+  format: LyricsFormat;
+  lyrics: LyricLine[];
+  syncedLyrics?: string;
+  plainLyrics?: string;
+  ttml?: string;
+};
+
+const parseLyricsfile = (value?: string | null): ParsedLyricsPayload | null => {
+  if (!value?.trim()) return null;
+  try {
+    const document = parseYaml(value) as {
+      lines?: {
+        text?: string;
+        start_ms?: number;
+        end_ms?: number;
+        words?: { text?: string; start_ms?: number; end_ms?: number }[];
+      }[];
+      plain?: string;
+    } | null;
+    const lyricLines = Array.isArray(document?.lines)
+      ? document.lines
+          .map((line): LyricLine | null => {
+            const words = Array.isArray(line.words) ? line.words.filter((word) => typeof word.text === 'string').map((word) => ({
+                text: word.text!,
+                startTimeMs: typeof word.start_ms === 'number' ? word.start_ms : null,
+                endTimeMs: typeof word.end_ms === 'number' ? word.end_ms : null,
+              })) : [];
+            const text = typeof line.text === 'string' && line.text.trim()
+              ? line.text.trim()
+              : words.map((word) => word.text).join('').trim();
+            if (!text) return null;
+            const wordStarts = words.map((word) => word.startTimeMs).filter((time): time is number => time !== null);
+            const wordEnds = words.map((word) => word.endTimeMs).filter((time): time is number => time !== null);
+            return {
+              timeMs: typeof line.start_ms === 'number' ? line.start_ms : wordStarts.length ? Math.min(...wordStarts) : null,
+              endTimeMs: typeof line.end_ms === 'number' ? line.end_ms : wordEnds.length ? Math.max(...wordEnds) : null,
+              text,
+              ...(words.length ? { words } : {}),
+            };
+          })
+          .filter((line): line is LyricLine => Boolean(line))
+      : [];
+    if (lyricLines.length) {
+      const hasWordTiming = lyricLines.some((line) => line.words?.some((word) => word.startTimeMs !== null || word.endTimeMs !== null));
+      const hasLineTiming = lyricLines.some((line) => line.timeMs !== null);
+      const format: LyricsFormat = hasWordTiming ? 'word' : hasLineTiming ? 'line' : 'plain';
+      const syncedLyrics = hasLineTiming ? lrcFromLyricLines(lyricLines) : undefined;
+      return { format, lyrics: lyricLines, syncedLyrics, plainLyrics: syncedLyrics ? undefined : lyricLines.map((line) => line.text).join('\n') };
+    }
+    const plainLyrics = typeof document?.plain === 'string' ? document.plain.trim() : '';
+    return plainLyrics ? { format: 'plain', lyrics: parseLyrics(undefined, plainLyrics), plainLyrics } : null;
+  } catch {
+    return null;
+  }
+};
+
+const lyricsPayloadFromRecord = (record: Record<string, unknown>, provider: string, track?: Track): Track | null => {
+  const lyricsValue = typeof record.lyrics === 'string' ? record.lyrics : '';
+  const ttml = [record.ttml, record.ttmlContent, record.lyricsTtml, record.ttmlLyrics, record.content, lyricsValue]
+    .find((value): value is string => typeof value === 'string' && value.trim().startsWith('<'));
+  if (ttml && /<(?:[\w.-]+:)?tt\b|<(?:[\w.-]+:)?p\b/i.test(ttml)) {
+    const lyrics = parseTtmlLyrics(ttml);
+    const syncedLyrics = lrcFromLyricLines(lyrics);
+    if (lyrics.length && syncedLyrics) return {
+      id: '', title: '', artist: '', album: '', duration: '', artwork: '',
+      lyrics, syncedLyrics, lyricsFormat: 'ttml', lyricsTtml: ttml,
+      lyricsAvailable: true, hasSyncedLyrics: true, lyricsSource: provider,
+      lyricsAttribution: providerAttribution(provider),
+    };
+  }
+
+  const lyricsFileText = [record.lyricsfile, record.lyricsFile, record.lyrics_file]
+    .find((value): value is string => typeof value === 'string');
+  const lyricsFile = lyricsFileText ? parseLyricsfile(lyricsFileText) : null;
+  if (lyricsFile) {
+    const fallbackSyncedLyrics = lyricsFile.format === 'plain'
+      ? [record.syncedLyrics, record.lrc].find((value): value is string => typeof value === 'string' && hasTimedText(value))?.trim()
+      : undefined;
+    if (fallbackSyncedLyrics) return {
+      id: '', title: '', artist: '', album: '', duration: '', artwork: '',
+      lyrics: parseLyrics(fallbackSyncedLyrics), syncedLyrics: fallbackSyncedLyrics,
+      lyricsFormat: 'line', lyricsAvailable: true, hasSyncedLyrics: true,
+      lyricsSource: provider, lyricsAttribution: providerAttribution(provider),
+    };
+    return {
+      id: '', title: '', artist: '', album: '', duration: '', artwork: '',
+      lyrics: lyricsFile.lyrics, syncedLyrics: lyricsFile.syncedLyrics, plainLyrics: lyricsFile.plainLyrics,
+      lyricsFormat: lyricsFile.format,
+      lyricsTtml: lyricsFile.format === 'word' ? serializeLyricsAsTtml(lyricsFile.lyrics) : undefined,
+      lyricsAvailable: true,
+      hasSyncedLyrics: lyricsFile.format === 'word' || lyricsFile.format === 'line',
+      hasPlainLyrics: lyricsFile.format === 'plain', lyricsSource: provider,
+      lyricsAttribution: providerAttribution(provider),
+    };
+  }
+
+  const qrc = [record.lyrics, record.content]
+    .find((value): value is string => typeof value === 'string' && /<(?:[\w.-]+:)?QrcInfos\b|\[\d+,\d+\]/i.test(value));
+  if (qrc) {
+    const lyrics = parseQrcLyrics(qrc, track);
+    const syncedLyrics = lrcFromLyricLines(lyrics);
+    if (lyrics.length && syncedLyrics) return {
+      id: '', title: '', artist: '', album: '', duration: '', artwork: '',
+      lyrics, syncedLyrics, lyricsTtml: serializeLyricsAsTtml(lyrics), lyricsFormat: 'word',
+      lyricsAvailable: true, hasSyncedLyrics: true, lyricsSource: provider,
+      lyricsAttribution: providerAttribution(provider),
+    };
+  }
+
+  const lines = Array.isArray(record.lines) ? record.lines : null;
+  if (lines?.length) {
+    const parsedLines: LyricLine[] = lines.flatMap((value) => {
+      if (!value || typeof value !== 'object') return [];
+      const row = value as Record<string, unknown>;
+      const startValue = row.start ?? row.start_ms ?? row.timeMs;
+      const endValue = row.end ?? row.end_ms ?? row.endTimeMs;
+      const start = typeof startValue === 'number' ? startValue : null;
+      const end = typeof endValue === 'number' ? endValue : null;
+      const words = Array.isArray(row.words) ? row.words.flatMap((word): LyricWord[] => {
+        if (!word || typeof word !== 'object') return [];
+        const part = word as Record<string, unknown>;
+        if (typeof part.text !== 'string') return [];
+        return [{
+          text: part.text,
+          startTimeMs: typeof (part.start ?? part.start_ms) === 'number' ? Number(part.start ?? part.start_ms) : null,
+          endTimeMs: typeof (part.end ?? part.end_ms) === 'number' ? Number(part.end ?? part.end_ms) : null,
+        }];
+      }) : [];
+      const text = typeof row.text === 'string' && row.text.trim()
+        ? row.text.trim()
+        : words.map((word) => word.text).join('').trim();
+      if (!text) return [];
+      return [{
+        timeMs: start,
+        endTimeMs: end,
+        text,
+        ...(words.length ? { words } : {}),
+      }];
+    });
+    if (parsedLines.length) {
+      const hasWordTiming = parsedLines.some((line) => line.words?.some((word) => word.startTimeMs !== null || word.endTimeMs !== null));
+      const hasTiming = parsedLines.some((line) => line.timeMs !== null);
+      const format: LyricsFormat = hasWordTiming ? 'word' : hasTiming ? 'line' : 'plain';
+      const syncedLyrics = hasTiming ? lrcFromLyricLines(parsedLines) : undefined;
+      return {
+        id: '', title: '', artist: '', album: '', duration: '', artwork: '',
+        lyrics: parsedLines, syncedLyrics,
+        plainLyrics: syncedLyrics ? undefined : parsedLines.map((line) => line.text).join('\n'),
+        lyricsFormat: format, lyricsAvailable: true,
+        lyricsTtml: format === 'word' ? serializeLyricsAsTtml(parsedLines) : undefined,
+        hasSyncedLyrics: hasTiming, hasPlainLyrics: !hasTiming,
+        lyricsSource: provider, lyricsAttribution: providerAttribution(provider),
+      };
+    }
+  }
+
+  const syncedLyrics = [record.syncedLyrics, record.lrc, record.lyrics]
+    .find((value): value is string => typeof value === 'string' && hasTimedText(value))?.trim();
+  if (syncedLyrics) return {
+    id: '', title: '', artist: '', album: '', duration: '', artwork: '',
+    syncedLyrics, lyrics: parseLyrics(syncedLyrics), lyricsFormat: 'line',
+    lyricsAvailable: true, hasSyncedLyrics: true, lyricsSource: provider,
+    lyricsAttribution: providerAttribution(provider),
+  };
+
+  const plainLyrics = [record.plainLyrics, record.plain, record.lyrics, record.text]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim();
+  if (!plainLyrics) return null;
+  return {
+    id: '', title: '', artist: '', album: '', duration: '', artwork: '',
+    plainLyrics, lyrics: parseLyrics(undefined, plainLyrics), lyricsFormat: 'plain',
+    lyricsAvailable: true, hasPlainLyrics: true, lyricsSource: provider,
+    lyricsAttribution: providerAttribution(provider),
+  };
+};
+
+const providerAttribution = (provider: string): LyricsAttribution => {
+  const details: Record<string, { name: string; url: string }> = {
+    'LRCLIB': { name: 'LRCLIB', url: 'https://lrclib.net/' },
+    'Better Lyrics': { name: 'Better Lyrics', url: 'https://better-lyrics.boidu.dev/' },
+    'lrc.red': { name: 'lrc.red', url: 'https://lrc.red/' },
+    'LiriQo': { name: 'LiriQo', url: 'https://github.com/AlFarrizi-Studio/Liriqo' },
+    'Spicy Lyrics': { name: 'Spicy Lyrics', url: 'https://spicylyrics.org/' },
+  };
+  const info = details[provider];
+  return { provider: info?.name ?? provider, ...(info ? { providerUrl: info.url } : {}) };
+};
+
 const titleFromUrl = (url: string) => {
   try {
     const pathname = decodeURIComponent(new URL(url).pathname);
@@ -124,13 +556,15 @@ const titleFromUrl = (url: string) => {
 };
 
 const readLyricsFile = async (track: Track): Promise<Track> => {
-  const candidates: File[] = [];
+  const ttmlCandidates: File[] = [];
+  const lrcCandidates: File[] = [];
   const addCandidate = (uri: string | undefined, expectedExtension?: string) => {
     if (!uri) return;
     try {
       const file = new File(uri);
       if (expectedExtension && file.extension.toLowerCase() !== expectedExtension) return;
-      if (!candidates.some((candidate) => candidate.uri === file.uri)) candidates.push(file);
+      const list = file.extension.toLowerCase() === '.ttml' ? ttmlCandidates : lrcCandidates;
+      if (!list.some((candidate) => candidate.uri === file.uri)) list.push(file);
     } catch {
       // Ignore malformed or stale sidecar references and keep checking.
     }
@@ -142,14 +576,40 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
     try {
       const audioFile = new File(track.localUri);
       const baseName = audioFile.name.replace(/\.[^.]+$/, '');
+      addCandidate(new File(audioFile.parentDirectory, `${baseName}.ttml`).uri, '.ttml');
       addCandidate(new File(audioFile.parentDirectory, `${baseName}.lrc`).uri, '.lrc');
     } catch {
       // Continue with the indexed lyric URI and embedded metadata.
     }
   }
+  addCandidate(track.lyricsFileUri, '.ttml');
   addCandidate(track.lyricsFileUri, '.lrc');
 
-  for (const lyricsFile of candidates) {
+  for (const lyricsFile of ttmlCandidates) {
+    try {
+      if (!lyricsFile.exists) continue;
+      const ttml = (await lyricsFile.text()).trim();
+      const lyrics = parseTtmlLyrics(ttml);
+      const syncedLyrics = lrcFromLyricLines(lyrics);
+      if (!lyrics.length || !syncedLyrics) continue;
+      return {
+        ...track,
+        syncedLyrics,
+        plainLyrics: undefined,
+        lyrics,
+        lyricsFormat: 'ttml',
+        lyricsTtml: ttml,
+        lyricsAvailable: true,
+        hasSyncedLyrics: true,
+        hasPlainLyrics: false,
+        lyricsSource: 'local_ttml',
+      };
+    } catch {
+      // An unavailable or malformed rich sidecar should not block LRC fallback.
+    }
+  }
+
+  for (const lyricsFile of lrcCandidates) {
     try {
       if (!lyricsFile.exists) continue;
       const text = (await lyricsFile.text()).trim();
@@ -161,6 +621,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
         syncedLyrics,
         plainLyrics: undefined,
         lyrics: parseLyrics(syncedLyrics),
+        lyricsFormat: 'line',
         lyricsAvailable: true,
         hasSyncedLyrics: true,
         hasPlainLyrics: false,
@@ -207,6 +668,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
           syncedLyrics,
           plainLyrics: undefined,
           lyrics: parseLyrics(syncedLyrics),
+          lyricsFormat: 'line',
           lyricsAvailable: true,
           hasSyncedLyrics: true,
           hasPlainLyrics: false,
@@ -217,6 +679,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
         ...track,
         plainLyrics: text,
         lyrics: parseLyrics(undefined, text),
+        lyricsFormat: 'plain',
         lyricsAvailable: true,
         hasPlainLyrics: true,
         lyricsSource: 'local_text',
@@ -241,6 +704,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
       syncedLyrics: timedLyrics,
       plainLyrics: timedLyrics ? undefined : plainLyrics,
       lyrics: parseLyrics(timedLyrics, plainLyrics),
+      lyricsFormat: timedLyrics ? 'line' : 'plain',
       lyricsAvailable: Boolean(timedLyrics || plainLyrics),
       hasSyncedLyrics: Boolean(timedLyrics),
       hasPlainLyrics: Boolean(plainLyrics),
@@ -287,6 +751,7 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
       lyricsAvailable: true,
       hasSyncedLyrics: Boolean(syncedLyrics),
       hasPlainLyrics: Boolean(plainLyrics),
+      lyricsFormat: syncedLyrics ? 'line' : 'plain',
       lyricsSource: syncedLyrics ? 'embedded_lrc' : 'embedded_text',
     };
   } catch {
@@ -330,6 +795,468 @@ const lookupLyricsOnline = async (track: Track, local: Track, syncedOnly: boolea
     // Lyrics are optional; offline playback and local sidecars continue to work.
     return local;
   }
+};
+
+const providerRequestTails = new Map<string, Promise<void>>();
+const providerNextRequestAt = new Map<string, number>();
+
+const fetchLyricsProvider = async (
+  provider: string,
+  url: string,
+  minimumIntervalMs: number,
+  headers: Record<string, string> = {},
+  timeoutMs = 12_000,
+) => {
+  const previous = providerRequestTails.get(provider) ?? Promise.resolve();
+  const operation = previous.then(async () => {
+    const waitMs = Math.max(0, (providerNextRequestAt.get(provider) ?? 0) - Date.now());
+    if (waitMs) await sleep(waitMs);
+    providerNextRequestAt.set(provider, Date.now() + minimumIntervalMs);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { headers, signal: controller.signal });
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get('retry-after'));
+        const retryDelay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : minimumIntervalMs;
+        providerNextRequestAt.set(provider, Math.max(providerNextRequestAt.get(provider) ?? 0, Date.now() + retryDelay));
+      }
+      return response;
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+  providerRequestTails.set(provider, operation.then(() => undefined, () => undefined));
+  return operation;
+};
+
+const fetchProviderJson = async (
+  provider: string,
+  url: string,
+  minimumIntervalMs: number,
+  headers: Record<string, string> = {},
+  missStatuses: number[] = [404],
+  timeoutMs = 12_000,
+) => {
+  const response = await fetchLyricsProvider(provider, url, minimumIntervalMs, {
+    Accept: 'application/json',
+    ...headers,
+  }, timeoutMs);
+  if (missStatuses.includes(response.status)) return null;
+  if (!response.ok) throw new Error(`${provider} returned HTTP ${response.status}.`);
+  return asRecord(await response.json());
+};
+
+const fetchProviderText = async (
+  provider: string,
+  url: string,
+  minimumIntervalMs: number,
+  headers: Record<string, string> = {},
+) => {
+  const response = await fetchLyricsProvider(provider, url, minimumIntervalMs, {
+    Accept: 'application/xml, text/plain, */*',
+    ...headers,
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`${provider} returned HTTP ${response.status}.`);
+  return response.text();
+};
+
+const candidateFromPayload = (track: Track, payload: unknown, provider: string): Track | null => {
+  const record = asRecord(payload);
+  if (!record) return null;
+  const nested = asRecord(record.data) ?? asRecord(record.result);
+  const sourceRecord = nested ?? record;
+  const lyrics = lyricsPayloadFromRecord(sourceRecord, provider, track);
+  if (!lyrics) return null;
+  return {
+    ...track,
+    syncedLyrics: lyrics.syncedLyrics,
+    plainLyrics: lyrics.plainLyrics,
+    lyrics: lyrics.lyrics,
+    lyricsFormat: lyrics.lyricsFormat,
+    lyricsTtml: lyrics.lyricsTtml,
+    lyricsAvailable: lyrics.lyricsAvailable,
+    hasSyncedLyrics: lyrics.hasSyncedLyrics,
+    hasPlainLyrics: lyrics.hasPlainLyrics,
+    lyricsSource: provider,
+    lyricsAttribution: lyrics.lyricsAttribution,
+  };
+};
+
+const candidateFromLrc = (track: Track, text: string, provider: string): Track | null => {
+  const syncedLyrics = text.trim();
+  if (!syncedLyrics || !hasTimedText(syncedLyrics)) return null;
+  return {
+    ...track,
+    syncedLyrics,
+    plainLyrics: undefined,
+    lyrics: parseLyrics(syncedLyrics),
+    lyricsFormat: 'line',
+    lyricsAvailable: true,
+    hasSyncedLyrics: true,
+    hasPlainLyrics: false,
+    lyricsSource: provider,
+    lyricsAttribution: providerAttribution(provider),
+  };
+};
+
+const withLookupProviders = (result: Track, providers: string[], issues: string[]): Track => ({
+  ...result,
+  lyricsLookupProviders: providers,
+  lyricsLookupIssues: issues.length ? issues : undefined,
+});
+
+const qualityForLyrics = (track: Track) => {
+  if (track.lyricsFormat === 'ttml') return 5;
+  if (track.lyricsFormat === 'word' || track.lyrics?.some((line) => line.words?.some((word) => (
+    word.startTimeMs !== null || word.endTimeMs !== null
+    || word.syllables?.some((syllable) => syllable.startTimeMs !== null || syllable.endTimeMs !== null)
+  )))) return 4;
+  if (track.syncedLyrics?.trim() || track.lyricsFormat === 'line') return 3;
+  if (track.plainLyrics?.trim() || track.lyricsFormat === 'plain' || track.lyrics?.some((line) => line.text.trim())) return 1;
+  return 0;
+};
+
+const liriQoCandidateFromRecord = (track: Track, record: Record<string, unknown>): Track | null => {
+  const source = 'LiriQo';
+  const upstream = [record.upstreamProvider, record.lyricsSource, record.provider]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  const attribution: LyricsAttribution = {
+    provider: upstream && upstream !== source ? `${source} · ${upstream}` : source,
+    providerUrl: providerAttribution(source).providerUrl,
+  };
+
+  const normalized = candidateFromPayload(track, record, source);
+  if (normalized && qualityForLyrics(normalized) >= 4) {
+    return { ...normalized, lyricsAttribution: attribution };
+  }
+
+  const timed = Array.isArray(record.timed) ? record.timed : [];
+  const wordsByLine = asRecord(record.words);
+  const lyrics: LyricLine[] = timed.flatMap((value): LyricLine[] => {
+    const row = asRecord(value);
+    if (!row) return [];
+    const lineId = row.id;
+    const separateWords = lineId !== undefined && wordsByLine
+      ? wordsByLine[String(lineId)]
+      : undefined;
+    const rawWords = Array.isArray(row.words) ? row.words : Array.isArray(separateWords) ? separateWords : [];
+    const words: LyricWord[] = rawWords.flatMap((value): LyricWord[] => {
+      const word = asRecord(value);
+      if (!word || typeof word.text !== 'string' || !word.text.trim()) return [];
+      const start = typeof word.start === 'number' ? word.start : typeof word.start_ms === 'number' ? word.start_ms : null;
+      const end = typeof word.end === 'number' ? word.end : typeof word.end_ms === 'number' ? word.end_ms : null;
+      return [{ text: word.text, startTimeMs: start, endTimeMs: end }];
+    });
+    const start = typeof row.start === 'number' ? row.start : typeof row.start_ms === 'number' ? row.start_ms : null;
+    const end = typeof row.end === 'number' ? row.end : typeof row.end_ms === 'number' ? row.end_ms : null;
+    const text = typeof row.text === 'string' && row.text.trim()
+      ? row.text.trim()
+      : words.map((word) => word.text).join('').trim();
+    if (!text) return [];
+    const wordStart = words.map((word) => word.startTimeMs).filter((time): time is number => time !== null);
+    const wordEnd = words.map((word) => word.endTimeMs).filter((time): time is number => time !== null);
+    return [{
+      timeMs: start ?? (wordStart.length ? Math.min(...wordStart) : null),
+      endTimeMs: end ?? (wordEnd.length ? Math.max(...wordEnd) : null),
+      text,
+      ...(words.length ? { words } : {}),
+    }];
+  });
+
+  if (lyrics.length) {
+    const hasWordTiming = lyrics.some((line) => line.words?.some((word) => word.startTimeMs !== null || word.endTimeMs !== null));
+    const hasLineTiming = lyrics.some((line) => line.timeMs !== null);
+    const lyricsFormat: LyricsFormat = hasWordTiming ? 'word' : hasLineTiming ? 'line' : 'plain';
+    const syncedLyrics = hasLineTiming ? lrcFromLyricLines(lyrics) : undefined;
+    const plainLyrics = syncedLyrics ? undefined : lyrics.map((line) => line.text).join('\n');
+    return {
+      ...track,
+      lyrics,
+      syncedLyrics,
+      plainLyrics,
+      lyricsFormat,
+      lyricsTtml: lyricsFormat === 'word' ? serializeLyricsAsTtml(lyrics) : undefined,
+      lyricsAvailable: true,
+      hasSyncedLyrics: Boolean(syncedLyrics),
+      hasPlainLyrics: Boolean(plainLyrics),
+      lyricsSource: source,
+      lyricsAttribution: attribution,
+    };
+  }
+
+  if (normalized) return { ...normalized, lyricsAttribution: attribution };
+
+  const plain = typeof record.plain === 'string' ? record.plain.trim() : '';
+  return plain ? {
+    ...track,
+    plainLyrics: plain,
+    lyrics: parseLyrics(undefined, plain),
+    lyricsFormat: 'plain',
+    lyricsAvailable: true,
+    hasSyncedLyrics: false,
+    hasPlainLyrics: true,
+    lyricsSource: source,
+    lyricsAttribution: attribution,
+  } : null;
+};
+
+const searchLiriQoForTrack = async (track: Track, onIssue: (message: string) => void) => {
+  if (!track.title.trim() || !track.artist.trim()) return [] as Track[];
+  const params = new URLSearchParams({ title: track.title.trim(), artist: track.artist.trim(), full: '1' });
+  if (track.album.trim()) params.set('album', track.album.trim());
+  const duration = durationSecondsForTrack(track);
+  if (duration && duration > 0 && duration <= 3600) params.set('duration', String(Math.round(duration)));
+
+  const payload = await fetchProviderJson(
+    'LiriQo',
+    `https://api.liriqo-alfarrizi.my.id/v1/lyrics?${params.toString()}`,
+    500,
+    { 'User-Agent': 'Musiqapp/2.0.1 (+https://github.com/egokam/MusicLocal)' },
+    [404],
+    30_000,
+  );
+  if (!payload) return [] as Track[];
+  if (typeof payload.error === 'string' && payload.error.trim()) {
+    onIssue(`LiriQo: ${payload.error.trim()}`);
+    return [] as Track[];
+  }
+  if (payload.partial === true) onIssue('LiriQo returned a partial provider result.');
+
+  const records = [
+    asRecord(payload.primary),
+    ...(Array.isArray(payload.tracks) ? payload.tracks.map(asRecord) : []),
+  ].filter((record): record is Record<string, unknown> => Boolean(record));
+  const seen = new Set<string>();
+  const candidates: Track[] = [];
+  for (const record of records) {
+    const candidate = liriQoCandidateFromRecord(track, record);
+    if (!candidate) continue;
+    const signature = `${candidate.lyricsAttribution?.provider ?? ''}|${candidate.lyricsFormat}|${candidate.lyricsTtml ?? candidate.syncedLyrics ?? candidate.plainLyrics ?? ''}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    candidates.push(candidate);
+  }
+  return candidates;
+};
+
+const searchLrclibForTrack = async (track: Track, onIssue: (message: string) => void) => {
+  if (!track.title.trim() || !track.artist.trim()) return null;
+  const params = new URLSearchParams({ track_name: track.title.trim(), artist_name: track.artist.trim() });
+  if (track.album.trim()) params.set('album_name', track.album.trim());
+  const duration = durationSecondsForTrack(track);
+  if (duration && duration > 0 && duration <= 3600) params.set('duration', String(Math.round(duration)));
+  const candidates: Track[] = [];
+  const headers = { 'X-User-Agent': 'Musiqapp/2.0.1 (+https://github.com/egokam/MusicLocal)' };
+  const addRecord = (record: Record<string, unknown> | null) => {
+    if (!record) return;
+    const candidate = candidateFromPayload(track, record, 'LRCLIB');
+    if (candidate) candidates.push(candidate);
+    else {
+      const plainLyrics = typeof record.plainLyrics === 'string' ? record.plainLyrics.trim() : '';
+      if (plainLyrics) candidates.push({
+        ...track,
+        plainLyrics,
+        lyrics: parseLyrics(undefined, plainLyrics),
+        lyricsFormat: 'plain',
+        lyricsAvailable: true,
+        hasSyncedLyrics: false,
+        hasPlainLyrics: true,
+        lyricsSource: 'LRCLIB',
+        lyricsAttribution: providerAttribution('LRCLIB'),
+      });
+    }
+  };
+
+  try {
+    const exactResponse = await fetchLyricsProvider('LRCLIB', `https://lrclib.net/api/get?${params.toString()}`, 500, headers);
+    if (exactResponse.status !== 404) {
+      if (!exactResponse.ok) throw new Error(`LRCLIB returned HTTP ${exactResponse.status}.`);
+      addRecord(asRecord(await exactResponse.json()));
+    }
+  } catch (error) {
+    // Still try the broader search endpoint if the exact lookup is unavailable.
+    onIssue(error instanceof Error ? error.message : 'LRCLIB exact lookup could not be completed.');
+  }
+
+  // Search can reveal alternate releases that the exact endpoint did not
+  // return, including richer Lyricsfile/word-timed results.
+  const searchParams = new URLSearchParams({ q: `${track.title.trim()} ${track.artist.trim()}` });
+  try {
+    const searchResponse = await fetchLyricsProvider('LRCLIB', `https://lrclib.net/api/search?${searchParams.toString()}`, 500, headers);
+    if (searchResponse.status === 404) return candidates;
+    if (!searchResponse.ok) throw new Error(`LRCLIB search returned HTTP ${searchResponse.status}.`);
+    const searchResults = await searchResponse.json();
+    if (!Array.isArray(searchResults)) throw new Error('LRCLIB search returned an unexpected response.');
+    const matchingResults = searchResults.map(asRecord).filter((record): record is Record<string, unknown> => {
+      if (!record) return false;
+      const title = typeof record.trackName === 'string' ? record.trackName : typeof record.track_name === 'string' ? record.track_name : '';
+      const artist = typeof record.artistName === 'string' ? record.artistName : typeof record.artist_name === 'string' ? record.artist_name : '';
+      const actualDuration = typeof record.duration === 'number' ? record.duration : undefined;
+      return trackTextMatches(title, track.title)
+        && trackTextMatches(artist, track.artist)
+        && (!duration || !actualDuration || Math.abs(duration - actualDuration) <= 5);
+    });
+    matchingResults.sort((left, right) => {
+      const distance = (record: Record<string, unknown>) => typeof record.duration === 'number' && duration
+        ? Math.abs(record.duration - duration)
+        : Number.MAX_SAFE_INTEGER;
+      return distance(left) - distance(right);
+    });
+    matchingResults.forEach(addRecord);
+  } catch (error) {
+    onIssue(error instanceof Error ? error.message : 'LRCLIB search could not be completed.');
+  }
+  return candidates;
+};
+
+const betterLyricsParams = (track: Track) => {
+  const params = new URLSearchParams();
+  const duration = durationSecondsForTrack(track);
+  params.set('s', track.title.trim());
+  params.set('a', track.artist.trim());
+  params.set('al', track.album.trim());
+  params.set('d', String(Math.round(duration ?? 0)));
+  return params;
+};
+
+const searchBetterLyricsForTrack = async (track: Track, onIssue: (message: string) => void) => {
+  if (!track.title.trim() || !track.artist.trim()) return [] as Track[];
+  const candidates: Track[] = [];
+  for (const endpoint of ['/getLyrics', '/qq/getLyrics', '/kugou/getLyrics']) {
+    const provider = 'Better Lyrics';
+    try {
+      const record = await fetchProviderJson(
+        provider,
+        `https://api.betterlyrics.org${endpoint}?${betterLyricsParams(track).toString()}`,
+        700,
+        { 'User-Agent': 'Musiqapp/2.0.1 (+https://github.com/egokam/MusicLocal)' },
+      );
+      if (!record) continue;
+      const candidate = candidateFromPayload(track, record, provider);
+      if (candidate) candidates.push(candidate);
+    } catch (error) {
+      onIssue(error instanceof Error ? error.message : `Better Lyrics ${endpoint} could not be reached.`);
+    }
+  }
+  return candidates;
+};
+
+const isrcJsonUrl = (value: unknown) => {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && ['lrc.red', 'www.lrc.red'].includes(url.hostname.toLowerCase()) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+const searchLrcRedForTrack = async (track: Track, onIssue: (message: string) => void) => {
+  if (!track.title.trim() || !track.artist.trim()) return [] as Track[];
+  const query = new URLSearchParams({ q: `${track.title.trim()} ${track.artist.trim()}` });
+  const headers = {
+    'User-Agent': 'Musiqapp/2.0.1 (+https://github.com/egokam/MusicLocal)',
+    'X-Client-ID': 'Musiqapp/2.0.1 (https://github.com/egokam/MusicLocal/issues)',
+  };
+  const hits: Record<string, unknown>[] = [];
+  let after: string | undefined;
+  const cursors = new Set<string>();
+  do {
+    const params = new URLSearchParams(query);
+    if (after) params.set('after', after);
+    const page = await fetchProviderJson('lrc.red', `https://lrc.red/search.json?${params.toString()}`, 1_000, headers);
+    if (!page || !Array.isArray(page.hits)) break;
+    hits.push(...page.hits.map(asRecord).filter((value): value is Record<string, unknown> => Boolean(value)));
+    after = typeof page.next === 'string' && page.next ? page.next : undefined;
+    if (after && cursors.has(after)) break;
+    if (after) cursors.add(after);
+  } while (after);
+
+  const duration = durationSecondsForTrack(track);
+  const matches = hits
+    .filter((hit) => {
+      if (typeof hit.title !== 'string' || !trackTextMatches(hit.title, track.title)) return false;
+      if (typeof hit.artist !== 'string' || !trackTextMatches(hit.artist, track.artist)) return false;
+      const recordDuration = typeof hit.duration === 'number' ? hit.duration : undefined;
+      return !duration || !recordDuration || Math.abs(duration - recordDuration) <= 5;
+    })
+    .sort((left, right) => {
+      const distance = (hit: Record<string, unknown>) => duration && typeof hit.duration === 'number'
+        ? Math.abs(duration - hit.duration)
+        : Number.MAX_SAFE_INTEGER;
+      return distance(left) - distance(right);
+    });
+
+  const candidates: Track[] = [];
+  for (const hit of matches) {
+    const isrc = typeof hit.isrc === 'string' ? hit.isrc.trim() : '';
+    if (!isrc) continue;
+    let record: Record<string, unknown> | null;
+    try {
+      record = await fetchProviderJson('lrc.red', `https://lrc.red/s/${encodeURIComponent(isrc)}.json`, 1_000, headers);
+    } catch (error) {
+      onIssue(error instanceof Error ? error.message : 'lrc.red could not be reached.');
+      continue;
+    }
+    if (!record) continue;
+    const files = asRecord(record.files) ?? {};
+    const ttmlUrl = isrcJsonUrl(files.ttml);
+    if (ttmlUrl) {
+      let ttml: string | null;
+      try {
+        ttml = await fetchProviderText('lrc.red', ttmlUrl, 1_000, headers);
+      } catch (error) {
+        onIssue(error instanceof Error ? error.message : 'lrc.red TTML could not be reached.');
+        ttml = null;
+      }
+      const parsed = ttml ? parseTtmlLyrics(ttml) : [];
+      const syncedLyrics = lrcFromLyricLines(parsed);
+      if (ttml && parsed.length && syncedLyrics) {
+        candidates.push({
+          ...track,
+          lyrics: parsed,
+          syncedLyrics,
+          lyricsFormat: 'ttml',
+          lyricsTtml: ttml,
+          lyricsAvailable: true,
+          hasSyncedLyrics: true,
+          lyricsSource: 'lrc.red',
+          lyricsAttribution: providerAttribution('lrc.red'),
+        });
+        continue;
+      }
+    }
+    const lrcUrl = isrcJsonUrl(files.lrc);
+    if (lrcUrl) {
+      let lrc: string | null;
+      try {
+        lrc = await fetchProviderText('lrc.red', lrcUrl, 1_000, headers);
+      } catch (error) {
+        onIssue(error instanceof Error ? error.message : 'lrc.red LRC could not be reached.');
+        lrc = null;
+      }
+      const candidate = lrc ? candidateFromLrc(track, lrc, 'lrc.red') : null;
+      if (candidate) candidates.push(candidate);
+    }
+    const lyricsFileUrl = isrcJsonUrl(files.lyricsfile);
+    if (lyricsFileUrl) {
+      let lyricsFile: string | null;
+      try {
+        lyricsFile = await fetchProviderText('lrc.red', lyricsFileUrl, 1_000, headers);
+      } catch (error) {
+        onIssue(error instanceof Error ? error.message : 'lrc.red Lyricsfile could not be reached.');
+        lyricsFile = null;
+      }
+      const candidate = lyricsFile
+        ? candidateFromPayload(track, { lyricsfile: lyricsFile }, 'lrc.red')
+        : null;
+      if (candidate) candidates.push(candidate);
+    }
+  }
+  return candidates;
 };
 
 type SpicySearchResult = {
@@ -550,6 +1477,7 @@ const requestSpicyLyrics = async (
   track: Track,
   forceOnline = false,
   bypassIgnore = false,
+  onLookupError?: (message: string) => void,
 ): Promise<SpicyLyricsCacheEntry | null> => {
   if (!spicyLyricsClientKey || !spicyLyricsEnabled || !track.title.trim() || !track.artist.trim()) return null;
   if (!bypassIgnore && await OfflineMusicService.isSpicyLyricsIgnored(track.id)) return null;
@@ -571,7 +1499,10 @@ const requestSpicyLyrics = async (
       if (track.album.trim()) searchParams.set('album', track.album.trim());
       if (track.durationSeconds && track.durationSeconds > 0) searchParams.set('duration', String(track.durationSeconds));
       const search = await fetchSpicyJson(`/tracks/search?${searchParams.toString()}`);
-      if (search.status !== 200) return legacyCachedEntry;
+      if (search.status !== 200) {
+        if (search.status !== 404) onLookupError?.(`Spicy Lyrics returned HTTP ${search.status}.`);
+        return legacyCachedEntry;
+      }
       const body = asRecord(search.data?.Body);
       const results = Array.isArray(body?.results) ? body.results as SpicySearchResult[] : [];
       const exactMatch = results.find((result) => result.tier === 'exact' && typeof result.id === 'string');
@@ -594,7 +1525,10 @@ const requestSpicyLyrics = async (
       if (spicyLyricsEnabled) await OfflineMusicService.setSpicyLyricsCache(track.id, miss);
       return miss;
     }
-    if (lyricsResponse.status !== 200) return legacyCachedEntry;
+    if (lyricsResponse.status !== 200) {
+      onLookupError?.(`Spicy Lyrics returned HTTP ${lyricsResponse.status}.`);
+      return legacyCachedEntry;
+    }
     const body = asRecord(lyricsResponse.data?.Body);
     if (!body) return legacyCachedEntry;
     const entry = cacheEntryFromResponse(body, trackSignature, spotifyTrackId);
@@ -608,6 +1542,7 @@ const requestSpicyLyrics = async (
     return entry;
   } catch {
     spicyLyricsCooldownUntil = Date.now() + 60_000;
+    onLookupError?.('Spicy Lyrics could not be reached.');
     return legacyCachedEntry;
   }
 };
@@ -622,19 +1557,81 @@ const getSpicyLyricsEntry = (track: Track, forceOnline: boolean) => {
   return lookup;
 };
 
-const applySpicyLyricsEntry = (local: Track, entry: SpicyLyricsCacheEntry, syncedOnly: boolean) => {
+const applySpicyLyricsEntry = (local: Track, entry: SpicyLyricsCacheEntry, syncedOnly: boolean): Track => {
   if (entry.noLyrics || (!entry.syncedLyrics && (!entry.plainLyrics || syncedOnly))) return local;
   return {
     ...local,
     syncedLyrics: entry.syncedLyrics,
     plainLyrics: entry.plainLyrics,
     lyrics: entry.lyrics?.length ? entry.lyrics : parseLyrics(entry.syncedLyrics, entry.plainLyrics),
+    lyricsFormat: entry.precision === 'syllable'
+      ? 'word'
+      : entry.precision === 'line'
+        ? 'line'
+        : 'plain',
     lyricsAvailable: Boolean(entry.syncedLyrics || entry.plainLyrics),
     hasSyncedLyrics: Boolean(entry.syncedLyrics),
     hasPlainLyrics: Boolean(entry.plainLyrics),
     lyricsSource: 'spicy_lyrics_api',
     lyricsAttribution: entry.attribution,
   };
+};
+
+const searchLyricsForChecker = async (track: Track): Promise<Track> => {
+  const candidates: Track[] = [];
+  const searchedProviders: string[] = [];
+  const issues: string[] = [];
+  const addIssue = (provider: string, message: string) => {
+    issues.push(`${provider}: ${message}`);
+  };
+
+  if (spicyLyricsEnabled && spicyLyricsClientKey) {
+    const provider = 'Spicy Lyrics';
+    try {
+      const entry = await requestSpicyLyrics(track, true, false, (message) => addIssue(provider, message));
+      searchedProviders.push(provider);
+      if (entry && !entry.noLyrics) {
+        const candidate = applySpicyLyricsEntry(withoutSpicyApiLyrics(track), entry, false);
+        if (hasRenderableLyrics(candidate)) candidates.push(candidate);
+      }
+    } catch (error) {
+      searchedProviders.push(provider);
+      addIssue(provider, error instanceof Error ? error.message : 'The request failed.');
+    }
+  } else {
+    addIssue(
+      'Spicy Lyrics',
+      spicyLyricsClientKey
+        ? 'Skipped because Spicy Lyrics is disabled in Profile.'
+        : 'Skipped because no Spicy Lyrics client key is configured.',
+    );
+  }
+
+  const attempt = async (provider: string, search: () => Promise<Track | Track[] | null>) => {
+    searchedProviders.push(provider);
+    try {
+      const result = await search();
+      if (Array.isArray(result)) candidates.push(...result);
+      else if (result) candidates.push(result);
+    } catch (error) {
+      addIssue(provider, error instanceof Error ? error.message : 'The request failed.');
+    }
+  };
+
+  // Query independent providers together, then compare every returned result.
+  // This keeps TTML-first selection without making the user wait for the sum of
+  // each provider's response time.
+  await Promise.all([
+    attempt('LiriQo', () => searchLiriQoForTrack(track, (message) => addIssue('LiriQo', message))),
+    attempt('Better Lyrics', () => searchBetterLyricsForTrack(track, (message) => addIssue('Better Lyrics', message))),
+    attempt('lrc.red', () => searchLrcRedForTrack(track, (message) => addIssue('lrc.red', message))),
+    attempt('LRCLIB', () => searchLrclibForTrack(track, (message) => addIssue('LRCLIB', message))),
+  ]);
+
+  candidates.sort((left, right) => qualityForLyrics(right) - qualityForLyrics(left));
+  const bestCandidate = candidates[0];
+  const result = bestCandidate ?? await resolveLocalLyrics(withoutSpicyApiLyrics(track));
+  return withLookupProviders(result, searchedProviders, [...new Set(issues)]);
 };
 
 const sleep = (durationMs: number) => new Promise<void>((resolve) => setTimeout(resolve, durationMs));
@@ -646,6 +1643,7 @@ const runSpicyLyricsPrefetch = async (generation: number) => {
     while (
       spicyLyricsEnabled
       && spicyLyricsClientKey
+      && spicyLyricsAutoDownloadAllowed
       && generation === spicyLyricsPrefetchGeneration
       && spicyLyricsPrefetchQueue.length > 0
     ) {
@@ -666,6 +1664,7 @@ const runSpicyLyricsPrefetch = async (generation: number) => {
     if (
       spicyLyricsEnabled
       && spicyLyricsClientKey
+      && spicyLyricsAutoDownloadAllowed
       && spicyLyricsPrefetchQueue.length > 0
     ) {
       if (spicyLyricsResumeTimer) clearTimeout(spicyLyricsResumeTimer);
@@ -718,6 +1717,20 @@ export const MusicCatalogService = {
   setSpicyLyricsEnabled(enabled: boolean): void {
     spicyLyricsEnabled = enabled;
     if (!enabled) this.cancelSpicyLyricsPrefetch();
+  },
+
+  setSpicyLyricsAutoDownloadAllowed(allowed: boolean): void {
+    const wasAllowed = spicyLyricsAutoDownloadAllowed;
+    spicyLyricsAutoDownloadAllowed = allowed;
+    if (
+      allowed
+      && !wasAllowed
+      && spicyLyricsEnabled
+      && spicyLyricsClientKey
+      && spicyLyricsPrefetchQueue.length > 0
+    ) {
+      void runSpicyLyricsPrefetch(spicyLyricsPrefetchGeneration);
+    }
   },
 
   cancelSpicyLyricsPrefetch(): void {
@@ -808,6 +1821,10 @@ export const MusicCatalogService = {
       && (!syncedOnly || Boolean(result.hasSyncedLyrics || result.syncedLyrics?.trim()))
     ) return result;
     return lookupLyricsOnline(track, result, syncedOnly);
+  },
+
+  async searchLyricsForChecker(track: Track): Promise<Track> {
+    return searchLyricsForChecker(track);
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<void> {
