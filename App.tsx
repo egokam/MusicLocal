@@ -8,6 +8,7 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioLockScreenOptions, type AudioMetadata } from 'expo-audio';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as SecureStore from 'expo-secure-store';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
 import type { PlayerAudioEngineHandle } from './src/components/player/PlayerAudioEngine';
@@ -33,6 +34,9 @@ type SystemVolumeManager = typeof import('react-native-volume-manager').VolumeMa
 
 const Tab = createBottomTabNavigator();
 const playbackCountsFile = new File(Paths.document, 'musiqapp-play-counts.json');
+const spicyLyricsPreferenceKey = 'musiqapp-spicy-lyrics-enabled';
+const spicyLyricsApiKeyStorageKey = 'musiqapp-spicy-lyrics-client-key';
+const lineSyncedWordWavePreferenceKey = 'musiqapp-line-synced-word-wave-enabled';
 let cachedPlayerAudioEngine: typeof import('./src/components/player/PlayerAudioEngine').PlayerAudioEngine | null | undefined;
 
 const getPlayerAudioEngine = () => {
@@ -177,6 +181,9 @@ export default function App() {
   const [apiConnected, setApiConnected] = useState(true);
   const [apiInitializing, setApiInitializing] = useState(true);
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
+  const [spicyLyricsEnabled, setSpicyLyricsEnabledState] = useState(false);
+  const [spicyLyricsConfigured, setSpicyLyricsConfiguredState] = useState(false);
+  const [lineSyncedWordWaveEnabled, setLineSyncedWordWaveEnabledState] = useState(true);
   const [lyricsLoadingTrackId, setLyricsLoadingTrackId] = useState<string | null>(null);
   const [isLoadingTracks, setIsLoadingTracks] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -391,6 +398,75 @@ export default function App() {
     }));
   }, []);
 
+  const setSpicyLyricsEnabled = useCallback((enabled: boolean, persistPreference = true) => {
+    if (enabled && !MusicCatalogService.isSpicyLyricsConfigured()) return;
+    setSpicyLyricsEnabledState(enabled);
+    MusicCatalogService.setSpicyLyricsEnabled(enabled);
+    if (persistPreference) {
+      void SecureStore.setItemAsync(spicyLyricsPreferenceKey, enabled ? 'true' : 'false').catch(() => undefined);
+    }
+    if (enabled) {
+      MusicCatalogService.prefetchSpicyLyrics(downloadsRef.current);
+      const currentTrack = activeTrackRef.current;
+      if (currentTrack && currentTrack.provider !== 'radio' && currentTrack.provider !== 'quran') {
+        const libraryTrack = downloadsRef.current.find((track) => track.id === currentTrack.id) ?? currentTrack;
+        void MusicCatalogService.getLyrics(libraryTrack).then((updatedTrack) => {
+          if (activeTrackRef.current?.id !== currentTrack.id) return;
+          activeTrackRef.current = updatedTrack;
+          setActiveTrack(updatedTrack);
+        }).catch(() => undefined);
+      }
+    } else {
+      const currentTrack = activeTrackRef.current;
+      if (currentTrack?.lyricsSource === 'spicy_lyrics_api') {
+        const libraryTrack = downloadsRef.current.find((track) => track.id === currentTrack.id) ?? currentTrack;
+        void MusicCatalogService.getLyrics(libraryTrack).then((localTrack) => {
+          if (activeTrackRef.current?.id !== currentTrack.id) return;
+          activeTrackRef.current = localTrack;
+          setActiveTrack(localTrack);
+        }).catch(() => undefined);
+      }
+    }
+  }, []);
+
+  const setSpicyLyricsApiKey = useCallback(async (key: string) => {
+    const normalizedKey = key.trim();
+    if (normalizedKey && (!normalizedKey.startsWith('sl_pk_') || normalizedKey.length <= 'sl_pk_'.length)) {
+      throw new Error('Enter a publishable client key that starts with sl_pk_. Secret keys cannot be used in the app.');
+    }
+
+    if (normalizedKey) {
+      await SecureStore.setItemAsync(spicyLyricsApiKeyStorageKey, normalizedKey);
+      MusicCatalogService.setSpicyLyricsClientKey(normalizedKey);
+      setSpicyLyricsConfiguredState(true);
+      const savedPreference = await SecureStore.getItemAsync(spicyLyricsPreferenceKey).catch(() => null);
+      if (savedPreference !== 'false') setSpicyLyricsEnabled(true);
+      return;
+    }
+
+    await SecureStore.deleteItemAsync(spicyLyricsApiKeyStorageKey);
+    MusicCatalogService.setSpicyLyricsClientKey('');
+    setSpicyLyricsConfiguredState(false);
+    setSpicyLyricsEnabled(false, false);
+  }, [setSpicyLyricsEnabled]);
+
+  const setSpicyLyricsIgnored = useCallback(async (trackId: string, ignored: boolean) => {
+    await OfflineMusicService.setSpicyLyricsIgnored(trackId, ignored);
+    const currentTrack = activeTrackRef.current;
+    if (currentTrack?.id !== trackId) return;
+
+    const libraryTrack = downloadsRef.current.find((track) => track.id === trackId) ?? currentTrack;
+    const updatedTrack = await MusicCatalogService.getLyrics(libraryTrack);
+    if (activeTrackRef.current?.id !== trackId) return;
+    activeTrackRef.current = updatedTrack;
+    setActiveTrack(updatedTrack);
+  }, []);
+
+  const setLineSyncedWordWaveEnabled = useCallback((enabled: boolean) => {
+    setLineSyncedWordWaveEnabledState(enabled);
+    void SecureStore.setItemAsync(lineSyncedWordWavePreferenceKey, enabled ? 'true' : 'false').catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     // Register the widget layout as soon as the app starts. Keep this independent
     // from library/storage hydration so an unrelated startup failure cannot leave
@@ -406,8 +482,17 @@ export default function App() {
     void Promise.all([
       OfflineMusicService.getIndexedDownloadedTracks(),
       loadPlaybackCounts(),
-    ]).then(([savedTracks, savedPlayCounts]) => {
+      SecureStore.getItemAsync(spicyLyricsPreferenceKey).catch(() => null),
+      SecureStore.getItemAsync(spicyLyricsApiKeyStorageKey).catch(() => null),
+      SecureStore.getItemAsync(lineSyncedWordWavePreferenceKey).catch(() => null),
+    ]).then(([savedTracks, savedPlayCounts, spicyLyricsPreference, spicyLyricsApiKey, lineSyncedWordWavePreference]) => {
       if (!mounted) return;
+      const hasSpicyLyricsKey = Boolean(spicyLyricsApiKey && MusicCatalogService.setSpicyLyricsClientKey(spicyLyricsApiKey));
+      const shouldUseSpicyLyrics = hasSpicyLyricsKey && spicyLyricsPreference !== 'false';
+      setSpicyLyricsConfiguredState(hasSpicyLyricsKey);
+      setLineSyncedWordWaveEnabledState(lineSyncedWordWavePreference !== 'false');
+      setSpicyLyricsEnabledState(shouldUseSpicyLyrics);
+      MusicCatalogService.setSpicyLyricsEnabled(shouldUseSpicyLyrics);
       playCountsRef.current = savedPlayCounts;
       setPlayCounts(savedPlayCounts);
       downloadsRef.current = savedTracks;
@@ -425,7 +510,14 @@ export default function App() {
       // after the first screen has had a chance to render and accept input.
       backgroundLoadTimer = setTimeout(() => {
         if (!mounted) return;
-        void searchTracks();
+        void searchTracks().then(() => {
+          if (!mounted) return;
+          void OfflineMusicService.pruneSpicyLyricsCache()
+            .catch(() => undefined)
+            .then(() => {
+              if (mounted && shouldUseSpicyLyrics) MusicCatalogService.prefetchSpicyLyrics(downloadsRef.current);
+            });
+        });
         void loadPlaylists().catch(() => undefined);
         void LrcCheckerService.resumeIfNeeded().catch(() => undefined);
         void NowPlayingWidgetService.initialize(savedTracks).catch(() => undefined);
@@ -439,6 +531,7 @@ export default function App() {
     return () => {
       mounted = false;
       if (backgroundLoadTimer) clearTimeout(backgroundLoadTimer);
+      MusicCatalogService.cancelSpicyLyricsPrefetch();
     };
   }, [loadPlaylists, searchTracks]);
 
@@ -470,8 +563,10 @@ export default function App() {
     handledFinishedTrack.current = null;
     const isRadioTrack = selectedTrack.provider === 'radio';
     const isQuranTrack = selectedTrack.provider === 'quran';
-    const shouldLoadLyrics = !isRadioTrack && !isQuranTrack && !selectedTrack.lyrics?.length;
-    setLyricsLoadingTrackId(shouldLoadLyrics ? selectedTrack.id : null);
+    const selectedTrackHasLyrics = Boolean(selectedTrack.lyrics?.some((line) => line.text.trim()));
+    const shouldResolveLyrics = !isRadioTrack && !isQuranTrack && (Boolean(selectedTrack.localUri) || !selectedTrackHasLyrics);
+    const shouldShowLyricsLoading = shouldResolveLyrics && !selectedTrackHasLyrics;
+    setLyricsLoadingTrackId(shouldShowLyricsLoading ? selectedTrack.id : null);
     const musicApiHeaders = selectedTrack.provider === 'local' ? getMusicApiHeaders() : {};
     player.replace(
       selectedTrack.localUri
@@ -495,14 +590,18 @@ export default function App() {
     player.play();
     if (!isRadioTrack && !isQuranTrack) incrementPlayCount(selectedTrack.id);
 
-    if (shouldLoadLyrics) {
+    if (shouldResolveLyrics) {
       void MusicCatalogService.getLyrics(selectedTrack)
         .then((trackWithLyrics) => {
           if (activeTrackRef.current?.id !== selectedTrack.id) return;
           activeTrackRef.current = trackWithLyrics;
           setActiveTrack(trackWithLyrics);
           downloadsRef.current = downloadsRef.current.map((saved) =>
-            saved.id === trackWithLyrics.id ? { ...saved, ...trackWithLyrics, localUri: saved.localUri } : saved,
+            saved.id === trackWithLyrics.id
+              ? trackWithLyrics.lyricsSource === 'spicy_lyrics_api'
+                ? saved
+                : { ...saved, ...trackWithLyrics, localUri: saved.localUri }
+              : saved,
           );
           setDownloadedTracks(downloadsRef.current);
         })
@@ -1030,10 +1129,13 @@ export default function App() {
   }, []);
 
   const saveTrackLyrics = useCallback(async (track: Track, syncedLyrics: string) => {
+    if (track.lyricsSource === 'spicy_lyrics_api') {
+      throw new Error('Spicy Lyrics results can be shown and cached inside the app, but cannot be exported as an LRC file.');
+    }
     const timedLines = parseLyrics(syncedLyrics).filter((line) => line.timeMs !== null && line.text.trim());
     if (timedLines.length === 0) throw new Error('This result does not contain valid synced LRC lines.');
 
-    return updateTrackWithLyrics({ ...track, lyricsSource: 'saved_lrc' }, syncedLyrics);
+    return updateTrackWithLyrics({ ...track, lyricsSource: 'saved_lrc', lyricsAttribution: undefined }, syncedLyrics);
   }, [updateTrackWithLyrics]);
 
   const saveSynchronizedTrack = useCallback(async (
@@ -1093,7 +1195,7 @@ export default function App() {
   }, [player, updateTrackWithLyrics]);
 
   const checkTrackLyrics = useCallback(async (track: Track, forceOnline = false) => {
-    const result = await MusicCatalogService.getLyrics(track, true, forceOnline);
+    const result = await MusicCatalogService.getLyrics(track, true, forceOnline, false);
     if (!result.syncedLyrics?.trim()) return result;
 
     if (result.lyricsSource === 'local_lrc') {
@@ -1107,10 +1209,10 @@ export default function App() {
     try {
       let trackWithLyrics = track;
       try {
-        trackWithLyrics = await MusicCatalogService.getLyrics(track, true);
+        trackWithLyrics = await MusicCatalogService.getLyrics(track, true, false, false);
       } catch {
         try {
-          trackWithLyrics = await MusicCatalogService.getLyrics(track);
+          trackWithLyrics = await MusicCatalogService.getLyrics(track, false, false, false);
         } catch {
           // Lyrics are optional; the audio can still be saved for offline playback.
         }
@@ -1249,6 +1351,13 @@ export default function App() {
     hasActiveTrack: Boolean(activeTrack),
     favoriteTracks,
     playlists,
+    spicyLyricsEnabled,
+    spicyLyricsConfigured,
+    setSpicyLyricsEnabled,
+    setSpicyLyricsApiKey,
+    setSpicyLyricsIgnored,
+    lineSyncedWordWaveEnabled,
+    setLineSyncedWordWaveEnabled,
     apiConnected,
     apiInitializing,
     isLoadingTracks,
@@ -1296,6 +1405,13 @@ export default function App() {
     importLocalAudioFile,
     importMusicFolder,
     downloadedTracks,
+    spicyLyricsEnabled,
+    spicyLyricsConfigured,
+    setSpicyLyricsEnabled,
+    setSpicyLyricsApiKey,
+    setSpicyLyricsIgnored,
+    lineSyncedWordWaveEnabled,
+    setLineSyncedWordWaveEnabled,
     favoriteTracks,
     checkTrackLyrics,
     downloadingTrackIds,
@@ -1375,6 +1491,7 @@ export default function App() {
           visible={playerVisible}
           track={activeTrack}
           lyricsLoadingTrackId={lyricsLoadingTrackId}
+          lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
           isFavorite={Boolean(activeTrack.isFavorite)}
           isPlaying={playerIsPlaying}
           durationSeconds={playerDuration || activeTrack.durationSeconds || 0}

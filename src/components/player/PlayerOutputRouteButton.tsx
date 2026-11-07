@@ -1,5 +1,6 @@
+import type { ComponentType } from 'react';
+import type { AVRoutePickerViewProps } from 'react-native-avroutepickerview';
 import { Ionicons } from '@expo/vector-icons';
-import AVRoutePickerView from 'react-native-avroutepickerview';
 import { Alert, Platform, TouchableOpacity, UIManager, View } from 'react-native';
 
 const routeButtonStyle = {
@@ -22,6 +23,11 @@ const hasIOSRoutePicker = () => {
 
 export const PlayerOutputRouteButton = () => {
   if (hasIOSRoutePicker()) {
+    // Keep the native view package out of Expo Go, where its view manager is not
+    // compiled in. The regular button below remains available as a preview fallback.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const AVRoutePickerView = require('react-native-avroutepickerview').default as ComponentType<AVRoutePickerViewProps>;
+
     return (
       <View
         accessibilityLabel="Choose an audio output"

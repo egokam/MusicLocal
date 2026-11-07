@@ -33,7 +33,26 @@ const readState = async (): Promise<PlaylistState> => {
 
 const writeState = async (state: PlaylistState) => {
   ensureDirectory();
-  await FileSystem.writeAsStringAsync(stateFile.uri, JSON.stringify(state));
+  const safeState = {
+    ...state,
+    tracksByPlaylistId: Object.fromEntries(Object.entries(state.tracksByPlaylistId).map(([playlistId, tracks]) => [
+      playlistId,
+      tracks.map((track) => track.lyricsSource === 'spicy_lyrics_api'
+        ? {
+            ...track,
+            syncedLyrics: undefined,
+            plainLyrics: undefined,
+            lyrics: undefined,
+            lyricsAvailable: false,
+            hasSyncedLyrics: false,
+            hasPlainLyrics: false,
+            lyricsSource: undefined,
+            lyricsAttribution: undefined,
+          }
+        : track),
+    ])),
+  };
+  await FileSystem.writeAsStringAsync(stateFile.uri, JSON.stringify(safeState));
 };
 
 const updateState = async <T,>(mutate: (state: PlaylistState) => T | Promise<T>): Promise<T> => {

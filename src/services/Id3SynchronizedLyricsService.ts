@@ -198,7 +198,7 @@ const readMetadataSample = async (file: File) => {
   if (size < 10) throw new Error('The MP3 is too small to contain a valid audio file.');
   const handle = file.open(FileMode.ReadOnly);
   try {
-    const header = handle.readBytes(10);
+    const header = await handle.readBytes(10);
     let sampleLength = Math.min(size, 128 * 1024);
     if (header[0] === 0x49 && header[1] === 0x44 && header[2] === 0x33) {
       const tagEnd = 10 + readSynchsafeInteger(header, 6);
@@ -206,7 +206,7 @@ const readMetadataSample = async (file: File) => {
       sampleLength = Math.min(size, tagEnd + 128 * 1024);
     }
     handle.offset = 0;
-    return handle.readBytes(sampleLength);
+    return await handle.readBytes(sampleLength);
   } finally {
     handle.close();
   }
@@ -278,11 +278,11 @@ const rewriteMp3 = async (
   let sourceTag: Uint8Array;
   let audioOffset: number;
   try {
-    const sourceHeader = sourceHandle.readBytes(10);
+    const sourceHeader = await sourceHandle.readBytes(10);
     if (sourceHeader[0] === 0x49 && sourceHeader[1] === 0x44 && sourceHeader[2] === 0x33) {
       audioOffset = 10 + readSynchsafeInteger(sourceHeader, 6);
       sourceHandle.offset = 0;
-      sourceTag = sourceHandle.readBytes(audioOffset);
+      sourceTag = await sourceHandle.readBytes(audioOffset);
       if (sourceTag.length !== audioOffset) throw new Error('The MP3 has a truncated ID3 tag.');
     } else {
       audioOffset = 0;
@@ -304,7 +304,7 @@ const rewriteMp3 = async (
       inputHandle.offset = audioOffset;
       let remainingBytes = (source.size ?? 0) - audioOffset;
       while (remainingBytes > 0) {
-        const chunk = inputHandle.readBytes(Math.min(1024 * 1024, remainingBytes));
+        const chunk = await inputHandle.readBytes(Math.min(1024 * 1024, remainingBytes));
         if (chunk.length === 0) throw new Error('The original MP3 could not be copied completely.');
         output.write(chunk, { append: true });
         remainingBytes -= chunk.length;

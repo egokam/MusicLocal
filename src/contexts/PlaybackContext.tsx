@@ -11,6 +11,13 @@ type PlaybackActions = {
   hasActiveTrack: boolean;
   favoriteTracks: Track[];
   playlists: PlaylistSummary[];
+  spicyLyricsEnabled: boolean;
+  spicyLyricsConfigured: boolean;
+  setSpicyLyricsEnabled: (enabled: boolean) => void;
+  setSpicyLyricsApiKey: (key: string) => Promise<void>;
+  setSpicyLyricsIgnored: (trackId: string, ignored: boolean) => Promise<void>;
+  lineSyncedWordWaveEnabled: boolean;
+  setLineSyncedWordWaveEnabled: (enabled: boolean) => void;
   apiConnected: boolean;
   apiInitializing: boolean;
   isLoadingTracks: boolean;

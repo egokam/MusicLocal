@@ -229,7 +229,7 @@ export const TrackActionsSheet = ({
   useEffect(() => {
     if (!visible || page !== 'edit' || !track || track.provider !== 'local') return;
     let mounted = true;
-    void MusicCatalogService.getLyrics(track).then((result) => {
+    void MusicCatalogService.getLyrics(track, false, false, false).then((result) => {
       if (mounted && !lyricsTouched.current) setLyrics(result.syncedLyrics ?? result.plainLyrics ?? '');
     }).catch(() => undefined);
     return () => {

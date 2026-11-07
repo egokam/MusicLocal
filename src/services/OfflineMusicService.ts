@@ -3,15 +3,54 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { parseBuffer } from 'music-metadata';
 import { deduplicateSyncedLyrics, parseLyrics } from './LyricsParser';
 import { cacheArtworkForTrack } from './ArtworkService';
-import type { Track } from '../types';
+import type { LyricsAttribution, LyricLine, Track } from '../types';
 
 // This directory stays inside the app's private Documents container.
 const downloadsDirectory = new Directory(Paths.document, 'Musiqapp');
 const indexFile = new File(downloadsDirectory, 'downloads.json');
+const spicyLyricsCacheFile = new File(downloadsDirectory, 'spicy-lyrics-cache.json');
+const spicyLyricsIgnoredFile = new File(downloadsDirectory, 'spicy-lyrics-ignored.json');
+export const SPICY_LYRICS_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const SPICY_LYRICS_MISS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export type SpicyLyricsCacheEntry = {
+  cachedAt: number;
+  trackSignature: string;
+  spotifyTrackId?: string;
+  noLyrics?: boolean;
+  precision?: 'syllable' | 'line' | 'static';
+  syncedLyrics?: string;
+  plainLyrics?: string;
+  lyrics?: LyricLine[];
+  source?: string;
+  sourceVia?: string;
+  attribution?: LyricsAttribution;
+};
+
 let downloadedTracksCache: Track[] | null = null;
 let downloadedTracksLoad: Promise<Track[]> | null = null;
 let downloadedTracksRevision = 0;
 let indexWriteQueue: Promise<void> = Promise.resolve();
+let spicyLyricsCache: Record<string, SpicyLyricsCacheEntry> | null = null;
+let spicyLyricsCacheLoad: Promise<Record<string, SpicyLyricsCacheEntry>> | null = null;
+let spicyLyricsCacheWriteQueue: Promise<void> = Promise.resolve();
+let spicyLyricsIgnoredTrackIds: Set<string> | null = null;
+let spicyLyricsIgnoredLoad: Promise<Set<string>> | null = null;
+let spicyLyricsIgnoredWriteQueue: Promise<void> = Promise.resolve();
+
+const withoutSpicyApiLyrics = (track: Track): Track => track.lyricsSource === 'spicy_lyrics_api'
+  ? {
+      ...track,
+      syncedLyrics: undefined,
+      plainLyrics: undefined,
+      lyrics: undefined,
+      lyricsAvailable: false,
+      hasSyncedLyrics: false,
+      hasPlainLyrics: false,
+      lyricsSource: undefined,
+      lyricsAttribution: undefined,
+    }
+  : track;
 
 const ensureDirectory = () => {
   if (!downloadsDirectory.exists) {
@@ -20,7 +59,8 @@ const ensureDirectory = () => {
 };
 
 const writeIndexToDisk = (tracks: Track[]) => {
-  const contents = JSON.stringify(tracks);
+  const safeTracks = tracks.map(withoutSpicyApiLyrics);
+  const contents = JSON.stringify(safeTracks);
   const operation = indexWriteQueue.then(async () => {
     ensureDirectory();
     await FileSystem.writeAsStringAsync(indexFile.uri, contents);
@@ -31,11 +71,12 @@ const writeIndexToDisk = (tracks: Track[]) => {
 
 const saveIndexedTracks = async (tracks: Track[]) => {
   downloadedTracksRevision += 1;
-  downloadedTracksCache = tracks;
+  const safeTracks = tracks.map(withoutSpicyApiLyrics);
+  downloadedTracksCache = safeTracks;
   try {
-    await writeIndexToDisk(tracks);
+    await writeIndexToDisk(safeTracks);
   } catch (error) {
-    if (downloadedTracksCache === tracks) downloadedTracksCache = null;
+    downloadedTracksCache = null;
     throw error;
   }
 };
@@ -406,28 +447,33 @@ const extractEmbeddedMetadata = async (
         else console.warn(`[Music import] Embedded artwork was parsed but not saved for ${audioFile.name}.`);
       }
     }
-    const lyricParts = (result.common.lyrics ?? []).flatMap((entry) => {
-      if (entry.text?.trim()) return [entry.text.trim()];
-      if (entry.syncText?.length) return [entry.syncText.map((line) => {
+    const lyricEntries = result.common.lyrics ?? [];
+    // Containers can expose one song twice: once as unsynced USLT text and
+    // once as timed SYLT rows. Prefer a single timed source instead of
+    // concatenating both representations into the cached LRC.
+    const syncedEntry = lyricEntries.find((entry) => entry.syncText?.some((line) => line.text?.trim()));
+    const plainEntry = lyricEntries.find((entry) => entry.text?.trim());
+    if (syncedEntry?.syncText?.length) {
+      lyricsText = deduplicateSyncedLyrics(syncedEntry.syncText.map((line) => {
         const rawTime = Math.max(0, line.timestamp ?? 0);
-        const time = entry.timeStampFormat === 1
+        const time = syncedEntry.timeStampFormat === 1
           ? rawTime * 1152 / (result.format.sampleRate || 44100) * 1000
           : rawTime;
         const minutes = Math.floor(time / 60000);
         const seconds = (time % 60000) / 1000;
         return `[${String(minutes).padStart(2, '0')}:${seconds.toFixed(2).padStart(5, '0')}]${line.text}`;
-      }).join('\n')];
-      return [];
-    });
-    const embeddedLyrics = lyricParts.join('\n\n').trim();
-    if (embeddedLyrics) {
-      lyricsText = embeddedLyrics;
-      hasSyncedLyrics = (result.common.lyrics ?? []).some((entry) => Boolean(entry.syncText?.length));
+      }).join('\n').trim());
+      hasSyncedLyrics = Boolean(lyricsText);
+    } else if (plainEntry?.text?.trim()) {
+      lyricsText = plainEntry.text.trim();
+      hasSyncedLyrics = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(lyricsText);
+    }
+    if (lyricsText) {
       hasPlainLyrics = !hasSyncedLyrics;
       if (persistAssets) {
         const lyricsFile = new File(downloadsDirectory, `${safeName(id)}.${hasSyncedLyrics ? 'lrc' : 'txt'}`);
         if (lyricsFile.exists) lyricsFile.delete();
-        writeTextFile(lyricsFile, embeddedLyrics);
+        writeTextFile(lyricsFile, lyricsText);
         lyricsFileUri = lyricsFile.uri;
       }
     }
@@ -461,10 +507,108 @@ const readIndexedTracks = async (): Promise<Track[]> => {
   await indexWriteQueue;
   if (!indexFile.exists) return [];
   try {
-    return JSON.parse(await indexFile.text()) as Track[];
+    const tracks = JSON.parse(await indexFile.text()) as Track[];
+    const safeTracks = tracks.map(withoutSpicyApiLyrics);
+    if (safeTracks.some((track, index) => track !== tracks[index])) {
+      await writeIndexToDisk(safeTracks);
+    }
+    return safeTracks;
   } catch {
     return [];
   }
+};
+
+const readSpicyLyricsCache = async (): Promise<Record<string, SpicyLyricsCacheEntry>> => {
+  if (spicyLyricsCache) return spicyLyricsCache;
+  if (spicyLyricsCacheLoad) return spicyLyricsCacheLoad;
+
+  const load = (async () => {
+    await spicyLyricsCacheWriteQueue;
+    if (!spicyLyricsCacheFile.exists) return {};
+    try {
+      const parsed = JSON.parse(await spicyLyricsCacheFile.text()) as Record<string, SpicyLyricsCacheEntry>;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  })();
+  spicyLyricsCacheLoad = load;
+  try {
+    spicyLyricsCache = await load;
+    return spicyLyricsCache;
+  } finally {
+    if (spicyLyricsCacheLoad === load) spicyLyricsCacheLoad = null;
+  }
+};
+
+const writeSpicyLyricsCache = async (nextCache: Record<string, SpicyLyricsCacheEntry>) => {
+  spicyLyricsCache = nextCache;
+  const snapshot = JSON.stringify(nextCache);
+  const operation = spicyLyricsCacheWriteQueue.then(async () => {
+    ensureDirectory();
+    await FileSystem.writeAsStringAsync(spicyLyricsCacheFile.uri, snapshot);
+  });
+  spicyLyricsCacheWriteQueue = operation.catch(() => undefined);
+  await operation;
+};
+
+const readSpicyLyricsIgnoredTrackIds = async (): Promise<Set<string>> => {
+  if (spicyLyricsIgnoredTrackIds) return spicyLyricsIgnoredTrackIds;
+  if (spicyLyricsIgnoredLoad) return spicyLyricsIgnoredLoad;
+
+  const load = (async () => {
+    await spicyLyricsIgnoredWriteQueue;
+    if (!spicyLyricsIgnoredFile.exists) return new Set<string>();
+    try {
+      const parsed = JSON.parse(await spicyLyricsIgnoredFile.text()) as unknown;
+      return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []);
+    } catch {
+      return new Set<string>();
+    }
+  })();
+  spicyLyricsIgnoredLoad = load;
+  try {
+    spicyLyricsIgnoredTrackIds = await load;
+    return spicyLyricsIgnoredTrackIds;
+  } finally {
+    if (spicyLyricsIgnoredLoad === load) spicyLyricsIgnoredLoad = null;
+  }
+};
+
+const writeSpicyLyricsIgnoredTrackIds = async (trackIds: Set<string>) => {
+  spicyLyricsIgnoredTrackIds = trackIds;
+  const snapshot = JSON.stringify([...trackIds].sort());
+  const operation = spicyLyricsIgnoredWriteQueue.then(async () => {
+    ensureDirectory();
+    await FileSystem.writeAsStringAsync(spicyLyricsIgnoredFile.uri, snapshot);
+  });
+  spicyLyricsIgnoredWriteQueue = operation.catch(() => undefined);
+  await operation;
+};
+
+const removeSpicyLyricsIgnoredTrackIds = async (trackIdsToRemove: string[]) => {
+  if (trackIdsToRemove.length === 0) return;
+  const ignored = await readSpicyLyricsIgnoredTrackIds();
+  let changed = false;
+  trackIdsToRemove.forEach((trackId) => {
+    if (ignored.delete(trackId)) changed = true;
+  });
+  if (changed) await writeSpicyLyricsIgnoredTrackIds(ignored);
+};
+
+const purgeSpicyLyricsCache = async (trackIdsToKeep?: Set<string>) => {
+  const current = await readSpicyLyricsCache();
+  const now = Date.now();
+  let changed = false;
+  for (const [trackId, entry] of Object.entries(current)) {
+    const age = now - entry.cachedAt;
+    const maxAge = entry.noLyrics ? SPICY_LYRICS_MISS_CACHE_MAX_AGE_MS : SPICY_LYRICS_CACHE_MAX_AGE_MS;
+    if (!Number.isFinite(entry.cachedAt) || age < 0 || age >= maxAge || (trackIdsToKeep && !trackIdsToKeep.has(trackId))) {
+      delete current[trackId];
+      changed = true;
+    }
+  }
+  if (changed) await writeSpicyLyricsCache(current);
 };
 
 const isArtworkUriAvailable = (uri: string | undefined) => {
@@ -644,6 +788,83 @@ export const OfflineMusicService = {
     });
   },
 
+  async getSpicyLyricsCache(trackId: string, trackSignature: string): Promise<SpicyLyricsCacheEntry | null> {
+    const cache = await readSpicyLyricsCache();
+    const entry = cache[trackId];
+    if (!entry) return null;
+    const maxAge = entry.noLyrics ? SPICY_LYRICS_MISS_CACHE_MAX_AGE_MS : SPICY_LYRICS_CACHE_MAX_AGE_MS;
+    const age = Date.now() - entry.cachedAt;
+    if (!Number.isFinite(entry.cachedAt) || age < 0 || age >= maxAge || entry.trackSignature !== trackSignature) {
+      delete cache[trackId];
+      await writeSpicyLyricsCache(cache);
+      return null;
+    }
+    return entry;
+  },
+
+  async setSpicyLyricsCache(trackId: string, entry: SpicyLyricsCacheEntry): Promise<void> {
+    const cache = await readSpicyLyricsCache();
+    cache[trackId] = entry;
+    await writeSpicyLyricsCache(cache);
+  },
+
+  async getSpicyLyricsIgnoredTrackIds(): Promise<string[]> {
+    return [...await readSpicyLyricsIgnoredTrackIds()];
+  },
+
+  async isSpicyLyricsIgnored(trackId: string): Promise<boolean> {
+    return (await readSpicyLyricsIgnoredTrackIds()).has(trackId);
+  },
+
+  async setSpicyLyricsIgnored(trackId: string, ignored: boolean): Promise<void> {
+    const ignoredIds = await readSpicyLyricsIgnoredTrackIds();
+    if (ignored) ignoredIds.add(trackId);
+    else ignoredIds.delete(trackId);
+    await writeSpicyLyricsIgnoredTrackIds(ignoredIds);
+  },
+
+  async renewSpicyLyricsCache(trackId: string): Promise<boolean> {
+    const cache = await readSpicyLyricsCache();
+    const entry = cache[trackId];
+    if (!entry || entry.noLyrics || (!entry.syncedLyrics && !entry.plainLyrics && !entry.lyrics?.length)) return false;
+    entry.cachedAt = Date.now();
+    await writeSpicyLyricsCache(cache);
+    return true;
+  },
+
+  async renewSpicyLyricsCaches(trackIds: string[]): Promise<number> {
+    if (trackIds.length === 0) return 0;
+    const cache = await readSpicyLyricsCache();
+    const now = Date.now();
+    let renewedCount = 0;
+    trackIds.forEach((trackId) => {
+      const entry = cache[trackId];
+      if (!entry || entry.noLyrics || (!entry.syncedLyrics && !entry.plainLyrics && !entry.lyrics?.length)) return;
+      entry.cachedAt = now;
+      renewedCount += 1;
+    });
+    if (renewedCount > 0) await writeSpicyLyricsCache(cache);
+    return renewedCount;
+  },
+
+  async pruneSpicyLyricsCache(trackIdsToKeep?: string[]): Promise<void> {
+    await purgeSpicyLyricsCache(trackIdsToKeep ? new Set(trackIdsToKeep) : undefined);
+  },
+
+  async removeSpicyLyricsCache(trackIds: string[]): Promise<void> {
+    if (trackIds.length === 0) return;
+    const cache = await readSpicyLyricsCache();
+    let changed = false;
+    trackIds.forEach((trackId) => {
+      if (cache[trackId]) {
+        delete cache[trackId];
+        changed = true;
+      }
+    });
+    if (changed) await writeSpicyLyricsCache(cache);
+    await removeSpicyLyricsIgnoredTrackIds(trackIds);
+  },
+
   async exportDownloadedTracksAsZip(destinationDirectory: Directory): Promise<{ fileName: string; exportedCount: number; lyricCount: number; artworkCount: number }> {
     const tracks = await this.getDownloadedTracks();
     const entries: ZipEntry[] = [];
@@ -794,7 +1015,7 @@ export const OfflineMusicService = {
           try {
             let remaining = expectedSize;
             while (remaining > 0) {
-              const chunk = sourceHandle.readBytes(Math.min(256 * 1024, remaining));
+              const chunk = await sourceHandle.readBytes(Math.min(256 * 1024, remaining));
               if (chunk.length === 0) throw new Error(`${entry.file.name} changed while the library was being exported.`);
               writeData(chunk);
               remaining -= chunk.length;
@@ -954,9 +1175,37 @@ export const OfflineMusicService = {
     const id = idForImport(sourceUrl || sourceUri, title, artist);
     const fileExtension = extensionFromUrl(sourceUri);
     const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
+    let sidecarLrc = '';
+    let sidecarText = '';
+    try {
+      const sourceAudio = new File(sourceUri);
+      const sourceBaseName = sourceAudio.name.replace(/\.[^.]+$/, '');
+      const sourceLrc = new File(sourceAudio.parentDirectory, `${sourceBaseName}.lrc`);
+      const sourceLyricsText = new File(sourceAudio.parentDirectory, `${sourceBaseName}.txt`);
+      sidecarLrc = sourceLrc.exists ? (await sourceLrc.text()).trim() : '';
+      sidecarText = sourceLyricsText.exists ? (await sourceLyricsText.text()).trim() : '';
+    } catch {
+      // A picker may expose the audio without allowing sibling-file access.
+    }
     if (audioFile.exists) audioFile.delete();
     await new File(sourceUri).copy(audioFile);
     const embedded = await extractEmbeddedMetadata(audioFile, id, { title, artist });
+    let lyricsFileUri = embedded.lyricsFileUri;
+    let hasSyncedLyrics = embedded.hasSyncedLyrics;
+    let hasPlainLyrics = embedded.hasPlainLyrics;
+    if (sidecarLrc) {
+      const destination = new File(downloadsDirectory, `${safeName(id)}.lrc`);
+      writeTextFile(destination, sidecarLrc);
+      lyricsFileUri = destination.uri;
+      hasSyncedLyrics = true;
+      hasPlainLyrics = false;
+    } else if (sidecarText && !embedded.hasSyncedLyrics && !embedded.hasPlainLyrics) {
+      const destination = new File(downloadsDirectory, `${safeName(id)}.txt`);
+      writeTextFile(destination, sidecarText);
+      lyricsFileUri = destination.uri;
+      hasSyncedLyrics = false;
+      hasPlainLyrics = true;
+    }
     const artwork = embedded.artwork || await cacheArtworkForTrack(new File(sourceUri), downloadsDirectory, id, sourceArtwork);
     const track: Track = {
       id,
@@ -979,10 +1228,10 @@ export const OfflineMusicService = {
       localUri: audioFile.uri,
       shareUrl: sourceUrl || undefined,
       dateAdded: Date.now(),
-      lyricsFileUri: embedded.lyricsFileUri,
-      lyricsAvailable: Boolean(embedded.lyricsFileUri),
-      hasSyncedLyrics: embedded.hasSyncedLyrics,
-      hasPlainLyrics: embedded.hasPlainLyrics,
+      lyricsFileUri,
+      lyricsAvailable: Boolean(lyricsFileUri),
+      hasSyncedLyrics,
+      hasPlainLyrics,
     };
     const current = await this.getDownloadedTracks();
     await saveIndexedTracks([...current.filter((item) => item.id !== id), track]);
@@ -1387,6 +1636,7 @@ export const OfflineMusicService = {
     }
 
     await saveIndexedTracks(remaining);
+    await this.removeSpicyLyricsCache(removedTrackIds);
     return { removedTrackIds, freedBytes };
   },
 

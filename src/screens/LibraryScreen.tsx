@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
+import { requireOptionalNativeModule } from 'expo';
 import { Directory } from 'expo-file-system';
 import { WebView } from 'react-native-webview';
 import { LibraryList } from '../components/library/LibraryList';
@@ -13,8 +14,8 @@ import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
-import { getMusicApiHeaders } from '../services/MusicCatalogService';
-import { OfflineMusicService } from '../services/OfflineMusicService';
+import { getMusicApiHeaders, MusicCatalogService } from '../services/MusicCatalogService';
+import { OfflineMusicService, SPICY_LYRICS_CACHE_MAX_AGE_MS, type SpicyLyricsCacheEntry } from '../services/OfflineMusicService';
 import { DownloaderScreen } from './DownloaderScreen';
 import { LrcCheckerScreen } from './LrcCheckerScreen';
 import { LrcSynchronizerScreen } from './LrcSynchronizerScreen';
@@ -26,6 +27,7 @@ import { ArtistsScreen } from './ArtistsScreen';
 type LibraryStackParamList = {
   LibraryHome: undefined;
   DeveloperProfile: undefined;
+  ApiLyrics: undefined;
   ProfileWeb: { title: string; url: string };
   Songs: undefined;
   Albums: undefined;
@@ -42,6 +44,24 @@ type LibraryStackParamList = {
 };
 
 const Stack = createNativeStackNavigator<LibraryStackParamList>();
+
+const APP_ICON_CHOICES: { key: string | null; title: string; image: ImageSourcePropType; accent: string }[] = [
+  { key: null, title: 'Original', image: require('../../assets/icon.png'), accent: '#FA5265' },
+  { key: 'ocean', title: 'Ocean', image: require('../../assets/icons/ocean.png'), accent: '#159FDB' },
+  { key: 'violet', title: 'Violet', image: require('../../assets/icons/violet.png'), accent: '#A233E5' },
+  { key: 'amber', title: 'Amber', image: require('../../assets/icons/amber.png'), accent: '#E9A115' },
+  { key: 'forest', title: 'Forest', image: require('../../assets/icons/forest.png'), accent: '#31B66A' },
+  { key: 'midnight', title: 'Midnight', image: require('../../assets/icons/midnight.png'), accent: '#4A78E8' },
+];
+
+type AppIconNativeModule = {
+  supportsAlternateIcons: () => boolean;
+  getAppIconState: () => { selected: string | null; isPending: boolean };
+  setAppIconAsync: (iconName: string | null, options?: { deferUntilBackground?: boolean }) => Promise<void>;
+};
+
+const getAppIconNativeModule = () =>
+  requireOptionalNativeModule<AppIconNativeModule>('AwesomeAppIcon');
 
 const LibraryHomeScreen = ({
   navigation,
@@ -128,15 +148,121 @@ const LibraryHomeScreen = ({
 const DeveloperProfileScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile'>) => {
-  const { importMusicFolder, downloadedTracks, deleteDownloadedTracks } = usePlaybackActions();
+  const {
+    importMusicFolder,
+    downloadedTracks,
+    deleteDownloadedTracks,
+    spicyLyricsEnabled,
+    spicyLyricsConfigured,
+    setSpicyLyricsEnabled,
+    setSpicyLyricsApiKey,
+    lineSyncedWordWaveEnabled,
+    setLineSyncedWordWaveEnabled,
+  } = usePlaybackActions();
   const [isImportingFolder, setIsImportingFolder] = useState(false);
   const [isExportingLibrary, setIsExportingLibrary] = useState(false);
   const [isEmptyingLibrary, setIsEmptyingLibrary] = useState(false);
+  const [appIconSupported, setAppIconSupported] = useState<boolean | null>(null);
+  const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
+  const [appIconChangePending, setAppIconChangePending] = useState(false);
+  const [isChangingAppIcon, setIsChangingAppIcon] = useState(false);
+  const [spicyLyricsKeyDraft, setSpicyLyricsKeyDraft] = useState('');
+  const [isEditingSpicyLyricsKey, setIsEditingSpicyLyricsKey] = useState(false);
+  const [isSavingSpicyLyricsKey, setIsSavingSpicyLyricsKey] = useState(false);
   const links = [
     { title: 'GitHub', subtitle: 'github.com/egokam', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
     { title: 'Instagram', subtitle: '@kotmanii', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
     { title: 'Portfolio', subtitle: 'portfolio.egokam.site', icon: 'globe-outline' as const, url: 'https://portfolio.egokam.site' },
   ];
+
+  useFocusEffect(useCallback(() => {
+    const iconModule = getAppIconNativeModule();
+    const supported = iconModule?.supportsAlternateIcons() ?? false;
+    setAppIconSupported(supported);
+    if (supported && iconModule) {
+      const state = iconModule.getAppIconState();
+      setSelectedAppIcon(state.selected);
+      setAppIconChangePending(state.isPending);
+    }
+  }, []));
+
+  const selectAppIcon = async (iconName: string | null) => {
+    if (!appIconSupported || isChangingAppIcon) return;
+    setIsChangingAppIcon(true);
+    try {
+      const iconModule = getAppIconNativeModule();
+      if (!iconModule?.supportsAlternateIcons()) {
+        setAppIconSupported(false);
+        return;
+      }
+      await iconModule.setAppIconAsync(
+        iconName,
+        Platform.OS === 'android' ? { deferUntilBackground: true } : {},
+      );
+      const state = iconModule.getAppIconState();
+      setSelectedAppIcon(state.selected);
+      setAppIconChangePending(state.isPending);
+    } catch (error) {
+      Alert.alert('Could not change app icon', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setIsChangingAppIcon(false);
+    }
+  };
+
+  const showSpicyLyricsKeyHelp = () => {
+    Alert.alert(
+      'Get a Spicy Lyrics client key',
+      'Open the Spicy Lyrics developer dashboard, create or open an application, then enable Client access and create a publishable client key beginning with sl_pk_. For this native app, allow requests without an Origin header in the key’s Client access settings. Never use a secret key beginning with sl_sk_ in the app.',
+      [
+        { text: 'Close', style: 'cancel' },
+        {
+          text: 'Open dashboard',
+          onPress: () => navigation.navigate('ProfileWeb', {
+            title: 'Spicy Lyrics Dashboard',
+            url: 'https://developers.spicylyrics.org/dashboard/applications',
+          }),
+        },
+      ],
+    );
+  };
+
+  const saveSpicyLyricsKey = async () => {
+    if (isSavingSpicyLyricsKey || !spicyLyricsKeyDraft.trim()) return;
+    setIsSavingSpicyLyricsKey(true);
+    try {
+      await setSpicyLyricsApiKey(spicyLyricsKeyDraft);
+      setSpicyLyricsKeyDraft('');
+      setIsEditingSpicyLyricsKey(false);
+    } catch (error) {
+      Alert.alert('Could not save API key', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setIsSavingSpicyLyricsKey(false);
+    }
+  };
+
+  const removeSpicyLyricsKey = () => {
+    Alert.alert(
+      'Delete API key?',
+      'Spicy Lyrics will be turned off. Your saved offline lyrics will remain on this device.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete key',
+          style: 'destructive',
+          onPress: () => {
+            setIsSavingSpicyLyricsKey(true);
+            void setSpicyLyricsApiKey('')
+              .then(() => {
+                setSpicyLyricsKeyDraft('');
+                setIsEditingSpicyLyricsKey(false);
+              })
+              .catch((error) => Alert.alert('Could not delete API key', error instanceof Error ? error.message : 'Please try again.'))
+              .finally(() => setIsSavingSpicyLyricsKey(false));
+          },
+        },
+      ],
+    );
+  };
 
   const emptyLibrary = async () => {
     if (downloadedTracks.length === 0) {
@@ -220,6 +346,63 @@ const DeveloperProfileScreen = ({
         </View>
 
         <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginBottom: 12 }}>
+          APP ICON
+        </Text>
+        <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 22 }}>
+          <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Choose your app icon</Text>
+          <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
+            {appIconSupported === false
+              ? 'Icon switching needs an installed build; it is not available in Expo Go.'
+              : appIconChangePending
+                ? 'Selected. Android applies the new icon after you close Musiqapp.'
+                : Platform.OS === 'ios'
+                  ? 'iOS may ask you to confirm the change.'
+                  : 'Choose how Musiqapp appears on your Home Screen.'}
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10, marginTop: 14 }}>
+            {APP_ICON_CHOICES.map((choice) => {
+              const isSelected = selectedAppIcon === choice.key;
+              return (
+                <TouchableOpacity
+                  key={choice.title}
+                  onPress={() => void selectAppIcon(choice.key)}
+                  disabled={!appIconSupported || isChangingAppIcon}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${choice.title} app icon${isSelected ? ', selected' : ''}`}
+                  accessibilityState={{ selected: isSelected, disabled: !appIconSupported || isChangingAppIcon }}
+                  activeOpacity={0.8}
+                  style={{
+                    width: '31.5%',
+                    minHeight: 112,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 8,
+                    borderRadius: 16,
+                    backgroundColor: isSelected ? '#2A2023' : '#242427',
+                    borderWidth: isSelected ? 1.5 : 1,
+                    borderColor: isSelected ? choice.accent : '#36363A',
+                    opacity: appIconSupported === false ? 0.52 : isChangingAppIcon && !isSelected ? 0.58 : 1,
+                  }}
+                >
+                  <View style={{ position: 'relative' }}>
+                    <Image source={choice.image} resizeMode="cover" style={{ width: 68, height: 68, borderRadius: 15 }} />
+                    {isSelected ? (
+                      <View style={{ position: 'absolute', top: 4, right: 4, width: 21, height: 21, borderRadius: 11, backgroundColor: choice.accent, alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="checkmark" size={14} color="white" />
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text numberOfLines={1} style={{ color: isSelected ? 'white' : '#C5C5CA', fontSize: 11, fontWeight: isSelected ? '700' : '500', marginTop: 7 }}>
+                    {choice.title}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {isChangingAppIcon ? <ActivityIndicator color="#FA5265" size="small" style={{ marginTop: 13 }} /> : null}
+        </View>
+
+        <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginBottom: 12 }}>
           FIND ME ONLINE
         </Text>
         {links.map((link) => (
@@ -241,6 +424,154 @@ const DeveloperProfileScreen = ({
             <Ionicons name="open-outline" size={18} color="#8E8E93" />
           </TouchableOpacity>
         ))}
+
+        <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginTop: 18, marginBottom: 12 }}>
+          LYRICS
+        </Text>
+        <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="key-outline" size={22} color="#FA5265" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 13, marginRight: 8 }}>
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Spicy Lyrics API key</Text>
+              <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
+                {spicyLyricsConfigured ? 'Saved securely on this device.' : 'Add a client key to enable online lyrics.'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={showSpicyLyricsKeyHelp}
+              accessibilityRole="button"
+              accessibilityLabel="How to get a Spicy Lyrics API key"
+              hitSlop={8}
+              style={{ width: 34, height: 38, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="information-circle-outline" size={22} color="#A1A1A6" />
+            </TouchableOpacity>
+          </View>
+          {isEditingSpicyLyricsKey ? (
+            <View style={{ marginTop: 14 }}>
+              <TextInput
+                value={spicyLyricsKeyDraft}
+                onChangeText={setSpicyLyricsKeyDraft}
+                placeholder={spicyLyricsConfigured ? 'Enter a replacement sl_pk_ key' : 'Paste your sl_pk_ client key'}
+                placeholderTextColor="#77777D"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                spellCheck={false}
+                editable={!isSavingSpicyLyricsKey}
+                accessibilityLabel="Spicy Lyrics publishable client key"
+                style={{ minHeight: 50, borderRadius: 14, borderWidth: 1, borderColor: '#454549', backgroundColor: '#252527', color: 'white', paddingHorizontal: 14, fontSize: 14 }}
+              />
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 11 }}>
+                <TouchableOpacity
+                  onPress={() => { setSpicyLyricsKeyDraft(''); setIsEditingSpicyLyricsKey(false); }}
+                  disabled={isSavingSpicyLyricsKey}
+                  accessibilityRole="button"
+                  style={{ minHeight: 42, paddingHorizontal: 13, justifyContent: 'center' }}
+                >
+                  <Text style={{ color: '#A1A1A6', fontSize: 14, fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => void saveSpicyLyricsKey()}
+                  disabled={isSavingSpicyLyricsKey || !spicyLyricsKeyDraft.trim()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Save Spicy Lyrics API key"
+                  style={{ minHeight: 42, borderRadius: 13, backgroundColor: '#FA5265', paddingHorizontal: 17, alignItems: 'center', justifyContent: 'center', opacity: isSavingSpicyLyricsKey || !spicyLyricsKeyDraft.trim() ? 0.55 : 1 }}
+                >
+                  {isSavingSpicyLyricsKey
+                    ? <ActivityIndicator color="white" size="small" />
+                    : <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Save key</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 11 }}>
+              {spicyLyricsConfigured ? (
+                <TouchableOpacity
+                  onPress={removeSpicyLyricsKey}
+                  disabled={isSavingSpicyLyricsKey}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete Spicy Lyrics API key"
+                  style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#292326', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', opacity: isSavingSpicyLyricsKey ? 0.55 : 1 }}
+                >
+                  <Ionicons name="trash-outline" size={16} color="#FA5265" />
+                  <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>Delete</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                onPress={() => { setSpicyLyricsKeyDraft(''); setIsEditingSpicyLyricsKey(true); }}
+                disabled={isSavingSpicyLyricsKey}
+                accessibilityRole="button"
+                accessibilityLabel={spicyLyricsConfigured ? 'Edit Spicy Lyrics API key' : 'Add Spicy Lyrics API key'}
+                style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#2A171C', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center' }}
+              >
+                <Ionicons name={spicyLyricsConfigured ? 'pencil-outline' : 'add'} size={17} color="#FA5265" />
+                <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>{spicyLyricsConfigured ? 'Edit key' : 'Add key'}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        <View style={{ minHeight: 100, borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, paddingVertical: 15, marginBottom: 8, flexDirection: 'row', alignItems: 'center', opacity: spicyLyricsConfigured ? 1 : 0.62 }}>
+          <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="musical-notes" size={22} color="#FA5265" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
+            <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Spicy Lyrics</Text>
+            <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
+              {spicyLyricsConfigured
+                ? 'Check the lyrics catalog in the background and keep results available offline for up to 30 days.'
+                : 'Unavailable until you add a client API key above.'}
+            </Text>
+          </View>
+          <Switch
+            value={spicyLyricsEnabled}
+            onValueChange={setSpicyLyricsEnabled}
+            disabled={!spicyLyricsConfigured}
+            trackColor={{ false: spicyLyricsConfigured ? '#48484A' : '#333337', true: '#FA5265' }}
+            thumbColor="#FFFFFF"
+            accessibilityState={{ disabled: !spicyLyricsConfigured }}
+            accessibilityLabel="Enable Spicy Lyrics lookup and the 30-day offline lyrics cache"
+          />
+        </View>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('ApiLyrics')}
+          accessibilityRole="button"
+          accessibilityLabel="Manage downloaded API lyrics"
+          activeOpacity={0.78}
+          style={{ minHeight: 76, borderRadius: 18, backgroundColor: '#1C1C1E', paddingHorizontal: 16, marginTop: 8, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
+        >
+          <View style={{ width: 42, height: 42, borderRadius: 15, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="cloud-download-outline" size={21} color="#FA5265" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
+            <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Manage downloaded lyrics</Text>
+            <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
+              Renew API lyrics or ignore them to use your local lyrics.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+        </TouchableOpacity>
+        <View style={{ minHeight: 100, borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, paddingVertical: 15, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="pulse" size={22} color="#FA5265" />
+          </View>
+          <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
+            <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Line-synced word wave</Text>
+            <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
+              Animate line-synced lyrics with a moving word highlight. Word-timed lyrics stay animated.
+            </Text>
+          </View>
+          <Switch
+            value={lineSyncedWordWaveEnabled}
+            onValueChange={setLineSyncedWordWaveEnabled}
+            trackColor={{ false: '#48484A', true: '#FA5265' }}
+            thumbColor="#FFFFFF"
+            accessibilityLabel="Animate line-synced lyrics with the word wave"
+          />
+        </View>
 
         <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginTop: 18, marginBottom: 12 }}>
           YOUR MUSIC
@@ -326,6 +657,371 @@ const DeveloperProfileScreen = ({
           Version {Constants.expoConfig?.version ?? '1.1.7'}
         </Text>
       </ScrollView>
+    </SafeAreaView>
+  );
+};
+
+type ApiLyricsRow = {
+  track: Track;
+  entry: SpicyLyricsCacheEntry | null;
+  ignored: boolean;
+};
+
+const ApiLyricsScreen = ({
+  navigation,
+}: NativeStackScreenProps<LibraryStackParamList, 'ApiLyrics'>) => {
+  const { downloadedTracks, setSpicyLyricsIgnored } = usePlaybackActions();
+  const [rows, setRows] = useState<ApiLyricsRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyTrackId, setBusyTrackId] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<'renew-all' | 'renew-selected' | 'ignore-selected' | null>(null);
+  const [message, setMessage] = useState('');
+  const [query, setQuery] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set());
+
+  const loadRows = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    try {
+      const [entries, ignoredIds] = await Promise.all([
+        MusicCatalogService.getCachedSpicyLyricsEntries(downloadedTracks),
+        OfflineMusicService.getSpicyLyricsIgnoredTrackIds(),
+      ]);
+      const entriesById = new Map(entries.map(({ trackId, entry }) => [trackId, entry]));
+      const ignoredTrackIds = new Set(ignoredIds);
+      const nextRows = downloadedTracks.flatMap((track) => {
+        const entry = entriesById.get(track.id) ?? null;
+        const ignored = ignoredTrackIds.has(track.id);
+        return entry || ignored ? [{ track, entry, ignored }] : [];
+      });
+      nextRows.sort((first, second) => (second.entry?.cachedAt ?? 0) - (first.entry?.cachedAt ?? 0));
+      setRows(nextRows);
+    } catch {
+      setMessage('Could not load saved API lyrics. Pull to retry or reopen this page.');
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, [downloadedTracks]);
+
+  useFocusEffect(useCallback(() => {
+    void loadRows();
+  }, [loadRows]));
+
+  const renewLyrics = async (row: ApiLyricsRow) => {
+    if (busyTrackId) return;
+    setBusyTrackId(row.track.id);
+    setMessage('');
+    try {
+      const renewed = await MusicCatalogService.renewSpicyLyrics(row.track);
+      if (!renewed) throw new Error('The lyrics could not be renewed. Check your connection and the Spicy Lyrics setting.');
+      await loadRows(false);
+      setMessage(`${row.track.title} is renewed for another 30 days.`);
+    } catch (error) {
+      Alert.alert('Could not renew lyrics', error instanceof Error ? error.message : 'Check your connection and try again.');
+    } finally {
+      setBusyTrackId(null);
+    }
+  };
+
+  const toggleIgnore = async (row: ApiLyricsRow, ignored: boolean) => {
+    if (busyTrackId) return;
+    setBusyTrackId(row.track.id);
+    setMessage('');
+    try {
+      await setSpicyLyricsIgnored(row.track.id, ignored);
+      await loadRows(false);
+      setMessage(ignored
+        ? `API lyrics ignored for ${row.track.title}. Local lyrics will be used.`
+        : `API lyrics enabled again for ${row.track.title}.`);
+    } catch (error) {
+      Alert.alert('Could not update lyrics preference', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setBusyTrackId(null);
+    }
+  };
+
+  const cacheStatus = (row: ApiLyricsRow) => {
+    if (!row.entry) return 'Cached API lyrics expired';
+    const expiresAt = row.entry.cachedAt + SPICY_LYRICS_CACHE_MAX_AGE_MS;
+    const precision = row.entry.precision === 'syllable'
+      ? 'Word-synced'
+      : row.entry.precision === 'line'
+        ? 'Line-synced'
+        : 'Static';
+    return `${precision} · expires ${new Date(expiresAt).toLocaleDateString()}`;
+  };
+
+  const filteredRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return rows;
+    return rows.filter(({ track }) => `${track.title} ${track.artist}`.toLocaleLowerCase().includes(normalizedQuery));
+  }, [query, rows]);
+
+  const selectedRows = useMemo(
+    () => rows.filter(({ track }) => selectedTrackIds.has(track.id)),
+    [rows, selectedTrackIds],
+  );
+
+  const leaveSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedTrackIds(new Set());
+  };
+
+  const toggleSelected = (trackId: string) => {
+    setSelectedTrackIds((current) => {
+      const next = new Set(current);
+      if (next.has(trackId)) next.delete(trackId);
+      else next.add(trackId);
+      return next;
+    });
+  };
+
+  const renewAll = async () => {
+    if (busyAction || busyTrackId) return;
+    const trackIds = rows.filter((row) => !row.ignored && row.entry).map((row) => row.track.id);
+    setMenuOpen(false);
+    if (trackIds.length === 0) {
+      setMessage('There are no active API lyrics to renew.');
+      return;
+    }
+    setBusyAction('renew-all');
+    setMessage('');
+    try {
+      const renewedCount = await OfflineMusicService.renewSpicyLyricsCaches(trackIds);
+      await loadRows(false);
+      setMessage(`${renewedCount} track${renewedCount === 1 ? '' : 's'} renewed for another 30 days.`);
+    } catch (error) {
+      Alert.alert('Could not renew lyrics', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const renewSelected = async () => {
+    if (busyAction || busyTrackId || selectedRows.length === 0) return;
+    setBusyAction('renew-selected');
+    setMessage('');
+    let renewedCount = 0;
+    for (const row of selectedRows) {
+      try {
+        if (await MusicCatalogService.renewSpicyLyrics(row.track)) renewedCount += 1;
+      } catch {
+        // Continue so one unavailable track does not stop the remaining renewals.
+      }
+    }
+    await loadRows(false);
+    setBusyAction(null);
+    leaveSelectionMode();
+    if (renewedCount === selectedRows.length) {
+      setMessage(`${renewedCount} track${renewedCount === 1 ? '' : 's'} renewed for another 30 days.`);
+    } else {
+      Alert.alert('Some lyrics could not be renewed', `${renewedCount} of ${selectedRows.length} selected tracks were renewed. Check your connection and Spicy Lyrics settings.`);
+    }
+  };
+
+  const ignoreSelected = async () => {
+    if (busyAction || busyTrackId || selectedRows.length === 0) return;
+    setBusyAction('ignore-selected');
+    setMessage('');
+    try {
+      for (const row of selectedRows) {
+        if (!row.ignored) await setSpicyLyricsIgnored(row.track.id, true);
+      }
+      await loadRows(false);
+      setMessage(`API lyrics ignored for ${selectedRows.length} selected track${selectedRows.length === 1 ? '' : 's'}. Local lyrics will be used.`);
+    } catch (error) {
+      Alert.alert('Could not ignore lyrics', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setBusyAction(null);
+      leaveSelectionMode();
+    }
+  };
+
+  const actionsBusy = Boolean(busyAction || busyTrackId);
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
+      <View style={{ height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' }}>
+        <TouchableOpacity
+          onPress={navigation.goBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back to profile"
+          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Ionicons name="chevron-back" size={23} color="white" />
+        </TouchableOpacity>
+        <Text style={{ flex: 1, color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>
+          Downloaded lyrics
+        </Text>
+        <TouchableOpacity
+          onPress={() => setMenuOpen((open) => !open)}
+          accessibilityRole="button"
+          accessibilityLabel="Downloaded lyrics options"
+          accessibilityState={{ expanded: menuOpen }}
+          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Ionicons name="ellipsis-horizontal" size={22} color="white" />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 170 }} showsVerticalScrollIndicator={false}>
+        <Text style={{ color: 'white', fontSize: 28, fontWeight: '800', marginBottom: 6 }}>API lyrics</Text>
+        <Text style={{ color: '#A1A1A6', fontSize: 14, lineHeight: 20, marginBottom: 20 }}>
+          Renew saved lyrics for 30 more days, or ignore them to use lyrics from your files.
+        </Text>
+
+        <View style={{ minHeight: 50, borderRadius: 16, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+          <Ionicons name="search" size={20} color="#A1A1A6" />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search tracks"
+            placeholderTextColor="#77777D"
+            returnKeyType="search"
+            accessibilityLabel="Search downloaded API lyrics"
+            style={{ flex: 1, color: 'white', fontSize: 15, paddingVertical: 11, marginLeft: 10 }}
+          />
+          {query ? (
+            <TouchableOpacity onPress={() => setQuery('')} accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={10}>
+              <Ionicons name="close-circle" size={19} color="#77777D" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {selectionMode ? (
+          <View style={{ marginBottom: 18, padding: 10, borderRadius: 16, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: selectedRows.length ? 10 : 0 }}>
+              <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '600', marginHorizontal: 5 }}>
+                {selectedRows.length ? `${selectedRows.length} selected` : 'Select tracks to manage'}
+              </Text>
+              <TouchableOpacity onPress={leaveSelectionMode} disabled={actionsBusy} accessibilityRole="button" accessibilityLabel="Cancel selection" style={{ paddingHorizontal: 10, paddingVertical: 7 }}>
+                <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+            {selectedRows.length > 0 ? (
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity onPress={() => void renewSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flex: 1, minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.6 : 1 }}>
+                  {busyAction === 'renew-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={17} color="#FA5265" />}
+                  <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Renew</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => void ignoreSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flex: 1, minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.6 : 1 }}>
+                  {busyAction === 'ignore-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="eye-off-outline" size={17} color="#FA5265" />}
+                  <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Ignore</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
+        {message ? (
+          <Text accessibilityLiveRegion="polite" style={{ color: '#A1A1A6', fontSize: 13, lineHeight: 18, marginBottom: 14 }}>
+            {message}
+          </Text>
+        ) : null}
+
+        {loading ? (
+          <View style={{ paddingVertical: 56, alignItems: 'center' }}>
+            <ActivityIndicator color="#FA5265" size="large" />
+            <Text style={{ color: '#8E8E93', fontSize: 14, marginTop: 14 }}>Loading saved lyrics…</Text>
+          </View>
+        ) : rows.length === 0 ? (
+          <View style={{ minHeight: 220, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 24, alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 58, height: 58, borderRadius: 20, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Ionicons name="musical-notes-outline" size={27} color="#FA5265" />
+            </View>
+            <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>No API lyrics saved yet</Text>
+            <Text style={{ color: '#8E8E93', fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 7 }}>
+              Lyrics cached from Spicy Lyrics will appear here.
+            </Text>
+          </View>
+        ) : filteredRows.length === 0 ? (
+          <View style={{ paddingVertical: 44, alignItems: 'center' }}>
+            <Ionicons name="search-outline" size={30} color="#77777D" />
+            <Text style={{ color: '#A1A1A6', fontSize: 15, marginTop: 10 }}>No matching tracks</Text>
+          </View>
+        ) : filteredRows.map((row) => {
+          const isBusy = busyTrackId === row.track.id;
+          const selected = selectedTrackIds.has(row.track.id);
+          return (
+            <View key={row.track.id} style={{ borderRadius: 20, backgroundColor: selected ? '#241A1D' : '#1C1C1E', borderWidth: 1, borderColor: selected ? '#71303A' : '#36363A', padding: 14, marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {selectionMode ? (
+                  <TouchableOpacity
+                    onPress={() => toggleSelected(row.track.id)}
+                    accessibilityRole="checkbox"
+                    accessibilityLabel={`Select ${row.track.title}`}
+                    accessibilityState={{ checked: selected }}
+                    style={{ width: 32, height: 58, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
+                  >
+                    <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={23} color={selected ? '#FA5265' : '#77777D'} />
+                  </TouchableOpacity>
+                ) : null}
+                <View style={{ width: 58, height: 58, borderRadius: 13, overflow: 'hidden', backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+                  {row.track.artwork ? (
+                    <Image
+                      source={{ uri: row.track.artwork, ...(row.track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
+                      resizeMode="cover"
+                      style={{ width: '100%', height: '100%' }}
+                    />
+                  ) : <Ionicons name="musical-notes" size={23} color="#FA5265" />}
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text numberOfLines={1} style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{row.track.title}</Text>
+                  <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 13, marginTop: 3 }}>{row.track.artist}</Text>
+                  <Text numberOfLines={1} style={{ color: row.entry ? '#A1A1A6' : '#FA8A98', fontSize: 11, marginTop: 5 }}>{cacheStatus(row)}</Text>
+                </View>
+              </View>
+
+              {!selectionMode ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#333337' }}>
+                <TouchableOpacity
+                  onPress={() => void renewLyrics(row)}
+                  disabled={Boolean(busyTrackId)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Renew API lyrics for ${row.track.title}`}
+                  activeOpacity={0.75}
+                  style={{ minHeight: 42, borderRadius: 21, backgroundColor: '#2A171C', paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', opacity: busyTrackId && !isBusy ? 0.45 : 1 }}
+                >
+                  {isBusy ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={18} color="#FA5265" />}
+                  <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700', marginLeft: 7 }}>Renew</Text>
+                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={{ color: row.ignored ? '#FA5265' : '#A1A1A6', fontSize: 13, fontWeight: '600', marginRight: 9 }}>
+                    {row.ignored ? 'Ignored' : 'Ignore API'}
+                  </Text>
+                  <Switch
+                    value={row.ignored}
+                    onValueChange={(ignored) => void toggleIgnore(row, ignored)}
+                    disabled={Boolean(busyTrackId)}
+                    trackColor={{ false: '#48484A', true: '#FA5265' }}
+                    thumbColor="#FFFFFF"
+                    accessibilityLabel={row.ignored
+                      ? `Use API lyrics for ${row.track.title}`
+                      : `Ignore API lyrics for ${row.track.title}`}
+                  />
+                </View>
+              </View> : null}
+            </View>
+          );
+        })}
+      </ScrollView>
+
+      {menuOpen ? (
+        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
+          <TouchableOpacity onPress={() => setMenuOpen(false)} activeOpacity={1} accessibilityLabel="Close options" style={StyleSheet.absoluteFill} />
+          <View style={{ position: 'absolute', top: 62, right: 18, width: 210, borderRadius: 16, backgroundColor: '#252527', borderWidth: 1, borderColor: '#454549', padding: 6, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 12 }}>
+            <TouchableOpacity onPress={() => void renewAll()} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
+              {busyAction === 'renew-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={19} color="#FA5265" />}
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Renew all</Text>
+            </TouchableOpacity>
+            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#454549', marginHorizontal: 7 }} />
+            <TouchableOpacity onPress={() => { setMenuOpen(false); setSelectionMode(true); setSelectedTrackIds(new Set()); }} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="checkbox-outline" size={19} color="#D1D1D6" />
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Select</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 };
@@ -851,6 +1547,7 @@ export const LibraryScreen = () => (
   >
     <Stack.Screen name="LibraryHome" component={LibraryHomeScreen} />
     <Stack.Screen name="DeveloperProfile" component={DeveloperProfileScreen} />
+    <Stack.Screen name="ApiLyrics" component={ApiLyricsScreen} />
     <Stack.Screen name="ProfileWeb" component={ProfileWebScreen} />
     <Stack.Screen name="Songs" component={SongsRoute} />
     <Stack.Screen name="Albums" component={AlbumsRoute} />
