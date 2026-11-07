@@ -154,7 +154,9 @@ const DeveloperProfileScreen = ({
     deleteDownloadedTracks,
     spicyLyricsEnabled,
     spicyLyricsConfigured,
+    spicyLyricsAutoDownloadOverCellular,
     setSpicyLyricsEnabled,
+    setSpicyLyricsAutoDownloadOverCellular,
     setSpicyLyricsApiKey,
     lineSyncedWordWaveEnabled,
     setLineSyncedWordWaveEnabled,
@@ -536,6 +538,43 @@ const DeveloperProfileScreen = ({
             accessibilityLabel="Enable Spicy Lyrics lookup and the 30-day offline lyrics cache"
           />
         </View>
+        <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 8, opacity: spicyLyricsConfigured && spicyLyricsEnabled ? 1 : 0.5 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="cloud-download-outline" size={21} color="#FA5265" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 13 }}>
+              <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Automatic lyrics downloads</Text>
+              <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
+                Choose whether API lyrics can be saved over cellular data.
+              </Text>
+            </View>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 9, marginTop: 14 }}>
+            {([
+              { title: 'Wi-Fi only', icon: 'wifi-outline' as const, overCellular: false },
+              { title: 'Over cellular', icon: 'cellular-outline' as const, overCellular: true },
+            ]).map((option) => {
+              const isSelected = spicyLyricsAutoDownloadOverCellular === option.overCellular;
+              const isEnabled = spicyLyricsConfigured && spicyLyricsEnabled;
+              return (
+                <TouchableOpacity
+                  key={option.title}
+                  onPress={() => setSpicyLyricsAutoDownloadOverCellular(option.overCellular)}
+                  disabled={!isEnabled}
+                  accessibilityRole="radio"
+                  accessibilityState={{ disabled: !isEnabled, selected: isSelected }}
+                  accessibilityLabel={`Automatic lyrics downloads: ${option.title}`}
+                  activeOpacity={0.75}
+                  style={{ flex: 1, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: isSelected ? '#FA5265' : '#3A3A3E', backgroundColor: isSelected ? '#3A2026' : '#252527', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+                >
+                  <Ionicons name={option.icon} size={16} color={isSelected ? '#FA5265' : '#A1A1A6'} />
+                  <Text style={{ color: isSelected ? 'white' : '#A1A1A6', fontSize: 13, fontWeight: isSelected ? '700' : '600' }}>{option.title}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
         <TouchableOpacity
           onPress={() => navigation.navigate('ApiLyrics')}
           accessibilityRole="button"
@@ -654,7 +693,7 @@ const DeveloperProfileScreen = ({
           {'© 2026 Egokam. All rights reserved.\nEnjoy, don\'t try to make it commercial, contact admin for support.'}
         </Text>
         <Text style={{ color: '#55555A', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
-          Version {Constants.expoConfig?.version ?? '1.1.7'}
+          Version {Constants.expoConfig?.version ?? '2.0.1'}
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -1504,7 +1543,6 @@ const LrcCheckerRoute = ({
 }: NativeStackScreenProps<LibraryStackParamList, 'LrcChecker'>) => {
   const {
     tracks,
-    apiConnected,
     isLoadingTracks,
     loadAllTracks,
     checkTrackLyrics,
@@ -1514,9 +1552,7 @@ const LrcCheckerRoute = ({
   return (
     <LrcCheckerScreen
       onBack={() => navigation.goBack()}
-      onConnect={() => navigation.navigate('Songs')}
       tracks={tracks}
-      apiConnected={apiConnected}
       isLoadingTracks={isLoadingTracks}
       onLoadAllTracks={loadAllTracks}
       onCheckTrack={checkTrackLyrics}

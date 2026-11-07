@@ -24,31 +24,16 @@ export type PlayerAudioEngineHandle = {
   pause: () => void;
   seekTo: (seconds: number) => Promise<void>;
   setVolume: (volume: number) => void;
-  setMuffling: (amount: number) => void;
-  setReverb: (amount: number) => void;
   setPlaybackEffects: (speed: number, pitch: number) => void;
   setActiveForLockScreen: (active: boolean, metadata?: PlayerNowPlayingMetadata, options?: AudioLockScreenOptions) => void;
   updateLockScreenMetadata: (metadata: PlayerNowPlayingMetadata) => void;
 };
 
-type AudioGraph = {
-  source: ReturnType<AudioContext['createMediaElementSource']>;
-  muffling: ReturnType<AudioContext['createBiquadFilter']>;
-  dryGain: ReturnType<AudioContext['createGain']>;
-  convolver: ReturnType<AudioContext['createConvolver']>;
-  wetGain: ReturnType<AudioContext['createGain']>;
-  masterGain: ReturnType<AudioContext['createGain']>;
-  reverbConnected: boolean;
-};
+type AudioGraph = ReturnType<AudioContext['createMediaElementSource']>;
 
 const disconnectAudioGraph = (graph: AudioGraph | null) => {
   if (!graph) return;
-  graph.source.disconnect();
-  graph.muffling.disconnect();
-  graph.dryGain.disconnect();
-  graph.convolver.disconnect();
-  graph.wetGain.disconnect();
-  graph.masterGain.disconnect();
+  graph.disconnect();
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -56,23 +41,6 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 const normalizeSource = (source: AudioSourceInput): AudioSource => {
   if (typeof source === 'string' || typeof source === 'number') return source;
   return { uri: source.uri, headers: source.headers };
-};
-
-const createReverbImpulse = (context: AudioContext) => {
-  const duration = 0.62;
-  const frameCount = Math.floor(context.sampleRate * duration);
-  const impulse = context.createBuffer(2, frameCount, context.sampleRate);
-
-  for (let channel = 0; channel < impulse.numberOfChannels; channel += 1) {
-    const samples = impulse.getChannelData(channel);
-    for (let frame = 0; frame < frameCount; frame += 1) {
-      const decay = (1 - frame / frameCount) ** 3.6;
-      const earlyReflection = frame < context.sampleRate * 0.045 ? 1.25 : 1;
-      samples[frame] = (Math.random() * 2 - 1) * decay * earlyReflection * 0.32;
-    }
-  }
-
-  return impulse;
 };
 
 const AudioStatusReporter = ({
@@ -109,7 +77,6 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
   const [context, setContext] = useState<AudioContext | null>(null);
   const audioRef = useRef<React.ElementRef<typeof Audio>>(null);
   const graphRef = useRef<AudioGraph | null>(null);
-  const reverbImpulseRef = useRef<ReturnType<AudioContext['createBuffer']> | null>(null);
   const metadataRef = useRef<PlayerNowPlayingMetadata | null>(null);
   const lockScreenActiveRef = useRef(false);
   const liveStreamRef = useRef(false);
@@ -118,8 +85,6 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
   const resumeAfterInterruptionRef = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
   const volumeRef = useRef(1);
-  const mufflingRef = useRef(0);
-  const reverbRef = useRef(0);
   const playbackRateRef = useRef(1);
   const preservePitchRef = useRef(true);
   const lastNotificationUpdateRef = useRef(0);
@@ -172,72 +137,13 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
     updateNotification(nextStatus);
   }, [onStatus, updateNotification]);
 
-  const applyMuffling = useCallback((amount: number) => {
-    const normalized = clamp(amount, 0, 1);
-    mufflingRef.current = normalized;
-    const graph = graphRef.current;
-    const context = contextRef.current;
-    if (!graph || !context) return;
-    const cutoff = 22000 * Math.exp(-Math.log(22000 / 720) * normalized);
-    graph.muffling.frequency.setTargetAtTime(cutoff, context.currentTime, 0.045);
-  }, []);
-
-  const applyReverb = useCallback((amount: number) => {
-    const normalized = clamp(amount, 0, 1);
-    reverbRef.current = normalized;
-    const graph = graphRef.current;
-    const context = contextRef.current;
-    if (!graph || !context) return;
-
-    if (normalized > 0 && !graph.reverbConnected) {
-      graph.muffling.connect(graph.convolver);
-      graph.convolver.connect(graph.wetGain);
-      graph.wetGain.connect(graph.masterGain);
-      graph.reverbConnected = true;
-    } else if (normalized === 0 && graph.reverbConnected) {
-      graph.muffling.disconnect(graph.convolver);
-      graph.convolver.disconnect(graph.wetGain);
-      graph.wetGain.disconnect(graph.masterGain);
-      graph.reverbConnected = false;
-    }
-
-    graph.wetGain.gain.setTargetAtTime(normalized * 1.4, context.currentTime, 0.06);
-  }, []);
-
-  const routeAudioThroughEffects = useCallback(() => {
+  const connectAudioOutput = useCallback(() => {
     const context = contextRef.current;
     if (!context || !audioRef.current || graphRef.current) return;
     const mediaSource = context.createMediaElementSource(audioRef.current);
-    const muffling = context.createBiquadFilter();
-    muffling.type = 'lowpass';
-    muffling.Q.value = 0.72;
-    muffling.frequency.value = 22000;
-
-    const dryGain = context.createGain();
-    const convolver = context.createConvolver();
-    reverbImpulseRef.current ??= createReverbImpulse(context);
-    convolver.buffer = reverbImpulseRef.current;
-    const wetGain = context.createGain();
-    wetGain.gain.value = 0;
-    const masterGain = context.createGain();
-
-    mediaSource.connect(muffling);
-    muffling.connect(dryGain);
-    dryGain.connect(masterGain);
-    masterGain.connect(context.destination);
-
-    graphRef.current = {
-      source: mediaSource,
-      muffling,
-      dryGain,
-      convolver,
-      wetGain,
-      masterGain,
-      reverbConnected: false,
-    };
-    applyMuffling(mufflingRef.current);
-    applyReverb(reverbRef.current);
-  }, [applyMuffling, applyReverb]);
+    mediaSource.connect(context.destination);
+    graphRef.current = mediaSource;
+  }, []);
 
   const play = useCallback(() => {
     pendingPlayRef.current = true;
@@ -323,8 +229,6 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
     pause,
     seekTo,
     setVolume,
-    setMuffling: applyMuffling,
-    setReverb: applyReverb,
     setPlaybackEffects,
     setActiveForLockScreen: (active, metadata, options) => {
       lockScreenActiveRef.current = active;
@@ -348,7 +252,7 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
       metadataRef.current = metadata;
       updateNotification(statusRef.current, true);
     },
-  }), [applyMuffling, applyReverb, pause, play, replace, seekTo, setPlaybackEffects, setVolume, updateNotification]);
+  }), [pause, play, replace, seekTo, setPlaybackEffects, setVolume, updateNotification]);
 
   useEffect(() => {
     const subscriptions = [
@@ -382,7 +286,7 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
   }, []);
 
   const handleLoad = useCallback(() => {
-    routeAudioThroughEffects();
+    connectAudioOutput();
     if (pendingSeekRef.current !== null) {
       audioRef.current?.seekToTime(pendingSeekRef.current);
       pendingSeekRef.current = null;
@@ -397,7 +301,7 @@ export const PlayerAudioEngine = forwardRef<PlayerAudioEngineHandle, PlayerAudio
         updateNotification({ ...statusRef.current, playing: true }, true);
       }).catch(() => undefined);
     }
-  }, [routeAudioThroughEffects, updateNotification]);
+  }, [connectAudioOutput, updateNotification]);
 
   const handleEnded = useCallback(() => {
     const finishedStatus = { ...statusRef.current, playing: false, didJustFinish: true };

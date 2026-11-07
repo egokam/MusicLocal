@@ -64,6 +64,11 @@ const minimalTrack = (track: Track): Track => ({
   hasSyncedLyrics: track.hasSyncedLyrics,
   hasPlainLyrics: track.hasPlainLyrics,
   lyricsSource: track.lyricsSource,
+  lyricsAttribution: track.lyricsAttribution,
+  lyricsFormat: track.lyricsFormat,
+  lyricsTtml: track.lyricsTtml,
+  lyricsLookupProviders: track.lyricsLookupProviders,
+  lyricsLookupIssues: track.lyricsLookupIssues,
   syncedLyrics: track.syncedLyrics,
   plainLyrics: track.plainLyrics,
   lyrics: track.lyrics,
@@ -220,14 +225,30 @@ const unregisterBackgroundTask = async () => {
 };
 
 const recordFromResult = (result: Track): LrcCheckerRecord => {
-  if (isTimedLrc(result.syncedLyrics)) {
-    const isAlreadyApplied = result.lyricsSource === 'local_lrc' || result.lyricsSource === 'embedded_lrc';
+  const hasTimedLyrics = isTimedLrc(result.syncedLyrics)
+    || result.lyrics?.some((line) => line.timeMs !== null && line.text.trim());
+  const hasPlainLyrics = Boolean(result.plainLyrics?.trim() || result.lyrics?.some((line) => line.text.trim()));
+  const isLocal = ['local_ttml', 'local_lrc', 'local_text', 'embedded_lrc', 'embedded_text', 'saved_lrc']
+    .includes(result.lyricsSource ?? '');
+  const isSpicyCache = result.lyricsSource === 'spicy_lyrics_api';
+  const isCandidate = hasTimedLyrics || hasPlainLyrics;
+  const issues = result.lyricsLookupIssues ?? [];
+
+  if (issues.length && isCandidate && !isLocal) {
+    return { state: 'candidate', result, error: issues.join(' ') };
+  }
+  if (issues.length && !isCandidate) {
     return {
-      state: isAlreadyApplied ? 'synced' : 'candidate',
-      result: isAlreadyApplied ? undefined : result,
+      state: 'error',
+      error: issues.join(' '),
     };
   }
-  return { state: result.plainLyrics?.trim() ? 'plain' : 'missing' };
+
+  if (isLocal) return { state: hasTimedLyrics ? 'synced' : hasPlainLyrics ? 'plain' : 'missing' };
+  if (isSpicyCache) return { state: hasTimedLyrics ? 'synced' : hasPlainLyrics ? 'plain' : 'missing', result };
+  if (isCandidate) return { state: 'candidate', result, ...(issues.length ? { error: issues.join(' ') } : {}) };
+  if (issues.length) return { state: 'error', error: issues.join(' ') };
+  return { state: 'missing' };
 };
 
 const isSessionFinished = () => persistedState.scanTracks.every((track) => {
@@ -296,7 +317,7 @@ const runBackgroundBatch = async () => {
       if (expired || processed >= BACKGROUND_BATCH_SIZE) break;
       await setRecord(track.id, { state: 'checking' });
       try {
-        const result = await MusicCatalogService.getLyrics(track, true, true, false);
+        const result = await MusicCatalogService.searchLyricsForChecker(track);
         await setRecord(track.id, recordFromResult(result));
       } catch (error) {
         await setRecord(track.id, {
@@ -380,7 +401,7 @@ export const LrcCheckerService = {
         if (storedTracks.length > 0) return storedTracks;
         return MusicCatalogService.searchAllTracks();
       },
-      checkTrack: (track) => MusicCatalogService.getLyrics(track, true, false, false),
+      checkTrack: (track) => MusicCatalogService.searchLyricsForChecker(track),
     });
   },
 };

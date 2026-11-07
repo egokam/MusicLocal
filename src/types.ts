@@ -19,6 +19,7 @@ export type LyricVoice = {
 
 export type LyricLine = {
   timeMs: number | null;
+  endTimeMs?: number | null;
   text: string;
   words?: LyricWord[];
   background?: LyricVoice[];
@@ -31,9 +32,12 @@ export type LyricsContributor = {
 
 export type LyricsAttribution = {
   provider: string;
+  providerUrl?: string;
   uploader?: LyricsContributor;
   maker?: LyricsContributor;
 };
+
+export type LyricsFormat = 'ttml' | 'word' | 'line' | 'plain';
 
 export type Track = {
   id: string;
@@ -63,6 +67,10 @@ export type Track = {
   hasPlainLyrics?: boolean;
   lyricsSource?: string;
   lyricsAttribution?: LyricsAttribution;
+  lyricsFormat?: LyricsFormat;
+  lyricsTtml?: string;
+  lyricsLookupProviders?: string[];
+  lyricsLookupIssues?: string[];
   isFavorite?: boolean;
   playCount?: number;
   licenseUrl?: string;

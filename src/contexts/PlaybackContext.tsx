@@ -14,6 +14,8 @@ type PlaybackActions = {
   spicyLyricsEnabled: boolean;
   spicyLyricsConfigured: boolean;
   setSpicyLyricsEnabled: (enabled: boolean) => void;
+  spicyLyricsAutoDownloadOverCellular: boolean;
+  setSpicyLyricsAutoDownloadOverCellular: (enabled: boolean) => void;
   setSpicyLyricsApiKey: (key: string) => Promise<void>;
   setSpicyLyricsIgnored: (trackId: string, ignored: boolean) => Promise<void>;
   lineSyncedWordWaveEnabled: boolean;

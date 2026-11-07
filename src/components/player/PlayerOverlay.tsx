@@ -103,7 +103,6 @@ const PlayerOverlayView = ({
   onSeek,
   onVolumeChange,
   onToggleFavorite,
-  onOpenEffects,
   onPlayQueueTrack,
   onToggleShuffle,
   onToggleRepeat,
@@ -135,7 +134,6 @@ const PlayerOverlayView = ({
   onSeek: (seconds: number) => void;
   onVolumeChange: (volume: number) => void;
   onToggleFavorite: () => void;
-  onOpenEffects: () => void;
   onPlayQueueTrack: (track: Track) => void;
   onToggleShuffle: () => void;
   onToggleRepeat: () => void;
@@ -812,8 +810,6 @@ const PlayerOverlayView = ({
     setTrackedQueueView({ trackId: renderedTrack.id, expanded: !queueExpanded });
   };
 
-  const openEffects = () => onOpenEffects();
-
   return (
     <ReanimatedAnimated.View
       pointerEvents="box-none"
@@ -1313,22 +1309,6 @@ const PlayerOverlayView = ({
               >
                 <Ionicons name={isFavorite ? 'star' : 'star-outline'} size={24} color={isFavorite ? '#FA5265' : 'white'} />
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={openEffects}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Audio effects"
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 22,
-                  backgroundColor: 'rgba(255, 255, 255, 0.13)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Ionicons name="options-outline" size={24} color="white" />
-              </TouchableOpacity>
             </View>
           </ReanimatedAnimated.View>
 
@@ -1531,7 +1511,6 @@ const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: 
     previous.onSeek !== next.onSeek ||
     previous.onVolumeChange !== next.onVolumeChange ||
     previous.onToggleFavorite !== next.onToggleFavorite ||
-    previous.onOpenEffects !== next.onOpenEffects ||
     previous.onPlayQueueTrack !== next.onPlayQueueTrack ||
     previous.onToggleShuffle !== next.onToggleShuffle ||
     previous.onToggleRepeat !== next.onToggleRepeat ||

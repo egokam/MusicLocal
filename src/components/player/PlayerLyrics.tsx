@@ -643,7 +643,9 @@ const PlayerLyricsView = ({
       );
     });
 
-    return lyrics.map((line) => line.timeMs === null ? null : endTimeByStart.get(line.timeMs) ?? null);
+    return lyrics.map((line) => line.timeMs === null
+      ? null
+      : line.endTimeMs ?? endTimeByStart.get(line.timeMs) ?? null);
   }, [durationMs, lyrics]);
   const animatedScrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -860,9 +862,26 @@ const PlayerLyricsView = ({
           )}
           {lyricsAttribution ? (
             <View style={{ alignItems: 'flex-start', marginTop: 18, paddingBottom: 10 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 12, lineHeight: 18 }}>
-                Lyrics from {lyricsAttribution.provider || 'unknown source'}
-              </Text>
+              {lyricsAttribution.providerUrl?.startsWith('https://') ? (
+                <TouchableOpacity
+                  accessibilityRole="link"
+                  accessibilityLabel={`Open lyrics provider ${lyricsAttribution.provider}`}
+                  onPress={() => {
+                    if (lyricsAttribution.providerUrl?.startsWith('https://')) {
+                      void Linking.openURL(lyricsAttribution.providerUrl).catch(() => undefined);
+                    }
+                  }}
+                  style={{ paddingVertical: 2 }}
+                >
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, lineHeight: 18 }}>
+                    Lyrics from {lyricsAttribution.provider || 'unknown source'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 12, lineHeight: 18 }}>
+                  Lyrics from {lyricsAttribution.provider || 'unknown source'}
+                </Text>
+              )}
               {lyricsAttribution.uploader ? (
                 <TouchableOpacity
                   accessibilityRole="link"
