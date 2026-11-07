@@ -82,6 +82,7 @@ const PlayerOverlayView = ({
   visible,
   track,
   lyricsLoadingTrackId,
+  lineSyncedWordWaveEnabled,
   isFavorite,
   isPlaying,
   durationSeconds,
@@ -113,6 +114,7 @@ const PlayerOverlayView = ({
   visible: boolean;
   track: Track;
   lyricsLoadingTrackId: string | null;
+  lineSyncedWordWaveEnabled: boolean;
   isFavorite: boolean;
   isPlaying: boolean;
   durationSeconds: number;
@@ -1456,6 +1458,8 @@ const PlayerOverlayView = ({
                 key={renderedTrack.id}
                 trackId={renderedTrack.id}
                 lyrics={lyrics}
+                lyricsAttribution={renderedTrack.lyricsAttribution}
+                lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
                 pauseAutoScroll={pauseLyricsAutoScroll}
                 viewportHeight={lyricsViewportHeight}
                 scrollGesture={detailsScrollGesture}
@@ -1485,6 +1489,8 @@ const PlayerOverlayView = ({
                 key={track.id}
                 trackId={track.id}
                 lyrics={incomingLyrics}
+                lyricsAttribution={track.lyricsAttribution}
+                lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
                 pauseAutoScroll={pauseLyricsAutoScroll}
                 viewportHeight={lyricsViewportHeight}
                 scrollGesture={detailsScrollGesture}
@@ -1510,6 +1516,7 @@ const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: 
     previous.visible !== next.visible ||
     previous.track !== next.track ||
     previous.lyricsLoadingTrackId !== next.lyricsLoadingTrackId ||
+    previous.lineSyncedWordWaveEnabled !== next.lineSyncedWordWaveEnabled ||
     previous.isFavorite !== next.isFavorite ||
     previous.isPlaying !== next.isPlaying ||
     previous.onOpen !== next.onOpen ||

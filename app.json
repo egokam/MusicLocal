@@ -95,6 +95,53 @@
           ],
           "enableFFmpeg": true
         }
+      ],
+      [
+        "expo-awesome-app-icon",
+        {
+          "icons": {
+            "ocean": {
+              "ios": { "light": "./assets/icons/ocean.png" },
+              "android": {
+                "image": "./assets/icons/ocean.png",
+                "foregroundImage": "./assets/icons/ocean.png",
+                "backgroundColor": "#159FDB"
+              }
+            },
+            "violet": {
+              "ios": { "light": "./assets/icons/violet.png" },
+              "android": {
+                "image": "./assets/icons/violet.png",
+                "foregroundImage": "./assets/icons/violet.png",
+                "backgroundColor": "#9016D2"
+              }
+            },
+            "amber": {
+              "ios": { "light": "./assets/icons/amber.png" },
+              "android": {
+                "image": "./assets/icons/amber.png",
+                "foregroundImage": "./assets/icons/amber.png",
+                "backgroundColor": "#E9A115"
+              }
+            },
+            "forest": {
+              "ios": { "light": "./assets/icons/forest.png" },
+              "android": {
+                "image": "./assets/icons/forest.png",
+                "foregroundImage": "./assets/icons/forest.png",
+                "backgroundColor": "#167D3C"
+              }
+            },
+            "midnight": {
+              "ios": { "light": "./assets/icons/midnight.png" },
+              "android": {
+                "image": "./assets/icons/midnight.png",
+                "foregroundImage": "./assets/icons/midnight.png",
+                "backgroundColor": "#1D4CC4"
+              }
+            }
+          }
+        }
       ]
     ],
     "extra": {

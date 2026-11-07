@@ -1,6 +1,38 @@
+export type LyricSyllable = {
+  text: string;
+  startTimeMs: number | null;
+  endTimeMs: number | null;
+};
+
+export type LyricWord = {
+  text: string;
+  startTimeMs: number | null;
+  endTimeMs: number | null;
+  syllables?: LyricSyllable[];
+};
+
+export type LyricVoice = {
+  timeMs: number | null;
+  text: string;
+  words?: LyricWord[];
+};
+
 export type LyricLine = {
   timeMs: number | null;
   text: string;
+  words?: LyricWord[];
+  background?: LyricVoice[];
+};
+
+export type LyricsContributor = {
+  username: string;
+  url: string;
+};
+
+export type LyricsAttribution = {
+  provider: string;
+  uploader?: LyricsContributor;
+  maker?: LyricsContributor;
 };
 
 export type Track = {
@@ -30,6 +62,7 @@ export type Track = {
   hasSyncedLyrics?: boolean;
   hasPlainLyrics?: boolean;
   lyricsSource?: string;
+  lyricsAttribution?: LyricsAttribution;
   isFavorite?: boolean;
   playCount?: number;
   licenseUrl?: string;

@@ -5,14 +5,18 @@ export const deduplicateSyncedLyrics = (value: string) => {
   const seen = new Set<string>();
   const output: string[] = [];
   const timestampPattern = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+  const sourceLines = value.replace(/^\uFEFF/, '').split(/\r?\n/);
+  const containsTimedLyrics = sourceLines.some((line) => /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(line));
 
-  for (const rawLine of value.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+  for (const rawLine of sourceLines) {
     const line = rawLine.trim();
     if (!line) continue;
     const text = line.replace(timestampPattern, '').trim();
     const timestamps = [...line.matchAll(timestampPattern)];
     if (timestamps.length === 0) {
-      output.push(line);
+      // Some tag readers expose both the plain USLT lyrics and timed SYLT
+      // lyrics. Once a file contains timed rows, keep only the timed source.
+      if (!containsTimedLyrics) output.push(line);
       continue;
     }
     if (!text) continue;
@@ -35,9 +39,12 @@ export const deduplicateSyncedLyrics = (value: string) => {
 export const parseLyrics = (syncedLyrics?: string | null, plainLyrics?: string | null): LyricLine[] => {
   if (syncedLyrics?.trim()) {
     const parsed: LyricLine[] = [];
-    for (const rawLine of syncedLyrics.split(/\r?\n/)) {
+    const sourceLines = syncedLyrics.split(/\r?\n/);
+    const containsTimedLyrics = sourceLines.some((line) => /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(line));
+    for (const rawLine of sourceLines) {
       const timestamps = [...rawLine.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)];
       const text = rawLine.replace(/\[[^\]]+\]/g, '').trim();
+      if (containsTimedLyrics && timestamps.length === 0) continue;
       if (!text) {
         if (parsed.length > 0) parsed.push({ timeMs: null, text: '' });
         continue;

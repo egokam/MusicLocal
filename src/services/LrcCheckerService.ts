@@ -296,7 +296,7 @@ const runBackgroundBatch = async () => {
       if (expired || processed >= BACKGROUND_BATCH_SIZE) break;
       await setRecord(track.id, { state: 'checking' });
       try {
-        const result = await MusicCatalogService.getLyrics(track, true, true);
+        const result = await MusicCatalogService.getLyrics(track, true, true, false);
         await setRecord(track.id, recordFromResult(result));
       } catch (error) {
         await setRecord(track.id, {
@@ -380,7 +380,7 @@ export const LrcCheckerService = {
         if (storedTracks.length > 0) return storedTracks;
         return MusicCatalogService.searchAllTracks();
       },
-      checkTrack: (track) => MusicCatalogService.getLyrics(track, true),
+      checkTrack: (track) => MusicCatalogService.getLyrics(track, true, false, false),
     });
   },
 };

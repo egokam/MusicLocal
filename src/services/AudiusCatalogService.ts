@@ -26,9 +26,9 @@ export const GENRE_MIXES: GenreMixDefinition[] = [
 ];
 
 export const AUDIO_MIXES: AudiusMixDefinition[] = [
-  { id: 'arabic', title: 'Arabic Trending', query: 'arabic', sortMethod: 'popular', glow: '#F26A31' },
   { id: 'morocco', title: 'Morocco', query: 'moroccan', sortMethod: 'popular', glow: '#D53D5B' },
   { id: 'english', title: 'English', query: 'english pop', sortMethod: 'popular', glow: '#8B5CF6' },
+  { id: 'arabic', title: 'Arabic Trending', query: 'arabic', sortMethod: 'popular', glow: '#F26A31' },
   { id: 'mix-2026', title: '2026 Mix', query: '2026', sortMethod: 'recent', glow: '#F3A33A' },
   { id: 'golden-2017', title: '2017 Golden Mix', query: '2017', sortMethod: 'popular', glow: '#3B8CE6' },
 ];
