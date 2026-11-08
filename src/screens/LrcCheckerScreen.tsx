@@ -181,11 +181,14 @@ export const LrcCheckerScreen = ({
       || (state === 'candidate' && !record?.error);
     return count + (isComplete ? 1 : 0);
   }, 0);
-  const pendingLyricMatches = tracks.filter((track) =>
-    stateFor(track) === 'candidate'
-    && !scanSnapshot.records[track.id]?.error
-    && Boolean(lyricsTextForTrack(scanSnapshot.records[track.id]?.result ?? track).trim()),
-  );
+  const candidateLyricMatches = tracks.filter((track) => {
+    const record = scanSnapshot.records[track.id];
+    return stateFor(track) === 'candidate'
+      && Boolean(record?.result && lyricsTextForTrack(record.result).trim());
+  });
+  const pendingLyricMatches = candidateLyricMatches.filter((track) => !scanSnapshot.records[track.id]?.result?.lyricsQualityWarning);
+  const partialLyricMatchCount = candidateLyricMatches.length - pendingLyricMatches.length;
+  const incompleteLyricMatchCount = pendingLyricMatches.filter((track) => Boolean(scanSnapshot.records[track.id]?.error)).length;
   const filteredTracks = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return tracks.filter((track) => `${track.title} ${track.artist} ${track.album}`.toLocaleLowerCase().includes(query));
@@ -262,8 +265,8 @@ export const LrcCheckerScreen = ({
     if (isBusy || applyAllRunning.current || pendingLyricMatches.length === 0) return;
 
     Alert.alert(
-      'Apply Found Lyrics?',
-      `This will save the selected lyric result for ${pendingLyricMatches.length} ${pendingLyricMatches.length === 1 ? 'track' : 'tracks'} to your library. Continue?`,
+      'Apply all without review?',
+      `This immediately applies the current lyric match to ${pendingLyricMatches.length} ${pendingLyricMatches.length === 1 ? 'track' : 'tracks'} without a preview, replacing any lyrics already saved for them.${incompleteLyricMatchCount ? `\n\n${incompleteLyricMatchCount} ${incompleteLyricMatchCount === 1 ? 'match has' : 'matches have'} an incomplete source search, so a better result may exist.` : ''}${partialLyricMatchCount ? `\n\n${partialLyricMatchCount} suspected partial ${partialLyricMatchCount === 1 ? 'match is' : 'matches are'} excluded from bulk apply and need individual review.` : ''}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -325,10 +328,13 @@ export const LrcCheckerScreen = ({
     if (reviewTrack.lyricsSource === 'spicy_lyrics_api') return;
     setIsSavingReview(true);
     try {
-      const saved = await onSaveTrackLyrics(reviewTrack, lyricsTextForTrack(reviewTrack));
+      const saved = await onSaveTrackLyrics(
+        { ...reviewTrack, lyricsQualityWarning: undefined },
+        lyricsTextForTrack(reviewTrack),
+      );
       await LrcCheckerService.updateRecord(reviewTrack.id, {
         state: reviewTrack.lyricsFormat === 'plain' ? 'plain' : 'synced',
-        result: saved,
+        result: { ...saved, lyricsQualityWarning: undefined },
       });
       setReviewTrack(null);
     } catch (error) {
@@ -432,7 +438,7 @@ export const LrcCheckerScreen = ({
             <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
               <Text style={{ color: 'white', fontSize: 36, lineHeight: 42, fontWeight: '800' }}>LRC Checker</Text>
               <Text style={{ color: '#A1A1A6', fontSize: 15, lineHeight: 21, marginTop: 7 }}>
-                Spicy Lyrics is checked first, followed by LiriQo, Better Lyrics, lrc.red, and LRCLIB. TTML and word-timed matches rank above line-synced lyrics, with plain text last.
+                Spicy Lyrics is checked first, followed by LiriQo, Better Lyrics, lrc.red, and LRCLIB. Whole-track timing coverage ranks first; TTML and word timing break ties, with plain text last.
               </Text>
 
               <View style={{ marginTop: 18, padding: 15, borderRadius: 18, backgroundColor: '#1C1C1E' }}>
@@ -470,31 +476,36 @@ export const LrcCheckerScreen = ({
                   </Text>
                 </TouchableOpacity>
 
-                {pendingLyricMatches.length > 0 ? (
-                  <TouchableOpacity
-                    onPress={applyAllFoundLyrics}
-                    disabled={isBusy || isApplyingAll}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Apply and approve all ${pendingLyricMatches.length} found lyric matches`}
-                    style={{
-                      height: 48,
-                      borderRadius: 24,
-                      backgroundColor: '#FA243C',
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginTop: 10,
-                      opacity: isBusy ? 0.55 : 1,
-                    }}
-                  >
-                    {isApplyingAll ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="checkmark-done" size={19} color="white" />}
-                    <Text style={{ color: 'white', fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
-                      {isApplyingAll
-                        ? `Applying ${applyAllProgress.completed}/${applyAllProgress.total}…`
-                        : `Apply All (${pendingLyricMatches.length})`}
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
+                <TouchableOpacity
+                  onPress={applyAllFoundLyrics}
+                  disabled={isBusy || isApplyingAll || pendingLyricMatches.length === 0}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Apply all ${pendingLyricMatches.length} found lyric matches without review`}
+                  style={{
+                    height: 48,
+                    borderRadius: 24,
+                    backgroundColor: pendingLyricMatches.length > 0 ? '#FA243C' : '#303033',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginTop: 10,
+                    opacity: isBusy || isApplyingAll || pendingLyricMatches.length === 0 ? 0.6 : 1,
+                  }}
+                >
+                  {isApplyingAll ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="checkmark-done" size={19} color="white" />}
+                  <Text style={{ color: 'white', fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
+                    {isApplyingAll
+                      ? `Applying ${applyAllProgress.completed}/${applyAllProgress.total}…`
+                    : pendingLyricMatches.length
+                      ? `Apply all without review (${pendingLyricMatches.length})`
+                      : 'No complete matches to apply'}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#8E8E93', fontSize: 11, lineHeight: 15, textAlign: 'center', marginTop: 8 }}>
+                  {partialLyricMatchCount
+                    ? `${partialLyricMatchCount} suspected partial ${partialLyricMatchCount === 1 ? 'match needs' : 'matches need'} individual review; bulk apply replaces saved lyrics.`
+                    : 'Applies every found match immediately and replaces lyrics already saved for those tracks.'}
+                </Text>
               </View>
 
               <View style={{ height: 48, marginTop: 20, paddingHorizontal: 14, borderRadius: 24, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center' }}>
@@ -525,6 +536,7 @@ export const LrcCheckerScreen = ({
                 track={item}
                 state={state}
                 errorMessage={scanSnapshot.records[item.id]?.error}
+                qualityWarning={state === 'candidate' ? result?.lyricsQualityWarning : undefined}
                 hasRetryCandidate={Boolean(scanSnapshot.records[item.id]?.result)}
                 disabled={isApplyingAll || (isScanning && state !== 'candidate') || retryingTrackId === item.id}
                 onCheck={() => void checkTrack(item, undefined, true).catch(() => undefined)}
@@ -614,6 +626,11 @@ export const LrcCheckerScreen = ({
             {reviewTrack?.lyricsAttribution?.provider ? (
               <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 5 }}>
                 Source: {reviewTrack.lyricsAttribution.provider}
+              </Text>
+            ) : null}
+            {reviewTrack?.lyricsQualityWarning ? (
+              <Text style={{ color: '#E6B94C', fontSize: 12, lineHeight: 17, marginTop: 8 }}>
+                {reviewTrack.lyricsQualityWarning} A more complete line-synced match may be better.
               </Text>
             ) : null}
             {reviewTrack?.lyricsLookupIssues?.length ? (

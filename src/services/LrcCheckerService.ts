@@ -73,6 +73,7 @@ const minimalTrack = (track: Track): Track => ({
   lyricsTtml: track.lyricsTtml,
   lyricsLookupProviders: track.lyricsLookupProviders,
   lyricsLookupIssues: track.lyricsLookupIssues,
+  lyricsQualityWarning: track.lyricsQualityWarning,
   syncedLyrics: track.syncedLyrics,
   plainLyrics: track.plainLyrics,
   lyrics: track.lyrics,

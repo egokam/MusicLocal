@@ -940,8 +940,23 @@ const PlayerLyricsList = React.memo(PlayerLyricsView, areLyricsListPropsEqual);
 
 const PlayerLyricsStatusView = (props: PlayerLyricsProps) => {
   const { currentTime, duration } = usePlayerPlaybackStatus();
+  const displayLyrics = useMemo(() => {
+    const firstTimedLine = props.lyrics.find((line) => line.text.trim().length > 0 && line.timeMs !== null);
+    if (!firstTimedLine || firstTimedLine.timeMs === null || firstTimedLine.timeMs <= 1_000) {
+      return props.lyrics;
+    }
+
+    return [
+      {
+        timeMs: 0,
+        endTimeMs: firstTimedLine.timeMs,
+        text: '. . .',
+      },
+      ...props.lyrics,
+    ];
+  }, [props.lyrics]);
   const currentTimeMs = currentTime * 1000;
-  const activeLineIndex = props.lyrics.reduce((activeIndex, line, index) =>
+  const activeLineIndex = displayLyrics.reduce((activeIndex, line, index) =>
     line.text.trim().length > 0 && line.timeMs !== null && line.timeMs <= currentTimeMs
       ? index
       : activeIndex,
@@ -950,6 +965,7 @@ const PlayerLyricsStatusView = (props: PlayerLyricsProps) => {
   return (
     <PlayerLyricsList
       {...props}
+      lyrics={displayLyrics}
       activeLineIndex={activeLineIndex}
       currentTimeMs={currentTimeMs}
       durationMs={duration * 1000}

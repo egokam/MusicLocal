@@ -29,6 +29,7 @@ export const LrcCheckerRow = ({
   track,
   state,
   errorMessage,
+  qualityWarning,
   hasRetryCandidate = false,
   disabled: externallyDisabled = false,
   onCheck,
@@ -39,6 +40,7 @@ export const LrcCheckerRow = ({
   track: Track;
   state: LrcCheckState;
   errorMessage?: string;
+  qualityWarning?: string;
   hasRetryCandidate?: boolean;
   disabled?: boolean;
   onCheck: () => void;
@@ -79,8 +81,10 @@ export const LrcCheckerRow = ({
               style={{ marginRight: 5 }}
             />
           )}
-          <Text numberOfLines={state === 'error' || errorMessage ? 2 : 1} style={{ color: stateColor[state], fontSize: 11, fontWeight: '600', flex: 1 }}>
-            {errorMessage
+          <Text numberOfLines={state === 'error' || errorMessage || qualityWarning ? 2 : 1} style={{ color: qualityWarning ? '#E6B94C' : stateColor[state], fontSize: 11, fontWeight: '600', flex: 1 }}>
+            {qualityWarning
+              ? qualityWarning
+              : errorMessage
               ? state === 'candidate'
                 ? `Match found; incomplete search: ${errorMessage}`
                 : `Lookup incomplete: ${errorMessage}`
