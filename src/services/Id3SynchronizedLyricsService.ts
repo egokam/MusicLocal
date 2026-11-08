@@ -10,6 +10,11 @@ export type EmbeddedMp3LyricsPayload = {
   attribution?: LyricsAttribution;
 };
 
+export type EmbeddedMp3ArtworkPayload = {
+  bytes: Uint8Array;
+  mimeType: string;
+};
+
 export type SynchronizedLyricEntry = {
   text: string;
   timestampMs: number;
@@ -233,11 +238,26 @@ const createMusiqappLyricsFrame = (lyrics: EmbeddedMp3LyricsPayload) => createId
   encodeUtf8(JSON.stringify(lyrics)),
 ]));
 
-const createId3TagWithFrames = (sourceTag: Uint8Array, extraFrames: Uint8Array[]) => {
+const createApicFrame = ({ bytes, mimeType }: EmbeddedMp3ArtworkPayload) => createId3Frame('APIC', concatenate([
+  new Uint8Array([3]),
+  encodeUtf8(mimeType.startsWith('image/') ? mimeType : 'image/jpeg'),
+  new Uint8Array([0, 3, 0]),
+  bytes,
+]));
+
+const createId3TagWithFrames = (
+  sourceTag: Uint8Array,
+  extraFrames: Uint8Array[],
+  options: { replaceLyrics?: boolean; artwork?: EmbeddedMp3ArtworkPayload } = {},
+) => {
   const { frames } = parseId3Frames(sourceTag);
-  const frameBytes: Uint8Array[] = frames.filter((frame) => !isLyricsFrame(frame))
+  const frameBytes: Uint8Array[] = frames.filter((frame) => (
+    !(options.replaceLyrics !== false && isLyricsFrame(frame))
+    && !(options.artwork && (frame.id === 'APIC' || frame.id === 'PIC'))
+  ))
     .map(({ id, payload }) => createId3Frame(id, payload));
   frameBytes.push(...extraFrames);
+  if (options.artwork) frameBytes.push(createApicFrame(options.artwork));
   const frameData = concatenate(frameBytes);
   const header = concatenate([
     new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0]),
@@ -468,6 +488,56 @@ export const Id3SynchronizedLyricsService = {
           || JSON.stringify(embedded.attribution) !== JSON.stringify(payload.attribution)
         ) {
           throw new Error('The embedded lyrics could not be verified. The original MP3 was not changed.');
+        }
+      },
+    );
+  },
+
+  async createVerifiedMp3ForExport(
+    sourceUri: string,
+    sourceFileName: string,
+    lyrics: EmbeddedMp3LyricsPayload | null,
+    artwork?: EmbeddedMp3ArtworkPayload,
+  ) {
+    if (!lyrics && !artwork) throw new Error('No metadata needs to be embedded in this MP3.');
+    if (lyrics && !lyrics.text.trim()) throw new Error('The lyrics are empty and cannot be embedded.');
+
+    return rewriteMp3(
+      sourceUri,
+      sourceFileName,
+      'export',
+      (sourceTag) => createId3TagWithFrames(
+        sourceTag,
+        lyrics ? [createMusiqappLyricsFrame({ ...lyrics, version: 1 })] : [],
+        { replaceLyrics: Boolean(lyrics), artwork },
+      ),
+      async (output) => {
+        if (!output.exists || (output.size ?? 0) === 0) throw new Error('The MP3 metadata export could not be created.');
+        const metadata = await parseBuffer(await readMetadataSample(output), 'audio/mpeg');
+
+        if (lyrics) {
+          const embedded = readEmbeddedMp3Lyrics(metadata.native);
+          if (
+            !embedded
+            || collectFrames(metadata, 'USLT').length !== 0
+            || collectFrames(metadata, 'SYLT').length !== 0
+            || collectLyricsUserTextFrames(metadata).length !== 1
+            || embedded.format !== lyrics.format
+            || embedded.text !== lyrics.text
+            || embedded.source !== lyrics.source
+            || JSON.stringify(embedded.attribution) !== JSON.stringify(lyrics.attribution)
+          ) {
+            throw new Error('The export copy is missing its embedded lyrics. The original track was not changed.');
+          }
+        }
+
+        if (artwork) {
+          const pictures = metadata.common.picture ?? [];
+          const pictureMatches = pictures.some((picture) => (
+            picture.data.length === artwork.bytes.length
+            && picture.data.every((byte, index) => byte === artwork.bytes[index])
+          ));
+          if (!pictureMatches) throw new Error('The export copy is missing its embedded artwork. The original track was not changed.');
         }
       },
     );

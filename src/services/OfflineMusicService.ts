@@ -2,7 +2,7 @@ import { Directory, File, FileMode, Paths, type FileHandle } from 'expo-file-sys
 import * as FileSystem from 'expo-file-system/legacy';
 import { parseBuffer } from 'music-metadata';
 import { deduplicateSyncedLyrics, parseLyrics } from './LyricsParser';
-import { Id3SynchronizedLyricsService, readEmbeddedMp3Lyrics, type EmbeddedMp3LyricsPayload } from './Id3SynchronizedLyricsService';
+import { Id3SynchronizedLyricsService, readEmbeddedMp3Lyrics, type EmbeddedMp3ArtworkPayload, type EmbeddedMp3LyricsPayload } from './Id3SynchronizedLyricsService';
 import { cacheArtworkForTrack } from './ArtworkService';
 import type { LyricsAttribution, LyricLine, Track } from '../types';
 
@@ -146,6 +146,56 @@ const lyricsPayloadFromTrack = (track: Track): EmbeddedMp3LyricsPayload | null =
   } : null;
 };
 
+const lyricsPayloadFromSidecars = async (track: Track): Promise<EmbeddedMp3LyricsPayload | null> => {
+  const sidecars = lyricSidecarsForTrack(track).filter((file) => file.exists);
+  for (const extension of ['.ttml', '.lrc', '.txt']) {
+    const sidecar = sidecars.find((file) => file.extension.toLowerCase() === extension);
+    if (!sidecar) continue;
+    try {
+      const text = (await sidecar.text()).trim();
+      if (!text) continue;
+      const parsed = trackLyricsFromText(text, extension);
+      const payload = lyricsPayloadFromTrack({ ...track, ...parsed });
+      if (payload) return payload;
+    } catch {
+      // Skip unreadable legacy lyric files and try the next supported format.
+    }
+  }
+  return null;
+};
+
+const artworkMimeTypeForFile = (file: File) => {
+  switch (file.extension.toLowerCase()) {
+    case '.png': return 'image/png';
+    case '.webp': return 'image/webp';
+    case '.heic':
+    case '.heif': return 'image/heic';
+    case '.gif': return 'image/gif';
+    default: return 'image/jpeg';
+  }
+};
+
+const existingTrackArtworkFile = (track: Track): File | undefined => {
+  for (const uri of [track.artworkFileUri, track.artwork]) {
+    if (!uri || /^https?:\/\//i.test(uri)) continue;
+    try {
+      const file = new File(uri);
+      if (file.exists) return file;
+    } catch {
+      // Ignore artwork references that are not file URIs.
+    }
+  }
+  return undefined;
+};
+
+const artworkPayloadFromFile = async (file: File): Promise<EmbeddedMp3ArtworkPayload> => {
+  const maxArtworkSize = 32 * 1024 * 1024;
+  if (!Number.isFinite(file.size) || !file.size || file.size > maxArtworkSize) {
+    throw new Error(`Artwork for ${file.name} is too large or unreadable to embed in an MP3.`);
+  }
+  return { bytes: new Uint8Array(await file.arrayBuffer()), mimeType: artworkMimeTypeForFile(file) };
+};
+
 const trackLyricsFromText = (text: string, extension: string): Pick<Track,
   'syncedLyrics' | 'plainLyrics' | 'lyrics' | 'lyricsTtml' | 'lyricsFormat' | 'lyricsAvailable' | 'hasSyncedLyrics' | 'hasPlainLyrics' | 'lyricsSource'
 > => {
@@ -194,8 +244,7 @@ const safeExportExtension = (value: string | undefined, fallback: string) => {
 
 type ZipEntry = {
   name: string;
-  file?: File;
-  bytes?: Uint8Array;
+  file: File;
 };
 
 type ZipCentralEntry = {
@@ -995,148 +1044,108 @@ export const OfflineMusicService = {
     await removeSpicyLyricsIgnoredTrackIds(trackIds);
   },
 
-  async exportDownloadedTracksAsZip(destinationDirectory: Directory): Promise<{ fileName: string; exportedCount: number; lyricCount: number; artworkCount: number }> {
+  async exportDownloadedTracksAsZip(destinationDirectory: Directory): Promise<{
+    fileName: string;
+    exportedCount: number;
+    metadataEmbeddingSkippedCount: number;
+  }> {
     const tracks = await this.getDownloadedTracks();
     const entries: ZipEntry[] = [];
-    const manifestTracks: Record<string, unknown>[] = [];
+    const temporaryMp3s: File[] = [];
     let exportedCount = 0;
-    let lyricCount = 0;
-    let artworkCount = 0;
-    const usedExportBases = new Set<string>();
+    let metadataEmbeddingSkippedCount = 0;
+    const usedNames = new Set<string>();
     const textEncoder = new TextEncoder();
-
-    for (const track of tracks) {
-      if (!track.localUri) continue;
-      const audioFile = new File(track.localUri);
-      if (!audioFile.exists) continue;
-
-      const baseName = `${safeExportName(track.artist)} - ${safeExportName(track.title)}`;
-      const extension = safeExportExtension(audioFile.extension || track.fileExtension, '.mp3');
-      let exportBaseName = baseName;
-      let suffix = 2;
-      while (usedExportBases.has(exportBaseName.toLowerCase())) {
-        exportBaseName = `${baseName} (${suffix})`;
-        suffix += 1;
-      }
-      usedExportBases.add(exportBaseName.toLowerCase());
-      const audioPath = `tracks/${exportBaseName}${extension}`;
-      entries.push({ name: audioPath, file: audioFile });
-      exportedCount += 1;
-      const manifestTrack: Record<string, unknown> = {
-        id: track.id,
-        title: track.title,
-        artist: track.artist,
-        album: track.album,
-        duration: track.duration,
-        durationSeconds: track.durationSeconds,
-        albumArtist: track.albumArtist,
-        trackNumber: track.trackNumber,
-        year: track.year,
-        genre: track.genre,
-        composer: track.composer,
-        isFavorite: track.isFavorite,
-        playCount: track.playCount,
-        provider: track.provider,
-        providerId: track.providerId,
-        mixId: track.mixId,
-        mixOffset: track.mixOffset,
-        lyricsAvailable: track.lyricsAvailable,
-        hasSyncedLyrics: track.hasSyncedLyrics,
-        hasPlainLyrics: track.hasPlainLyrics,
-        lyricsSource: track.lyricsSource,
-        licenseUrl: track.licenseUrl,
-        shareUrl: track.shareUrl,
-        audio: audioPath,
-      };
-
-      if (track.lyricsFileUri) {
-        const lyricsFile = new File(track.lyricsFileUri);
-        if (lyricsFile.exists) {
-          const lyricsExtension = safeExportExtension(lyricsFile.extension, track.hasSyncedLyrics ? '.lrc' : '.txt');
-          const lyricsPath = `lyrics/${exportBaseName}${lyricsExtension}`;
-          entries.push({ name: lyricsPath, file: lyricsFile });
-          manifestTrack.lyrics = lyricsPath;
-          lyricCount += 1;
-        }
-      } else {
-        const lyricsText = track.syncedLyrics?.trim() ? track.syncedLyrics : track.plainLyrics;
-        if (lyricsText?.trim()) {
-          const lyricsExtension = track.syncedLyrics?.trim() || track.hasSyncedLyrics ? '.lrc' : '.txt';
-          const lyricsPath = `lyrics/${exportBaseName}${lyricsExtension}`;
-          entries.push({ name: lyricsPath, bytes: textEncoder.encode(lyricsText) });
-          manifestTrack.lyrics = lyricsPath;
-          lyricCount += 1;
-        }
-      }
-
-      const artworkUri = track.artworkFileUri || (track.artwork.startsWith('file://') ? track.artwork : undefined);
-      if (artworkUri) {
-        const artworkFile = new File(artworkUri);
-        if (artworkFile.exists) {
-          const artworkExtension = safeExportExtension(artworkFile.extension, '.jpg');
-          const artworkPath = `artwork/${exportBaseName}${artworkExtension}`;
-          entries.push({ name: artworkPath, file: artworkFile });
-          manifestTrack.artwork = artworkPath;
-          artworkCount += 1;
-        }
-      }
-
-      manifestTracks.push(manifestTrack);
-    }
-
-    if (exportedCount === 0) return { fileName: '', exportedCount, lyricCount, artworkCount };
-
-    entries.push({
-      name: 'library.json',
-      bytes: textEncoder.encode(JSON.stringify({
-        format: 'Musiqapp library archive',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        tracks: manifestTracks,
-      }, null, 2)),
-    });
-
-    const baseFileName = 'Musiqapp Library Export';
-    let fileName = `${baseFileName}.zip`;
-    let suffix = 2;
-    while (new File(destinationDirectory, fileName).exists) {
-      fileName = `${baseFileName} (${suffix}).zip`;
-      suffix += 1;
-    }
-
-    const archiveFile = new File(destinationDirectory, fileName);
-    const centralEntries: ZipCentralEntry[] = [];
-    const timestamp = zipDosTimestamp(new Date());
-    let outputHandle: FileHandle | undefined;
-    let archiveComplete = false;
-    let outputOffset = 0;
+    const archiveFile = new File(destinationDirectory, `.Music-${Date.now()}-${Math.random().toString(36).slice(2)}.zip`);
+    const finalArchive = new File(destinationDirectory, 'Music.zip');
 
     try {
-      archiveFile.create({ intermediates: true });
-      outputHandle = archiveFile.open(FileMode.WriteOnly);
+      for (const track of tracks) {
+        if (!track.localUri) continue;
+        const audioFile = new File(track.localUri);
+        if (!audioFile.exists) continue;
 
-      for (const entry of entries) {
-        const encodedName = textEncoder.encode(entry.name);
-        if (encodedName.length > 0xffff) throw new Error(`A library filename is too long to include: ${entry.name}`);
+        const extension = safeExportExtension(audioFile.extension || track.fileExtension, '.mp3');
+        const baseName = `${safeExportName(track.artist)} - ${safeExportName(track.title)}`;
+        let exportName = `${baseName}${extension}`;
+        let suffix = 2;
+        while (usedNames.has(exportName.toLowerCase())) {
+          exportName = `${baseName} (${suffix})${extension}`;
+          suffix += 1;
+        }
+        usedNames.add(exportName.toLowerCase());
 
-        const localOffset = outputOffset;
-        const header = makeZipLocalHeader(encodedName, timestamp.time, timestamp.date);
-        outputHandle.writeBytes(header);
-        outputOffset += header.length;
+        const lyricsPayload = lyricsPayloadFromTrack(track)
+          ?? await lyricsPayloadFromSidecars(track)
+          ?? null;
 
-        let crc = 0xffffffff;
-        let entrySize = 0;
-        let bytesSinceYield = 0;
-        const writeData = (bytes: Uint8Array) => {
-          if (!outputHandle) throw new Error('The ZIP archive is no longer open.');
-          outputHandle.writeBytes(bytes);
-          crc = updateZipCrc(crc, bytes);
-          entrySize += bytes.length;
-          outputOffset += bytes.length;
-          bytesSinceYield += bytes.length;
-        };
+        let artworkPayload: EmbeddedMp3ArtworkPayload | undefined;
+        const isMp3 = extension.toLowerCase() === '.mp3';
+        let artworkFile = existingTrackArtworkFile(track);
+        if (isMp3 && !artworkFile) {
+          const cachedArtworkUri = await cacheArtworkForTrack(audioFile, downloadsDirectory, track.id, track.artwork);
+          if (cachedArtworkUri) {
+            artworkFile = new File(cachedArtworkUri);
+          }
+        }
+        if (isMp3 && artworkFile?.exists) artworkPayload = await artworkPayloadFromFile(artworkFile);
 
-        if (entry.file) {
+        let exportFile = audioFile;
+        if (isMp3 && (lyricsPayload || artworkPayload)) {
+          exportFile = await Id3SynchronizedLyricsService.createVerifiedMp3ForExport(
+            audioFile.uri,
+            audioFile.name,
+            lyricsPayload,
+            artworkPayload,
+          );
+          temporaryMp3s.push(exportFile);
+        } else if (!isMp3 && (
+          lyricsPayload
+          || artworkFile?.exists
+          || /^https?:\/\//i.test(track.artwork)
+        )) {
+          metadataEmbeddingSkippedCount += 1;
+        }
+
+        entries.push({ name: exportName, file: exportFile });
+        exportedCount += 1;
+        await yieldToUi();
+      }
+
+      if (exportedCount === 0) return { fileName: '', exportedCount, metadataEmbeddingSkippedCount };
+
+      const centralEntries: ZipCentralEntry[] = [];
+      const timestamp = zipDosTimestamp(new Date());
+      let outputHandle: FileHandle | undefined;
+      let archiveComplete = false;
+      let outputOffset = 0;
+
+      try {
+        archiveFile.create({ intermediates: true });
+        outputHandle = archiveFile.open(FileMode.WriteOnly);
+
+        for (const entry of entries) {
+          const encodedName = textEncoder.encode(entry.name);
+          if (encodedName.length > 0xffff) throw new Error(`A track filename is too long to include: ${entry.name}`);
+
+          const localOffset = outputOffset;
+          const header = makeZipLocalHeader(encodedName, timestamp.time, timestamp.date);
+          outputHandle.writeBytes(header);
+          outputOffset += header.length;
+
+          let crc = 0xffffffff;
+          let entrySize = 0;
+          let bytesSinceYield = 0;
+          const writeData = (bytes: Uint8Array) => {
+            if (!outputHandle) throw new Error('The ZIP archive is no longer open.');
+            outputHandle.writeBytes(bytes);
+            crc = updateZipCrc(crc, bytes);
+            entrySize += bytes.length;
+            outputOffset += bytes.length;
+            bytesSinceYield += bytes.length;
+          };
+
+          if (!entry.file) throw new Error(`The track file ${entry.name} is unavailable.`);
           const expectedSize = entry.file.size;
           if (!Number.isFinite(expectedSize) || expectedSize < 0) {
             throw new Error(`Could not read the size of ${entry.file.name}.`);
@@ -1157,59 +1166,59 @@ export const OfflineMusicService = {
           } finally {
             sourceHandle.close();
           }
-        } else if (entry.bytes) {
-          for (let start = 0; start < entry.bytes.length; start += 256 * 1024) {
-            writeData(entry.bytes.subarray(start, Math.min(start + 256 * 1024, entry.bytes.length)));
-            if (bytesSinceYield >= 4 * 1024 * 1024) {
-              bytesSinceYield = 0;
-              await yieldToUi();
-            }
+
+          const finalCrc = (crc ^ 0xffffffff) >>> 0;
+          const descriptor = makeZipDataDescriptor(finalCrc, entrySize);
+          outputHandle.writeBytes(descriptor);
+          outputOffset += descriptor.length;
+          centralEntries.push({ name: encodedName, crc: finalCrc, size: entrySize, localOffset });
+          if (bytesSinceYield > 0) await yieldToUi();
+        }
+
+        const centralOffset = outputOffset;
+        for (const entry of centralEntries) {
+          const record = makeZipCentralEntry(entry, timestamp.time, timestamp.date);
+          outputHandle.writeBytes(record);
+          outputOffset += record.length;
+        }
+        const centralSize = outputOffset - centralOffset;
+        const zip64EndOffset = outputOffset;
+        const zip64EndRecord = makeZip64EndRecord(centralEntries.length, centralSize, centralOffset);
+        outputHandle.writeBytes(zip64EndRecord);
+        outputOffset += zip64EndRecord.length;
+        const zip64Locator = makeZip64Locator(zip64EndOffset);
+        outputHandle.writeBytes(zip64Locator);
+        outputOffset += zip64Locator.length;
+        const endRecord = makeZipEndRecord();
+        outputHandle.writeBytes(endRecord);
+        outputOffset += endRecord.length;
+
+        outputHandle.close();
+        outputHandle = undefined;
+        await archiveFile.move(finalArchive, { overwrite: true });
+        archiveComplete = true;
+      } finally {
+        outputHandle?.close();
+        if (!archiveComplete && archiveFile.exists) {
+          try {
+            archiveFile.delete();
+          } catch {
+            // Preserve the original export error if the destination refuses cleanup.
           }
         }
-
-        const finalCrc = (crc ^ 0xffffffff) >>> 0;
-        const descriptor = makeZipDataDescriptor(finalCrc, entrySize);
-        outputHandle.writeBytes(descriptor);
-        outputOffset += descriptor.length;
-        centralEntries.push({ name: encodedName, crc: finalCrc, size: entrySize, localOffset });
-        if (bytesSinceYield > 0) await yieldToUi();
       }
 
-      const centralOffset = outputOffset;
-      for (const entry of centralEntries) {
-        const record = makeZipCentralEntry(entry, timestamp.time, timestamp.date);
-        outputHandle.writeBytes(record);
-        outputOffset += record.length;
-      }
-      const centralSize = outputOffset - centralOffset;
-      const zip64EndOffset = outputOffset;
-      const zip64EndRecord = makeZip64EndRecord(centralEntries.length, centralSize, centralOffset);
-      outputHandle.writeBytes(zip64EndRecord);
-      outputOffset += zip64EndRecord.length;
-      const zip64Locator = makeZip64Locator(zip64EndOffset);
-      outputHandle.writeBytes(zip64Locator);
-      outputOffset += zip64Locator.length;
-      const endRecord = makeZipEndRecord();
-      outputHandle.writeBytes(endRecord);
-      outputOffset += endRecord.length;
-
-      outputHandle.close();
-      outputHandle = undefined;
-      archiveComplete = true;
+      return { fileName: 'Music.zip', exportedCount, metadataEmbeddingSkippedCount };
     } finally {
-      outputHandle?.close();
-      if (!archiveComplete && archiveFile.exists) {
+      temporaryMp3s.forEach((file) => {
         try {
-          archiveFile.delete();
+          if (file.exists) file.delete();
         } catch {
-          // Preserve the original export error if the destination refuses cleanup.
+          // Temporary export copies are cache files and must not mask an export result.
         }
-      }
+      });
     }
-
-    return { fileName, exportedCount, lyricCount, artworkCount };
   },
-
   async downloadTrack(track: Track): Promise<Track> {
     if (!track.downloadAllowed || !track.downloadUrl) {
       throw new Error('This track is not available for download.');
@@ -1380,13 +1389,19 @@ export const OfflineMusicService = {
     return this.saveEmbeddedLyrics(track, payload.text);
   },
 
-  /** Import supported audio and fold legacy lyric sidecars into the track metadata. */
-  async importLocalFolder(sourceDirectory: Directory): Promise<{ importedCount: number; skippedCount: number; artworkCount: number }> {
+  /** Import audio with embedded metadata, using legacy lyric sidecars only as a fallback. */
+  async importLocalFolder(sourceDirectory: Directory): Promise<{
+    importedCount: number;
+    skippedCount: number;
+    artworkCount: number;
+    embeddedLyricsCount: number;
+  }> {
     ensureDirectory();
     const current = await this.getDownloadedTracks();
     const imported: Track[] = [];
     const lyricsToEmbed = new Map<string, EmbeddedMp3LyricsPayload>();
     let skippedCount = 0;
+    let embeddedLyricsCount = 0;
 
     const visit = async (directory: Directory): Promise<void> => {
       let entries: (Directory | File)[];
@@ -1401,6 +1416,8 @@ export const OfflineMusicService = {
           continue;
         }
         if (!supportedAudio.test(entry.name)) {
+          // Finder and archive tools may add harmless metadata files beside the tracks.
+          if (entry.name.startsWith('.') || entry.name === '__MACOSX') continue;
           skippedCount += 1;
           continue;
         }
@@ -1409,10 +1426,13 @@ export const OfflineMusicService = {
         const id = idForImport(entry.uri, title, artist);
         const fileExtension = entry.extension || '.mp3';
         const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
+        const stagingFile = new File(
+          downloadsDirectory,
+          `${safeName(id)}-${Date.now()}-${Math.random().toString(36).slice(2)}${fileExtension}`,
+        );
         try {
-          if (audioFile.exists) audioFile.delete();
-          await entry.copy(audioFile);
-          const embedded = await extractEmbeddedMetadata(audioFile, id, { title, artist });
+          await entry.copy(stagingFile);
+          const embedded = await extractEmbeddedMetadata(stagingFile, id, { title, artist });
           const artwork = embedded.artwork || await cacheArtworkForTrack(entry, downloadsDirectory, id);
           const baseName = entry.name.replace(/\.[^.]+$/, '');
           const sourceTtml = new File(entry.parentDirectory, `${baseName}.ttml`);
@@ -1468,13 +1488,23 @@ export const OfflineMusicService = {
             hasPlainLyrics: embedded.lyricsText ? embedded.hasPlainLyrics : Boolean(sidecarLyrics?.hasPlainLyrics),
             dateAdded: Date.now(),
           };
+          // Keep an existing imported copy intact until the replacement is fully copied
+          // and its embedded tags have been read successfully.
+          await stagingFile.move(audioFile, { overwrite: true });
           imported.push(track);
+          if (embedded.lyricsText) embeddedLyricsCount += 1;
           if (sidecarLyrics) {
             const payload = lyricsPayloadFromTrack(track);
             if (payload) lyricsToEmbed.set(id, payload);
           }
         } catch {
           skippedCount += 1;
+        } finally {
+          try {
+            if (stagingFile.exists) stagingFile.delete();
+          } catch {
+            // A failed temporary-file cleanup must not abort importing other tracks.
+          }
         }
       }
     };
@@ -1495,7 +1525,12 @@ export const OfflineMusicService = {
         await this.saveEmbeddedLyrics({ ...track, lyricsSource: 'embedded_musiqapp' }, payload.text);
       }
     }
-    return { importedCount: imported.length, skippedCount, artworkCount: imported.filter((track) => Boolean(track.artwork)).length };
+    return {
+      importedCount: imported.length,
+      skippedCount,
+      artworkCount: imported.filter((track) => Boolean(track.artwork)).length,
+      embeddedLyricsCount,
+    };
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {

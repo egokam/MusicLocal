@@ -497,6 +497,30 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     );
   };
 
+  const confirmDeleteAllLines = () => {
+    const lineCount = lyricLines.filter((line) => line.text.trim()).length;
+    if (lineCount === 0) return;
+    Alert.alert(
+      'Delete all lyric lines?',
+      `This clears all ${lineCount} line${lineCount === 1 ? '' : 's'} and timestamps from this sync session. The library track changes only if you save afterward.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete all',
+          style: 'destructive',
+          onPress: () => {
+            setLyricLines([]);
+            setSelectedLineId(null);
+            setLineEditor(null);
+            setPlaybackError(null);
+            setSaveError(null);
+            preparedMp3Ref.current = null;
+          },
+        },
+      ],
+    );
+  };
+
   const assignTimestampToSelectedLine = useCallback(() => {
     if (!player.playing) {
       setPlaybackError('Start playback before assigning a timestamp.');
@@ -860,9 +884,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                         </Text>
                       </View>
                       <TouchableOpacity
-                        onPress={() => setLineEditor({ lineId: null, text: '' })}
+                        onPress={confirmDeleteAllLines}
+                        disabled={lyricLines.length === 0}
                         accessibilityRole="button"
-                        accessibilityLabel="Add lyric line"
+                        accessibilityLabel="Delete all lyric lines"
                         style={{
                           minHeight: 38,
                           paddingHorizontal: 12,
@@ -872,10 +897,11 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                           alignItems: 'center',
                           justifyContent: 'center',
                           gap: 6,
+                          opacity: lyricLines.length > 0 ? 1 : 0.45,
                         }}
                       >
-                        <Ionicons name="add" size={18} color="#FA5265" />
-                        <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700' }}>Add line</Text>
+                        <Ionicons name="trash-outline" size={16} color="#FA5265" />
+                        <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700' }}>Delete all</Text>
                       </TouchableOpacity>
                     </View>
                     <View style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, backgroundColor: '#111113' }}>
@@ -980,7 +1006,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                     <Text style={{ color: '#8E8E93', fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 7 }}>
                       No embedded lyrics or matching lyric sidecar were found. Paste the song lyrics to prepare them for synchronization.
                     </Text>
-                    <View style={{ flexDirection: 'row', gap: 9, marginTop: 19 }}>
+                    <View style={{ flexDirection: 'row', marginTop: 19 }}>
                       <TouchableOpacity
                         onPress={() => setPasteModalVisible(true)}
                         accessibilityRole="button"
@@ -998,25 +1024,6 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                       >
                         <Ionicons name="clipboard-outline" size={17} color="#FA5265" />
                         <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Paste lyrics</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => setLineEditor({ lineId: null, text: '' })}
-                        accessibilityRole="button"
-                        accessibilityLabel="Add first lyric line"
-                        style={{
-                          minHeight: 44,
-                          flex: 1,
-                          paddingHorizontal: 12,
-                          borderRadius: 22,
-                          backgroundColor: '#2A2024',
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: 6,
-                        }}
-                      >
-                        <Ionicons name="add" size={18} color="#FA5265" />
-                        <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Add line</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1188,7 +1195,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             </Text>
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 5 }}>
             <TouchableOpacity
               onPress={() => void seekTo(playerStatus.currentTime - 3)}
               disabled={!selectedMp3}
@@ -1235,20 +1242,46 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               accessibilityLabel="Sync next lyric line"
               style={{
                 flex: 1,
+                minWidth: 0,
                 minHeight: 44,
                 marginLeft: 2,
+                paddingHorizontal: 4,
                 borderRadius: 14,
                 backgroundColor: '#FA243C',
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: 7,
+                gap: 4,
                 opacity: !selectedLineId || !playerStatus.playing ? 0.48 : 1,
               }}
             >
-              <Ionicons name="sync" size={17} color="white" />
-              <Text numberOfLines={1} style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>
-                {selectedLineId ? 'Sync Next Line' : 'All lines synced'}
+              <Ionicons name="sync" size={16} color="white" />
+              <Text numberOfLines={1} style={{ color: 'white', fontSize: 12, fontWeight: '700', flexShrink: 1 }}>
+                {selectedLineId ? 'Sync' : 'Done'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setLineEditor({ lineId: null, text: '' })}
+              disabled={!selectedMp3}
+              accessibilityRole="button"
+              accessibilityLabel="Add lyric line"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                minHeight: 44,
+                paddingHorizontal: 4,
+                borderRadius: 14,
+                backgroundColor: '#2A2024',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 2,
+                opacity: selectedMp3 ? 1 : 0.45,
+              }}
+            >
+              <Ionicons name="add" size={15} color="#FA5265" />
+              <Text numberOfLines={1} style={{ color: '#FA5265', fontSize: 11, fontWeight: '700', flexShrink: 1 }}>
+                Add line
               </Text>
             </TouchableOpacity>
           </View>
