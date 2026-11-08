@@ -18,6 +18,7 @@ import { GlassSurface } from '../../glass';
 import { TrackListSkeleton } from '../components/Skeleton';
 import { LrcCheckerRow, type LrcCheckState } from '../components/library/LrcCheckerRow';
 import { LrcCheckerService } from '../services/LrcCheckerService';
+import { lyricsCandidateSignature } from '../services/MusicCatalogService';
 import type { Track } from '../types';
 
 const isTimedLrc = (value: string | undefined) => Boolean(
@@ -97,7 +98,7 @@ export const LrcCheckerScreen = ({
   tracks: Track[];
   isLoadingTracks: boolean;
   onLoadAllTracks: () => Promise<Track[]>;
-  onCheckTrack: (track: Track, forceOnline?: boolean) => Promise<Track>;
+  onCheckTrack: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>;
   onSaveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
 }) => {
   const insets = useSafeAreaInsets();
@@ -118,6 +119,8 @@ export const LrcCheckerScreen = ({
   const [applyAllProgress, setApplyAllProgress] = useState({ completed: 0, total: 0 });
   const [reviewTrack, setReviewTrack] = useState<Track | null>(null);
   const [isSavingReview, setIsSavingReview] = useState(false);
+  const [isUndoingReview, setIsUndoingReview] = useState(false);
+  const [retryingTrackId, setRetryingTrackId] = useState<string | null>(null);
   const [customLrcTrack, setCustomLrcTrack] = useState<Track | null>(null);
   const [customLrcText, setCustomLrcText] = useState('');
   const [customLrcPreview, setCustomLrcPreview] = useState(false);
@@ -165,10 +168,61 @@ export const LrcCheckerScreen = ({
   }, [search, tracks]);
 
   const checkTrack = async (track: Track, _generation?: number, openPreview = false) => {
-    const record = await LrcCheckerService.checkTrack(track, onCheckTrack);
+    const existing = scanSnapshot.records[track.id];
+    const record = existing?.excludedCandidateSignatures?.length
+      ? await LrcCheckerService.retryTrack(track, onCheckTrack)
+      : await LrcCheckerService.checkTrack(track, onCheckTrack);
     const result = record.result ?? track;
     if (openPreview && record.state === 'candidate') setReviewTrack(result);
     return result;
+  };
+
+  const retryWithDifferentLyrics = async (track: Track) => {
+    if (retryingTrackId) return;
+    const previousResult = reviewTrack?.id === track.id
+      ? reviewTrack
+      : scanSnapshot.records[track.id]?.result;
+    const previousSignature = previousResult ? lyricsCandidateSignature(previousResult) : '';
+    setRetryingTrackId(track.id);
+    try {
+      const record = await LrcCheckerService.retryTrack(track, onCheckTrack);
+      const nextSignature = record.result ? lyricsCandidateSignature(record.result) : '';
+      if (record.result && nextSignature && nextSignature !== previousSignature) {
+        setReviewTrack(record.result);
+        return;
+      }
+      Alert.alert(
+        'No different version found',
+        record.error || 'The sources did not return another lyric version. You can retry later.',
+      );
+    } catch (error) {
+      Alert.alert(
+        'Could not retry lyrics',
+        error instanceof Error ? error.message : 'Try searching for another version again.',
+      );
+    } finally {
+      setRetryingTrackId(null);
+    }
+  };
+
+  const retryReview = () => {
+    if (!reviewTrack) return;
+    const originalTrack = tracks.find((track) => track.id === reviewTrack.id) ?? reviewTrack;
+    void retryWithDifferentLyrics(originalTrack);
+  };
+
+  const undoPreviousReview = async () => {
+    if (!reviewTrack || isUndoingReview || retryingTrackId) return;
+    setIsUndoingReview(true);
+    try {
+      const record = await LrcCheckerService.undoRetry(reviewTrack.id);
+      if (record?.result) setReviewTrack(record.result);
+      else Alert.alert('No previous version', 'There are no earlier lyric results to return to.');
+    } catch (error) {
+      Alert.alert('Could not restore lyrics', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setIsUndoingReview(false);
+    }
   };
 
   const scanAll = async () => {
@@ -244,6 +298,7 @@ export const LrcCheckerScreen = ({
 
   const saveReview = async () => {
     if (!reviewTrack || !lyricsTextForTrack(reviewTrack).trim()) return;
+    if (reviewTrack.lyricsSource === 'spicy_lyrics_api') return;
     setIsSavingReview(true);
     try {
       const saved = await onSaveTrackLyrics(reviewTrack, lyricsTextForTrack(reviewTrack));
@@ -262,9 +317,11 @@ export const LrcCheckerScreen = ({
   const discardReview = () => {
     if (!reviewTrack) return;
     const trackId = reviewTrack.id;
-    void LrcCheckerService.updateRecord(trackId, {
-      state: reviewTrack.plainLyrics?.trim() ? 'plain' : 'missing',
-    });
+    if (reviewTrack.lyricsSource !== 'spicy_lyrics_api') {
+      void LrcCheckerService.updateRecord(trackId, {
+        state: reviewTrack.plainLyrics?.trim() ? 'plain' : 'missing',
+      });
+    }
     setReviewTrack(null);
   };
 
@@ -327,6 +384,8 @@ export const LrcCheckerScreen = ({
     ?? reviewTrack?.syncedLyrics?.split(/\r?\n/).filter((line) => line.trim()).slice(0, 8)
     ?? reviewTrack?.plainLyrics?.split(/\r?\n/).filter((line) => line.trim()).slice(0, 8)
     ?? [];
+  const hasPreviousReview = Boolean(reviewTrack && scanSnapshot.records[reviewTrack.id]?.previousResults?.length);
+  const isSpicyReview = reviewTrack?.lyricsSource === 'spicy_lyrics_api';
   const isScanning = scanSnapshot.isScanning;
   const isStopping = scanSnapshot.isStopping;
   const isLoadingCatalog = scanSnapshot.isLoadingCatalog;
@@ -442,9 +501,11 @@ export const LrcCheckerScreen = ({
                 track={item}
                 state={state}
                 errorMessage={scanSnapshot.records[item.id]?.error}
-                disabled={isApplyingAll || (isScanning && state !== 'candidate')}
+                hasRetryCandidate={Boolean(scanSnapshot.records[item.id]?.result)}
+                disabled={isApplyingAll || (isScanning && state !== 'candidate') || retryingTrackId === item.id}
                 onCheck={() => void checkTrack(item, undefined, true).catch(() => undefined)}
                 onReview={() => result && setReviewTrack(result)}
+                onRetry={() => void retryWithDifferentLyrics(item)}
                 onPaste={() => openCustomLrc(item)}
               />
             );
@@ -509,8 +570,23 @@ export const LrcCheckerScreen = ({
       <Modal visible={Boolean(reviewTrack)} transparent animationType="fade" onRequestClose={discardReview}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.62)', justifyContent: 'center', paddingHorizontal: 24 }}>
           <View style={{ backgroundColor: '#1C1C1E', borderRadius: 22, padding: 20, maxHeight: '76%' }}>
-            <Text style={{ color: 'white', fontSize: 21, lineHeight: 26, fontWeight: '800' }} numberOfLines={2}>{reviewTrack?.title}</Text>
-            <Text style={{ color: '#A1A1A6', fontSize: 14, marginTop: 4 }}>{reviewTrack?.artist}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TouchableOpacity
+                onPress={() => void undoPreviousReview()}
+                disabled={!hasPreviousReview || isUndoingReview || isSavingReview || retryingTrackId === reviewTrack?.id}
+                accessibilityRole="button"
+                accessibilityLabel="Return to the previous lyric result"
+                style={{ width: 38, height: 38, marginRight: 10, borderRadius: 19, backgroundColor: '#303033', alignItems: 'center', justifyContent: 'center', opacity: hasPreviousReview ? 1 : 0.35 }}
+              >
+                {isUndoingReview
+                  ? <ActivityIndicator size="small" color="#FA5265" />
+                  : <Ionicons name="arrow-undo" size={20} color={hasPreviousReview ? '#FA5265' : '#8E8E93'} />}
+              </TouchableOpacity>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ color: 'white', fontSize: 21, lineHeight: 26, fontWeight: '800' }} numberOfLines={2}>{reviewTrack?.title}</Text>
+                <Text style={{ color: '#A1A1A6', fontSize: 14, marginTop: 4 }}>{reviewTrack?.artist}</Text>
+              </View>
+            </View>
             {reviewTrack?.lyricsAttribution?.provider ? (
               <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 5 }}>
                 Source: {reviewTrack.lyricsAttribution.provider}
@@ -542,13 +618,19 @@ export const LrcCheckerScreen = ({
                     : 'Review the match before applying it. The lyrics will be saved in Musiqapp for this track.'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
-              <TouchableOpacity onPress={discardReview} disabled={isSavingReview} style={{ flex: 1, height: 46, borderRadius: 23, backgroundColor: '#303033', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Discard</Text>
+              <TouchableOpacity onPress={discardReview} disabled={isSavingReview || isUndoingReview || retryingTrackId === reviewTrack?.id} style={{ flex: 0.8, height: 46, borderRadius: 23, backgroundColor: '#303033', alignItems: 'center', justifyContent: 'center', opacity: retryingTrackId === reviewTrack?.id ? 0.5 : 1 }}>
+                <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>{isSpicyReview ? 'Close' : 'Discard'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => void saveReview()} disabled={isSavingReview} style={{ flex: 1, height: 46, borderRadius: 23, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}>
-                {isSavingReview ? <ActivityIndicator size="small" color="white" /> : null}
-                <Text style={{ color: 'white', fontSize: 14, fontWeight: '700', marginLeft: isSavingReview ? 7 : 0 }}>Apply</Text>
+              <TouchableOpacity onPress={retryReview} disabled={isSavingReview || isUndoingReview || retryingTrackId === reviewTrack?.id} accessibilityRole="button" accessibilityLabel="Retry with a different lyric version" style={{ flex: 1, height: 46, borderRadius: 23, backgroundColor: '#303033', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', opacity: retryingTrackId === reviewTrack?.id ? 0.75 : 1 }}>
+                {retryingTrackId === reviewTrack?.id ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="refresh" size={16} color="#FA5265" />}
+                <Text style={{ color: 'white', fontSize: 13, fontWeight: '700', marginLeft: 5 }}>Retry</Text>
               </TouchableOpacity>
+              {!isSpicyReview ? (
+                <TouchableOpacity onPress={() => void saveReview()} disabled={isSavingReview || isUndoingReview || retryingTrackId === reviewTrack?.id} style={{ flex: 0.9, height: 46, borderRadius: 23, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', opacity: retryingTrackId === reviewTrack?.id ? 0.5 : 1 }}>
+                  {isSavingReview ? <ActivityIndicator size="small" color="white" /> : null}
+                  <Text style={{ color: 'white', fontSize: 14, fontWeight: '700', marginLeft: isSavingReview ? 7 : 0 }}>Apply</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </View>

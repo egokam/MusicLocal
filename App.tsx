@@ -1,19 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Linking, NativeModules, TurboModuleRegistry } from 'react-native';
+import { Alert, Linking, NativeModules } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioLockScreenOptions, type AudioMetadata } from 'expo-audio';
-import Constants from 'expo-constants';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import * as Network from 'expo-network';
 import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
-import type { PlayerAudioEngineHandle } from './src/components/player/PlayerAudioEngine';
 import { publishPlayerPlaybackStatus, type PlayerPlaybackStatus } from './src/services/PlayerStatusStore';
 import { LibrarySelectionBarContext, PlaybackContext, RadioPlaybackStatusContext, type LibrarySelectionBarState } from './src/contexts/PlaybackContext';
 import { systemMediaControls } from './src/native/SystemMediaControls';
@@ -40,26 +38,6 @@ const spicyLyricsPreferenceKey = 'musiqapp-spicy-lyrics-enabled';
 const spicyLyricsAutoDownloadOverCellularPreferenceKey = 'musiqapp-spicy-lyrics-over-cellular';
 const spicyLyricsApiKeyStorageKey = 'musiqapp-spicy-lyrics-client-key';
 const lineSyncedWordWavePreferenceKey = 'musiqapp-line-synced-word-wave-enabled';
-let cachedPlayerAudioEngine: typeof import('./src/components/player/PlayerAudioEngine').PlayerAudioEngine | null | undefined;
-
-const getPlayerAudioEngine = () => {
-  if (cachedPlayerAudioEngine !== undefined) return cachedPlayerAudioEngine;
-
-  try {
-    if (!TurboModuleRegistry.get('AudioAPIModule')) {
-      cachedPlayerAudioEngine = null;
-      return cachedPlayerAudioEngine;
-    }
-
-    cachedPlayerAudioEngine = require('./src/components/player/PlayerAudioEngine').PlayerAudioEngine;
-  } catch (error) {
-    cachedPlayerAudioEngine = null;
-    if (__DEV__) console.warn('Native audio effects are unavailable; using the standard audio player.', error);
-  }
-
-  return cachedPlayerAudioEngine;
-};
-
 type PlaybackCounts = Record<string, number>;
 
 const loadPlaybackCounts = async (): Promise<PlaybackCounts> => {
@@ -102,11 +80,14 @@ const getWidgetLaunchTrackId = (url: string) => {
 const PlayerStatusBridge = ({
   player,
   onStatus,
+  onPlaybackError,
 }: {
   player: ReturnType<typeof useAudioPlayer>;
   onStatus: (status: PlayerPlaybackStatus) => void;
+  onPlaybackError: (error: string) => void;
 }) => {
   const status = useAudioPlayerStatus(player);
+  const lastPlaybackError = useRef<string | null>(null);
 
   useEffect(() => {
     const nextStatus = {
@@ -117,49 +98,31 @@ const PlayerStatusBridge = ({
     };
     publishPlayerPlaybackStatus(nextStatus);
     onStatus(nextStatus);
-  }, [onStatus, status]);
+    if (status.error && status.error !== lastPlaybackError.current) {
+      lastPlaybackError.current = status.error;
+      onPlaybackError(status.error);
+    } else if (!status.error) {
+      lastPlaybackError.current = null;
+    }
+  }, [onPlaybackError, onStatus, status]);
 
   return null;
 };
 
 export default function App() {
   const expoPlayer = useAudioPlayer(null, { updateInterval: 250 });
-  const PlayerAudioEngine = Constants.expoGoConfig ? null : getPlayerAudioEngine();
-  const audioApiEnabled = PlayerAudioEngine !== null;
-  const audioEngineRef = useRef<PlayerAudioEngineHandle>(null);
   const player = useMemo(() => ({
-    replace: (source: Parameters<typeof expoPlayer.replace>[0]) => {
-      if (audioApiEnabled) audioEngineRef.current?.replace(source as Exclude<Parameters<typeof expoPlayer.replace>[0], null>);
-      else expoPlayer.replace(source);
-    },
-    play: () => {
-      if (audioApiEnabled) audioEngineRef.current?.play();
-      else expoPlayer.play();
-    },
-    pause: () => {
-      if (audioApiEnabled) audioEngineRef.current?.pause();
-      else expoPlayer.pause();
-    },
-    seekTo: (seconds: number) => audioApiEnabled
-      ? audioEngineRef.current?.seekTo(seconds) ?? Promise.resolve()
-      : expoPlayer.seekTo(seconds),
+    replace: (source: Parameters<typeof expoPlayer.replace>[0]) => expoPlayer.replace(source),
+    play: () => expoPlayer.play(),
+    pause: () => expoPlayer.pause(),
+    seekTo: (seconds: number) => expoPlayer.seekTo(seconds),
     setVolume: (volume: number) => {
-      if (audioApiEnabled) audioEngineRef.current?.setVolume(volume);
-      else expoPlayer.volume = volume;
+      expoPlayer.volume = volume;
     },
-    setActiveForLockScreen: (active: boolean, metadata?: AudioMetadata, options?: AudioLockScreenOptions) => {
-      if (audioApiEnabled) audioEngineRef.current?.setActiveForLockScreen(active, metadata, options);
-      else expoPlayer.setActiveForLockScreen(active, metadata, options);
-    },
-    updateLockScreenMetadata: (metadata: AudioMetadata) => {
-      if (audioApiEnabled) audioEngineRef.current?.updateLockScreenMetadata(metadata);
-      else expoPlayer.updateLockScreenMetadata(metadata);
-    },
-    setPlaybackRate: (rate: number, quality?: 'low' | 'medium' | 'high') => {
-      if (audioApiEnabled) audioEngineRef.current?.setPlaybackEffects(rate, 0);
-      else expoPlayer.setPlaybackRate(rate, quality);
-    },
-  }), [audioApiEnabled, expoPlayer]);
+    setActiveForLockScreen: (active: boolean, metadata?: AudioMetadata, options?: AudioLockScreenOptions) => expoPlayer.setActiveForLockScreen(active, metadata, options),
+    updateLockScreenMetadata: (metadata: AudioMetadata) => expoPlayer.updateLockScreenMetadata(metadata),
+    setPlaybackRate: (rate: number, quality?: 'low' | 'medium' | 'high') => expoPlayer.setPlaybackRate(rate, quality),
+  }), [expoPlayer]);
   const [playerVolume, setPlayerVolumeState] = useState(1);
   const [playerIsPlaying, setPlayerIsPlaying] = useState(false);
   const [playerDuration, setPlayerDuration] = useState(0);
@@ -272,13 +235,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (audioApiEnabled) return;
     void setAudioModeAsync({
       playsInSilentMode: true,
       shouldPlayInBackground: true,
       interruptionMode: 'doNotMix',
     }).catch(() => undefined);
-  }, [audioApiEnabled]);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -620,7 +582,7 @@ export default function App() {
     const musicApiHeaders = selectedTrack.provider === 'local' ? getMusicApiHeaders() : {};
     player.replace(
       selectedTrack.localUri
-        ? selectedTrack.localUri
+        ? { uri: selectedTrack.localUri, name: selectedTrack.title }
         : { uri: audioUri, headers: musicApiHeaders, name: selectedTrack.title },
     );
     try {
@@ -864,6 +826,14 @@ export default function App() {
     }
   }, [advanceQueue]);
 
+  const handlePlaybackError = useCallback((error: string) => {
+    const track = activeTrackRef.current;
+    Alert.alert(
+      'Could not play track',
+      track ? `${track.title}\n\n${error}` : error,
+    );
+  }, []);
+
   const skipNext = useCallback(() => advanceQueue(false), [advanceQueue]);
 
   const toggleQueueShuffle = useCallback(() => {
@@ -926,7 +896,6 @@ export default function App() {
   }, [playSelectedTrack, player]);
 
   useEffect(() => {
-    if (audioApiEnabled) return;
     const mediaControls = systemMediaControls;
     if (!mediaControls) return;
 
@@ -939,7 +908,7 @@ export default function App() {
       previousTrackSubscription.remove();
       mediaControls.setEnabled(false);
     };
-  }, [audioApiEnabled, skipNext, skipPrevious]);
+  }, [skipNext, skipPrevious]);
 
   const seekTo = useCallback((seconds: number) => {
     void player.seekTo(Math.max(0, seconds));
@@ -1310,9 +1279,9 @@ export default function App() {
     return trackWithFavoriteState;
   }, [player, updateTrackWithLyrics]);
 
-  const checkTrackLyrics = useCallback(async (track: Track, forceOnline = false) => {
+  const checkTrackLyrics = useCallback(async (track: Track, forceOnline = false, excludedCandidateSignatures: string[] = []) => {
     void forceOnline;
-    return MusicCatalogService.searchLyricsForChecker(track);
+    return MusicCatalogService.searchLyricsForChecker(track, excludedCandidateSignatures);
   }, []);
 
   const downloadTrack = useCallback(async (track: Track) => {
@@ -1559,20 +1528,11 @@ export default function App() {
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <GestureHandlerRootView style={{ flex: 1 }}>
-      {PlayerAudioEngine ? (
-        <PlayerAudioEngine
-          ref={audioEngineRef}
-          onStatus={handlePlayerStatus}
-          onPlayRequested={player.play}
-          onPauseRequested={player.pause}
-          onStopRequested={player.pause}
-          onNextRequested={skipNext}
-          onPreviousRequested={skipPrevious}
-          onSeekRequested={seekTo}
-        />
-      ) : (
-        <PlayerStatusBridge player={expoPlayer} onStatus={handlePlayerStatus} />
-      )}
+      <PlayerStatusBridge
+        player={expoPlayer}
+        onStatus={handlePlayerStatus}
+        onPlaybackError={handlePlaybackError}
+      />
       <AndroidUpdatePrompt />
       <PlaybackContext.Provider value={playbackActions}>
         <LibrarySelectionBarContext.Provider value={librarySelectionBarContextValue}>

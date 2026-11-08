@@ -29,21 +29,26 @@ export const LrcCheckerRow = ({
   track,
   state,
   errorMessage,
+  hasRetryCandidate = false,
   disabled: externallyDisabled = false,
   onCheck,
   onReview,
+  onRetry,
   onPaste,
 }: {
   track: Track;
   state: LrcCheckState;
   errorMessage?: string;
+  hasRetryCandidate?: boolean;
   disabled?: boolean;
   onCheck: () => void;
   onReview: () => void;
+  onRetry: () => void;
   onPaste: () => void;
 }) => {
   const review = state === 'candidate';
-  const lookupDisabled = externallyDisabled || state === 'checking' || state === 'synced';
+  const retryableMatch = review || hasRetryCandidate;
+  const lookupDisabled = externallyDisabled || state === 'checking' || (state === 'synced' && !hasRetryCandidate);
   const pasteDisabled = externallyDisabled || state === 'checking';
 
   return (
@@ -84,18 +89,47 @@ export const LrcCheckerRow = ({
         </View>
       </View>
 
-      <View style={{ width: 66, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-        <TouchableOpacity
-          onPress={review ? onReview : onCheck}
-          disabled={lookupDisabled}
-          accessibilityRole="button"
-          accessibilityLabel={review ? `Review synced lyric match for ${track.title}` : `Check synced lyrics for ${track.title}`}
-          style={{ minHeight: 38, alignItems: 'center', justifyContent: 'center', opacity: lookupDisabled ? 0.48 : 1 }}
-        >
-          <Text style={{ color: review || state === 'unchecked' || state === 'missing' || state === 'error' || state === 'plain' ? '#FA5265' : stateColor[state], fontSize: 12, fontWeight: '700' }}>
-            {review ? 'Review' : state === 'synced' ? 'Ready' : state === 'checking' ? '' : state === 'error' ? 'Retry' : 'Add LRC'}
-          </Text>
-        </TouchableOpacity>
+      <View style={{ width: 76, alignItems: 'center', justifyContent: 'center', marginRight: 7 }}>
+        {retryableMatch ? (
+          <>
+            {review ? (
+              <TouchableOpacity
+                onPress={onReview}
+                disabled={lookupDisabled}
+                accessibilityRole="button"
+                accessibilityLabel={`Review synced lyric match for ${track.title}`}
+                style={{ minHeight: 25, alignItems: 'center', justifyContent: 'center', opacity: lookupDisabled ? 0.48 : 1 }}
+              >
+                <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700' }}>Review</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={{ minHeight: 25, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: stateColor[state], fontSize: 12, fontWeight: '700' }}>{state === 'synced' ? 'Ready' : 'Text'}</Text>
+              </View>
+            )}
+            <TouchableOpacity
+              onPress={onRetry}
+              disabled={lookupDisabled}
+              accessibilityRole="button"
+              accessibilityLabel={`Retry with a different lyric version for ${track.title}`}
+              style={{ minHeight: 24, alignItems: 'center', justifyContent: 'center', opacity: lookupDisabled ? 0.48 : 1 }}
+            >
+              <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700' }}>Retry</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            onPress={onCheck}
+            disabled={lookupDisabled}
+            accessibilityRole="button"
+            accessibilityLabel={state === 'error' ? `Retry lyrics search for ${track.title}` : `Check synced lyrics for ${track.title}`}
+            style={{ minHeight: 38, alignItems: 'center', justifyContent: 'center', opacity: lookupDisabled ? 0.48 : 1 }}
+          >
+            <Text style={{ color: state === 'unchecked' || state === 'missing' || state === 'error' || state === 'plain' ? '#FA5265' : stateColor[state], fontSize: 12, fontWeight: '700' }}>
+              {state === 'synced' ? 'Ready' : state === 'checking' ? '' : state === 'error' ? 'Retry' : 'Add LRC'}
+            </Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           onPress={onPaste}
           disabled={pasteDisabled}

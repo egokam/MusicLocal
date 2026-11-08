@@ -236,8 +236,9 @@ export const TrackActionsSheet = ({
   useEffect(() => {
     if (!visible || page !== 'edit' || !track || track.provider !== 'local') return;
     let mounted = true;
-    void MusicCatalogService.getLyrics(track, false, false, false).then((result) => {
-      const readableLyrics = result.syncedLyrics?.trim()
+    void MusicCatalogService.getEmbeddedLyrics(track).then((result) => {
+      const readableLyrics = (result.lyricsFormat === 'ttml' ? result.lyricsTtml?.trim() : undefined)
+        || result.syncedLyrics?.trim()
         || result.plainLyrics?.trim()
         || result.lyrics?.map((line) => line.text.trim()).filter(Boolean).join('\n')
         || result.lyricsTtml?.trim()
@@ -538,9 +539,7 @@ export const TrackActionsSheet = ({
                   </TouchableOpacity>
                 </View>
                 <Field
-                  label={track.localUri && (track.fileExtension?.toLowerCase() === '.mp3' || /\.mp3(?:$|[?#])/i.test(track.localUri))
-                    ? 'Embedded MP3 lyrics · synced LRC or plain text'
-                    : 'Lyrics · synced LRC or plain text'}
+                  label="Embedded lyrics · TTML, synced LRC or plain text"
                   value={lyrics}
                   onChangeText={(value) => {
                     lyricsTouched.current = true;
