@@ -3,13 +3,17 @@ import {
   ActivityIndicator,
   Animated,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -102,6 +106,7 @@ export const LrcCheckerScreen = ({
   onSaveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
 }) => {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const topInsetCompensation = Math.max(0, insets.top - 24);
   const scrollY = useMemo(() => new Animated.Value(0), []);
   const scrollHandler = useMemo(
@@ -126,7 +131,26 @@ export const LrcCheckerScreen = ({
   const [customLrcPreview, setCustomLrcPreview] = useState(false);
   const [customLrcError, setCustomLrcError] = useState<string | null>(null);
   const [isSavingCustomLrc, setIsSavingCustomLrc] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const applyAllRunning = useRef(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+  const customLrcModalMaxHeight = Math.max(
+    280,
+    windowHeight - (Platform.OS === 'ios' ? keyboardHeight : 0) - 36,
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -641,49 +665,57 @@ export const LrcCheckerScreen = ({
           behavior="padding"
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 18 }}
         >
-          <View style={{ backgroundColor: '#1C1C1E', borderRadius: 22, padding: 19, maxHeight: '92%' }}>
-            <Text style={{ color: 'white', fontSize: 21, lineHeight: 26, fontWeight: '800' }} numberOfLines={2}>{customLrcTrack?.title}</Text>
-            <Text style={{ color: '#A1A1A6', fontSize: 14, marginTop: 4 }}>{customLrcTrack?.artist}</Text>
-            <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', letterSpacing: 0.6, marginTop: 17, marginBottom: 8 }}>
-              {customLrcPreview ? 'PREVIEW · TIMED LYRICS' : 'PASTE CUSTOM LRC'}
-            </Text>
+          <View style={{ backgroundColor: '#1C1C1E', borderRadius: 22, padding: 19, maxHeight: customLrcModalMaxHeight, flexShrink: 1 }}>
+            <ScrollView
+              style={{ flexShrink: 1 }}
+              contentContainerStyle={{ paddingBottom: 4 }}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={{ color: 'white', fontSize: 21, lineHeight: 26, fontWeight: '800' }} numberOfLines={2}>{customLrcTrack?.title}</Text>
+              <Text style={{ color: '#A1A1A6', fontSize: 14, marginTop: 4 }}>{customLrcTrack?.artist}</Text>
+              <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', letterSpacing: 0.6, marginTop: 17, marginBottom: 8 }}>
+                {customLrcPreview ? 'PREVIEW · TIMED LYRICS' : 'PASTE CUSTOM LRC'}
+              </Text>
 
-            {customLrcPreview ? (
-              <View style={{ maxHeight: 255, borderRadius: 13, backgroundColor: '#111113', padding: 12 }}>
-                {customLrcText.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim()).slice(0, 10).map((line, index) => (
-                  <Text key={`custom-lrc-${index}`} numberOfLines={1} style={{ color: 'white', fontSize: 13, lineHeight: 21 }}>{line}</Text>
-                ))}
-                {customLrcText.split(/\r?\n/).filter((line) => line.trim()).length > 10 ? (
-                  <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 5 }}>
-                    +{customLrcText.split(/\r?\n/).filter((line) => line.trim()).length - 10} more lines
-                  </Text>
-                ) : null}
-              </View>
-            ) : (
-              <TextInput
-                value={customLrcText}
-                onChangeText={(value) => {
-                  setCustomLrcText(value);
-                  setCustomLrcError(null);
-                }}
-                placeholder={'[00:12.34]First lyric line\n[00:16.80]Next lyric line'}
-                placeholderTextColor="#747479"
-                multiline
-                scrollEnabled
-                autoCorrect={false}
-                autoCapitalize="none"
-                textAlignVertical="top"
-                selectionColor="#FA5265"
-                style={{ minHeight: 190, maxHeight: 310, borderRadius: 13, backgroundColor: '#111113', color: 'white', fontSize: 14, lineHeight: 21, padding: 12 }}
-              />
-            )}
+              {customLrcPreview ? (
+                <View style={{ maxHeight: 255, borderRadius: 13, backgroundColor: '#111113', padding: 12 }}>
+                  {customLrcText.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim()).slice(0, 10).map((line, index) => (
+                    <Text key={`custom-lrc-${index}`} numberOfLines={1} style={{ color: 'white', fontSize: 13, lineHeight: 21 }}>{line}</Text>
+                  ))}
+                  {customLrcText.split(/\r?\n/).filter((line) => line.trim()).length > 10 ? (
+                    <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 5 }}>
+                      +{customLrcText.split(/\r?\n/).filter((line) => line.trim()).length - 10} more lines
+                    </Text>
+                  ) : null}
+                </View>
+              ) : (
+                <TextInput
+                  value={customLrcText}
+                  onChangeText={(value) => {
+                    setCustomLrcText(value);
+                    setCustomLrcError(null);
+                  }}
+                  placeholder={'[00:12.34]First lyric line\n[00:16.80]Next lyric line'}
+                  placeholderTextColor="#747479"
+                  multiline
+                  scrollEnabled
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  textAlignVertical="top"
+                  selectionColor="#FA5265"
+                  style={{ minHeight: 190, maxHeight: 310, borderRadius: 13, backgroundColor: '#111113', color: 'white', fontSize: 14, lineHeight: 21, padding: 12 }}
+                />
+              )}
 
-            <Text style={{ color: '#8E8E93', fontSize: 12, lineHeight: 17, marginTop: 12 }}>
-              Paste LRC lines like [00:12.34]lyric text. Every lyric line must have a valid, ordered time tag. Applying replaces the track’s current lyrics with this embedded version.
-            </Text>
-            {customLrcError ? <Text style={{ color: '#FF6B5E', fontSize: 12, lineHeight: 17, marginTop: 9 }}>{customLrcError}</Text> : null}
+              <Text style={{ color: '#8E8E93', fontSize: 12, lineHeight: 17, marginTop: 12 }}>
+                Paste LRC lines like [00:12.34]lyric text. Every lyric line must have a valid, ordered time tag. Applying replaces the track’s current lyrics with this embedded version.
+              </Text>
+              {customLrcError ? <Text style={{ color: '#FF6B5E', fontSize: 12, lineHeight: 17, marginTop: 9 }}>{customLrcError}</Text> : null}
+            </ScrollView>
 
-            <View style={{ flexDirection: 'row', gap: 9, marginTop: 17 }}>
+            <View style={{ flexDirection: 'row', gap: 9, marginTop: 12 }}>
               {customLrcPreview ? (
                 <TouchableOpacity
                   onPress={() => {
