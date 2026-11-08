@@ -48,7 +48,7 @@ export const LrcCheckerRow = ({
   onRetry: () => void;
   onPaste: () => void;
 }) => {
-  const review = state === 'candidate';
+  const review = state === 'candidate' || hasRetryCandidate;
   const retryableMatch = review || hasRetryCandidate;
   const lookupDisabled = externallyDisabled || state === 'checking' || (state === 'synced' && !hasRetryCandidate);
   const pasteDisabled = externallyDisabled || state === 'checking';
@@ -130,7 +130,17 @@ export const LrcCheckerRow = ({
             style={{ minHeight: 38, alignItems: 'center', justifyContent: 'center', opacity: lookupDisabled ? 0.48 : 1 }}
           >
             <Text style={{ color: state === 'unchecked' || state === 'missing' || state === 'error' || state === 'plain' ? '#FA5265' : stateColor[state], fontSize: 12, fontWeight: '700' }}>
-              {state === 'synced' ? 'Ready' : state === 'checking' ? '' : state === 'error' ? 'Retry' : 'Add LRC'}
+              {state === 'synced'
+                ? 'Ready'
+                : state === 'checking'
+                  ? ''
+                  : state === 'error'
+                    ? 'Retry'
+                    : state === 'unchecked'
+                      ? 'Check'
+                      : state === 'missing'
+                        ? 'Search'
+                        : 'Add LRC'}
             </Text>
           </TouchableOpacity>
         )}

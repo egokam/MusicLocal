@@ -29,7 +29,7 @@ import { GlassSurface } from '../../glass';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { SongsHeader } from '../components/songs/SongsHeader';
 import { TrackListSkeleton } from '../components/Skeleton';
-import { Id3SynchronizedLyricsService } from '../services/Id3SynchronizedLyricsService';
+import { Id3SynchronizedLyricsService, readEmbeddedMp3Lyrics } from '../services/Id3SynchronizedLyricsService';
 import { OfflineMusicService } from '../services/OfflineMusicService';
 import type { Track } from '../types';
 
@@ -75,6 +75,23 @@ const lrcTimestampPrefixPattern = /^(?:\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\])+/;
 const lrcMetadataPattern = /^\[(?:ar|al|ti|au|by|re|ve|offset|length|la|kana|id):/i;
 const hasLrcTimestamps = (lyrics: string) => splitLyricText(lyrics).some((line) => lrcTimestampPrefixPattern.test(line));
 
+const decodeXmlEntities = (value: string) => value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, name: string) => {
+  const normalized = name.toLowerCase();
+  if (normalized === 'amp') return '&';
+  if (normalized === 'lt') return '<';
+  if (normalized === 'gt') return '>';
+  if (normalized === 'quot') return '"';
+  if (normalized === 'apos') return "'";
+  const codePoint = normalized.startsWith('#x')
+    ? Number.parseInt(normalized.slice(2), 16)
+    : Number.parseInt(normalized.slice(1), 10);
+  try {
+    return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
+  } catch {
+    return entity;
+  }
+});
+
 const clearEmbeddedTimestamps = (lyrics: string) => splitLyricText(lyrics)
   .flatMap((line) => {
     if (lrcMetadataPattern.test(line.trim())) return [];
@@ -90,7 +107,59 @@ const clearEmbeddedTimestamps = (lyrics: string) => splitLyricText(lyrics)
   })
   .join('\n');
 
+const ttmlParagraphToText = (rawLine: string) => {
+  let text = '';
+  let spanDepth = 0;
+  const tokens = /<\/?(?:[\w.-]+:)?span\b[^>]*>|<(?:[\w.-]+:)?br\b[^>]*\/?\s*>|([^<]+)|<[^>]*>/gi;
+  for (const token of rawLine.matchAll(tokens)) {
+    const markup = token[0];
+    if (/^<(?:(?:[\w.-]+:)?br)\b/i.test(markup)) {
+      text += '\n';
+      continue;
+    }
+    if (/^<\/?(?:[\w.-]+:)?span\b/i.test(markup)) {
+      const closing = /^<\//.test(markup);
+      if (closing) {
+        spanDepth = Math.max(0, spanDepth - 1);
+      } else {
+        if (spanDepth === 0 && text && !/\s$/.test(text)) text += ' ';
+        if (!/\/\s*>$/.test(markup)) spanDepth += 1;
+      }
+      continue;
+    }
+    if (token[1] !== undefined) text += decodeXmlEntities(token[1]);
+  }
+  return text.replace(/\u00a0/g, ' ');
+};
+
+const ttmlToPlainLines = (ttml: string) => {
+  const paragraphs = [...ttml.matchAll(/<(?:[\w.-]+:)?p\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?p\s*>/gi)];
+  const rawLines = paragraphs.length > 0 ? paragraphs.map((paragraph) => paragraph[1]) : [ttml];
+  return rawLines.flatMap((rawLine) => splitLyricText(ttmlParagraphToText(rawLine)))
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
+};
+
+const lyricsToPlainLines = (lyrics: string) => {
+  if (/<(?:[\w.-]+:)?tt\b/i.test(lyrics) || /<(?:[\w.-]+:)?p\b[^>]*>/i.test(lyrics)) {
+    return ttmlToPlainLines(lyrics);
+  }
+  return hasLrcTimestamps(lyrics) ? clearEmbeddedTimestamps(lyrics) : lyrics;
+};
+
 const getEmbeddedLyrics = (metadata: Awaited<ReturnType<typeof parseBuffer>>) => {
+  const appLyrics = readEmbeddedMp3Lyrics(metadata.native);
+  if (appLyrics) {
+    const sourceLyrics = appLyrics.text.trim();
+    const lyrics = lyricsToPlainLines(sourceLyrics);
+    return {
+      lyrics: lyrics || null,
+      sourceLyrics,
+      hadSyncedLyrics: appLyrics.format === 'ttml' || appLyrics.format === 'line' || hasLrcTimestamps(sourceLyrics),
+    };
+  }
+
   const frames = Object.values(metadata.native).flat();
   const usltLyrics = frames
     .filter((frame) => frame.id === 'USLT')
@@ -99,6 +168,19 @@ const getEmbeddedLyrics = (metadata: Awaited<ReturnType<typeof parseBuffer>>) =>
       return frame.value.text.trim();
     })
     .filter(Boolean);
+  const userTextLyrics = frames.flatMap((frame) => {
+    if (!frame.id.startsWith('TXXX:')) return [];
+    const descriptor = frame.id.slice('TXXX:'.length).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!['lyrics', 'lyric', 'unsyncedlyrics', 'syncedlyrics', 'lyricstext', 'lyricscontent', 'lrc', 'ttml'].includes(descriptor)) return [];
+    if (typeof frame.value === 'string') return frame.value.trim() ? [frame.value.trim()] : [];
+    if (Array.isArray(frame.value)) {
+      return frame.value.filter((value): value is string => typeof value === 'string' && Boolean(value.trim())).map((value) => value.trim());
+    }
+    if (isRecord(frame.value) && typeof frame.value.text === 'string' && frame.value.text.trim()) {
+      return [frame.value.text.trim()];
+    }
+    return [];
+  });
   const formatTimestamp = (timestamp: number, format: number) => {
     const timestampMs = format === 1
       ? timestamp * 1152 / (metadata.format.sampleRate || 44100) * 1000
@@ -131,10 +213,18 @@ const getEmbeddedLyrics = (metadata: Awaited<ReturnType<typeof parseBuffer>>) =>
   const timestampedUslt = usltLyrics.find(hasLrcTimestamps);
   const sourceLyrics = timestampedUslt
     ?? (syltLyrics.length > 0 ? syltLyrics.join('\n') : null)
+    ?? (userTextLyrics.length > 0 ? userTextLyrics.join('\n\n') : null)
     ?? (usltLyrics.length > 0 ? usltLyrics.join('\n\n') : commonLyrics.join('\n\n'));
-  const hadSyncedLyrics = Boolean(timestampedUslt || syltLyrics.length > 0 || commonLyrics.some(hasLrcTimestamps));
+  const isTtml = Boolean(sourceLyrics && (/<(?:[\w.-]+:)?tt\b/i.test(sourceLyrics) || /<(?:[\w.-]+:)?p\b[^>]*>/i.test(sourceLyrics)));
+  const hadSyncedLyrics = Boolean(
+    isTtml
+    || timestampedUslt
+    || syltLyrics.length > 0
+    || userTextLyrics.some(hasLrcTimestamps)
+    || commonLyrics.some(hasLrcTimestamps)
+  );
   const lyrics = sourceLyrics
-    ? (hadSyncedLyrics ? clearEmbeddedTimestamps(sourceLyrics) : sourceLyrics)
+    ? lyricsToPlainLines(sourceLyrics)
     : null;
 
   return { lyrics, sourceLyrics, hadSyncedLyrics };
@@ -216,6 +306,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   const syncScrollOffset = useRef(0);
   const syncScrollContentHeight = useRef(0);
   const isManuallyScrollingLyrics = useRef(false);
+  const isAutoCenteringLyrics = useRef(false);
   const recenterLyricsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recenterLyricsFrame = useRef<number | null>(null);
   const lyricLinesRef = useRef(lyricLines);
@@ -867,7 +958,9 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       lyricLines.forEach((line) => {
         if (!line.text.trim()) return;
         responders.set(line.id, PanResponder.create({
+          onStartShouldSetPanResponderCapture: () => !playerStatusRef.current.playing,
           onStartShouldSetPanResponder: () => !playerStatusRef.current.playing,
+          onMoveShouldSetPanResponderCapture: () => !playerStatusRef.current.playing,
           onMoveShouldSetPanResponder: () => !playerStatusRef.current.playing,
           onPanResponderTerminationRequest: () => false,
           onPanResponderGrant: () => startLyricsLineDrag(line.id),
@@ -900,6 +993,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
         const targetOffset = syncScrollOffset.current
           + rowY + rowHeight / 2
           - (viewportY + viewportHeight / 2);
+        isAutoCenteringLyrics.current = animated;
         scrollView.scrollTo({
           y: Math.max(0, Math.min(maxOffset, targetOffset)),
           animated,
@@ -927,13 +1021,13 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
 
   const handleLyricsScrollBeginDrag = useCallback(() => {
     isManuallyScrollingLyrics.current = true;
+    isAutoCenteringLyrics.current = false;
     clearLyricsRecenterTimer();
   }, [clearLyricsRecenterTimer]);
 
   useEffect(() => {
-    if (!selectedLineId) return;
+    if (!selectedLineId || !playerStatus.playing || isManuallyScrollingLyrics.current) return;
     clearLyricsRecenterTimer();
-    isManuallyScrollingLyrics.current = false;
     if (recenterLyricsFrame.current !== null) cancelAnimationFrame(recenterLyricsFrame.current);
     recenterLyricsFrame.current = requestAnimationFrame(() => {
       recenterLyricsFrame.current = null;
@@ -946,12 +1040,16 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
         recenterLyricsFrame.current = null;
       }
     };
-  }, [centerSelectedLyricsLine, clearLyricsRecenterTimer, selectedLineId]);
+  }, [centerSelectedLyricsLine, clearLyricsRecenterTimer, playerStatus.playing, selectedLineId]);
 
   useEffect(() => {
     if (playerStatus.playing) return;
     clearLyricsRecenterTimer();
     isManuallyScrollingLyrics.current = false;
+    if (isAutoCenteringLyrics.current) {
+      isAutoCenteringLyrics.current = false;
+      syncScrollRef.current?.scrollTo({ y: syncScrollOffset.current, animated: false });
+    }
   }, [clearLyricsRecenterTimer, playerStatus.playing]);
 
   useEffect(() => () => {
@@ -1080,6 +1178,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       <View ref={syncViewportRef} style={{ flex: 1, marginTop: -topInsetCompensation }}>
         <Animated.ScrollView
           ref={syncScrollRef}
+          scrollEnabled={draggingLineId === null}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
             { useNativeDriver: true },
@@ -1095,6 +1194,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             if (isManuallyScrollingLyrics.current) clearLyricsRecenterTimer();
           }}
           onMomentumScrollEnd={() => {
+            isAutoCenteringLyrics.current = false;
             if (isManuallyScrollingLyrics.current) scheduleLyricsRecentering();
           }}
           scrollEventThrottle={16}

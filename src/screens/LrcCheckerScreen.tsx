@@ -133,6 +133,7 @@ export const LrcCheckerScreen = ({
   const [isSavingCustomLrc, setIsSavingCustomLrc] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const applyAllRunning = useRef(false);
+  const reconcileAttempt = useRef('');
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
@@ -166,24 +167,58 @@ export const LrcCheckerScreen = ({
     };
   }, []);
 
-  const stateFor = (track: Track): LrcCheckState => scanSnapshot.records[track.id]?.state ?? (
-    hasTimedLyrics(track) || track.hasSyncedLyrics
+  const trackIdSignature = useMemo(() => tracks.map((track) => track.id).sort().join('\u0000'), [tracks]);
+
+  useEffect(() => {
+    if (!scanSnapshot.hasSavedScan) {
+      reconcileAttempt.current = '';
+      return;
+    }
+    if (
+      isLoadingTracks
+      || scanSnapshot.isScanning
+      || scanSnapshot.isLoadingCatalog
+      || !tracks.length
+      || !trackIdSignature
+      || reconcileAttempt.current === trackIdSignature
+    ) return;
+
+    reconcileAttempt.current = trackIdSignature;
+    let cancelled = false;
+    void onLoadAllTracks()
+      .then((allTracks) => {
+        if (!cancelled) return LrcCheckerService.reconcileSavedScanTracks(allTracks);
+        return undefined;
+      })
+      .catch(() => {
+        if (!cancelled) reconcileAttempt.current = '';
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoadingTracks, onLoadAllTracks, scanSnapshot.hasSavedScan, scanSnapshot.isLoadingCatalog, scanSnapshot.isScanning, trackIdSignature, tracks.length]);
+
+  const stateFor = (track: Track): LrcCheckState => {
+    const record = scanSnapshot.records[track.id];
+    if (record) return record.state;
+    if (scanSnapshot.hasSavedScan) return 'unchecked';
+    return hasTimedLyrics(track) || track.hasSyncedLyrics
       ? 'synced'
       : track.hasPlainLyrics || track.plainLyrics?.trim()
         ? 'plain'
-        : 'unchecked'
-  );
+        : 'unchecked';
+  };
   const syncedCount = tracks.reduce((count, track) => count + (stateFor(track) === 'synced' ? 1 : 0), 0);
   const checkedCount = tracks.reduce((count, track) => {
     const record = scanSnapshot.records[track.id];
-    const state = stateFor(track);
-    const isComplete = ['synced', 'plain', 'missing'].includes(state)
-      || (state === 'candidate' && !record?.error);
+    const isComplete = Boolean(record && ['synced', 'plain', 'missing'].includes(record.state))
+      || Boolean(record?.state === 'candidate' && !record.error);
     return count + (isComplete ? 1 : 0);
   }, 0);
   const candidateLyricMatches = tracks.filter((track) => {
     const record = scanSnapshot.records[track.id];
-    return stateFor(track) === 'candidate'
+    return (stateFor(track) === 'candidate' || record?.pendingReview)
       && Boolean(record?.result && lyricsTextForTrack(record.result).trim());
   });
   const pendingLyricMatches = candidateLyricMatches.filter((track) => !scanSnapshot.records[track.id]?.result?.lyricsQualityWarning);
@@ -254,6 +289,26 @@ export const LrcCheckerScreen = ({
 
   const scanAll = async () => {
     if (scanSnapshot.isScanning || scanSnapshot.isLoadingCatalog || applyAllRunning.current) return;
+    await LrcCheckerService.hydrate();
+    const savedScan = LrcCheckerService.getSnapshot();
+    if (savedScan.hasSavedScan) {
+      Alert.alert(
+        'Previous scan saved',
+        `Saved scan progress and found matches are preserved (${savedScan.progress.completed}/${savedScan.progress.total} tracks from that scan checked). Resume also checks unfinished or newly added tracks and keeps found results ready for review. A new scan starts over.`,
+        [
+          {
+            text: 'Resume scan',
+            onPress: () => { void LrcCheckerService.resumeScan(onLoadAllTracks, onCheckTrack); },
+          },
+          {
+            text: 'Run a new scan',
+            style: 'destructive',
+            onPress: () => { void LrcCheckerService.startScan(onLoadAllTracks, onCheckTrack); },
+          },
+        ],
+      );
+      return;
+    }
     await LrcCheckerService.startScan(onLoadAllTracks, onCheckTrack);
   };
 
@@ -453,7 +508,9 @@ export const LrcCheckerScreen = ({
                     </View>
                   </View>
                   <Text style={{ color: '#A1A1A6', fontSize: 12, fontWeight: '600' }}>
-                    {isBusy ? `${progress.completed}/${progress.total || tracks.length}` : 'LRC'}
+                    {isBusy
+                      ? `${progress.completed}/${progress.total || tracks.length}`
+                      : scanSnapshot.hasSavedScan ? `${progress.completed}/${progress.total} saved` : 'LRC'}
                   </Text>
                 </View>
 
@@ -467,12 +524,12 @@ export const LrcCheckerScreen = ({
                   onPress={() => isScanning ? stopScan() : void scanAll()}
                   disabled={isLoadingTracks || isApplyingAll}
                   accessibilityRole="button"
-                  accessibilityLabel={isScanning ? 'Stop library scan' : 'Scan all tracks for synced lyrics'}
+                  accessibilityLabel={isScanning ? 'Stop library scan' : scanSnapshot.hasSavedScan ? 'Resume saved scan or start a new scan' : 'Scan all tracks for synced lyrics'}
                   style={{ height: 48, borderRadius: 24, backgroundColor: isScanning ? '#303033' : '#28282B', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, opacity: isLoadingTracks ? 0.6 : 1 }}
                 >
                   {isBusy ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="scan-outline" size={19} color="#FA5265" />}
                   <Text style={{ color: 'white', fontSize: 15, fontWeight: '700', marginLeft: 9 }}>
-                    {isLoadingCatalog ? (isStopping ? 'Stopping…' : 'Loading your full library…') : isScanning ? (isStopping ? 'Finishing current track…' : 'Stop scan') : 'Scan lyrics across all sources'}
+                    {isLoadingCatalog ? (isStopping ? 'Stopping…' : 'Loading your full library…') : isScanning ? (isStopping ? 'Finishing current track…' : 'Stop scan') : scanSnapshot.hasSavedScan ? 'Continue saved lyrics scan' : 'Scan lyrics across all sources'}
                   </Text>
                 </TouchableOpacity>
 
@@ -530,15 +587,17 @@ export const LrcCheckerScreen = ({
           )}
           renderItem={({ item }) => {
             const state = stateFor(item);
-            const result = scanSnapshot.records[item.id]?.result;
+            const record = scanSnapshot.records[item.id];
+            const result = record?.result;
+            const rowState = record?.pendingReview && (state === 'unchecked' || state === 'error') ? 'candidate' : state;
             return (
               <LrcCheckerRow
                 track={item}
-                state={state}
-                errorMessage={scanSnapshot.records[item.id]?.error}
-                qualityWarning={state === 'candidate' ? result?.lyricsQualityWarning : undefined}
-                hasRetryCandidate={Boolean(scanSnapshot.records[item.id]?.result)}
-                disabled={isApplyingAll || (isScanning && state !== 'candidate') || retryingTrackId === item.id}
+                state={rowState}
+                errorMessage={record?.error}
+                qualityWarning={rowState === 'candidate' ? result?.lyricsQualityWarning : undefined}
+                hasRetryCandidate={Boolean(result)}
+                disabled={isApplyingAll || (isScanning && rowState !== 'candidate') || retryingTrackId === item.id}
                 onCheck={() => void checkTrack(item, undefined, true).catch(() => undefined)}
                 onReview={() => result && setReviewTrack(result)}
                 onRetry={() => void retryWithDifferentLyrics(item)}
