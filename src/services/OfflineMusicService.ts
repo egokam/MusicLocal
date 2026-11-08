@@ -9,6 +9,7 @@ import type { LyricsAttribution, LyricLine, Track } from '../types';
 // This directory stays inside the app's private Documents container.
 const downloadsDirectory = new Directory(Paths.document, 'Musiqapp');
 const indexFile = new File(downloadsDirectory, 'downloads.json');
+const pendingIndexFile = () => new File(downloadsDirectory, 'downloads.json.pending');
 const spicyLyricsCacheFile = new File(downloadsDirectory, 'spicy-lyrics-cache.json');
 const spicyLyricsIgnoredFile = new File(downloadsDirectory, 'spicy-lyrics-ignored.json');
 export const SPICY_LYRICS_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -64,7 +65,14 @@ const writeIndexToDisk = (tracks: Track[]) => {
   const contents = JSON.stringify(safeTracks);
   const operation = indexWriteQueue.then(async () => {
     ensureDirectory();
-    await FileSystem.writeAsStringAsync(indexFile.uri, contents);
+    const pendingFile = pendingIndexFile();
+    pendingFile.create({ intermediates: true, overwrite: true });
+    await pendingFile.write(contents);
+    const verified = JSON.parse(await pendingFile.text()) as unknown;
+    if (!Array.isArray(verified) || verified.length !== safeTracks.length) {
+      throw new Error('Could not verify the saved music library index.');
+    }
+    await pendingFile.move(new File(downloadsDirectory, 'downloads.json'), { overwrite: true });
   });
   indexWriteQueue = operation.catch(() => undefined);
   return operation;
@@ -650,19 +658,36 @@ const extractEmbeddedMetadata = async (
   };
 };
 
-const readIndexedTracks = async (): Promise<Track[]> => {
-  await indexWriteQueue;
-  if (!indexFile.exists) return [];
+const parseTrackIndex = async (file: File): Promise<Track[] | null> => {
+  if (!file.exists) return null;
   try {
-    const tracks = JSON.parse(await indexFile.text()) as Track[];
+    const parsed = JSON.parse(await file.text()) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const tracks = parsed as Track[];
     const safeTracks = tracks.map(withoutSpicyApiLyrics);
     if (safeTracks.some((track, index) => track !== tracks[index])) {
       await writeIndexToDisk(safeTracks);
     }
     return safeTracks;
   } catch {
-    return [];
+    return null;
   }
+};
+
+const readIndexedTracks = async (): Promise<Track[]> => {
+  await indexWriteQueue;
+  // A forced reload can interrupt a write. Recover the last fully written
+  // snapshot instead of silently opening an empty library.
+  const pending = await parseTrackIndex(pendingIndexFile());
+  if (pending) {
+    try {
+      await pendingIndexFile().move(new File(downloadsDirectory, 'downloads.json'), { overwrite: true });
+    } catch {
+      // The pending snapshot is still readable even if promotion fails.
+    }
+    return pending;
+  }
+  return (await parseTrackIndex(indexFile)) ?? [];
 };
 
 const readSpicyLyricsCache = async (): Promise<Record<string, SpicyLyricsCacheEntry>> => {
@@ -940,10 +965,10 @@ export const OfflineMusicService = {
     }
   },
 
-  /** Read the already indexed library without scanning audio metadata. */
+  /** Read the saved library, rebuilding it from app-owned audio if the index is empty. */
   async getIndexedDownloadedTracks(): Promise<Track[]> {
     ensureDirectory();
-    return (await readIndexedTracks()).filter((track) => {
+    const indexed = (await readIndexedTracks()).filter((track) => {
       if (!track.localUri) return false;
       try {
         return new File(track.localUri).exists;
@@ -951,6 +976,15 @@ export const OfflineMusicService = {
         return false;
       }
     });
+    if (indexed.length > 0) return indexed;
+
+    // Rebuild the private index from audio files already copied into the app's
+    // documents folder. The user's source folder and any library.json are not
+    // needed after import.
+    const recovered = await scanLooseAudioFiles([]);
+    if (recovered.tracks.length === 0) return [];
+    await saveIndexedTracks(recovered.tracks);
+    return recovered.tracks;
   },
 
   async getSpicyLyricsCache(trackId: string, trackSignature: string): Promise<SpicyLyricsCacheEntry | null> {
@@ -1426,12 +1460,22 @@ export const OfflineMusicService = {
         const id = idForImport(entry.uri, title, artist);
         const fileExtension = entry.extension || '.mp3';
         const audioFile = new File(downloadsDirectory, `${safeName(id)}${fileExtension}`);
-        const stagingFile = new File(
+        const stagingUri = new File(
           downloadsDirectory,
           `${safeName(id)}-${Date.now()}-${Math.random().toString(36).slice(2)}${fileExtension}`,
-        );
+        ).uri;
+        const stagingFile = new File(stagingUri);
         try {
           await entry.copy(stagingFile);
+          const sourceSize = entry.size ?? 0;
+          const stagedSize = stagingFile.size ?? 0;
+          if (
+            !stagingFile.exists
+            || stagedSize <= 0
+            || (sourceSize > 0 && stagedSize !== sourceSize)
+          ) {
+            throw new Error(`Could not copy the complete audio file ${entry.name}.`);
+          }
           const embedded = await extractEmbeddedMetadata(stagingFile, id, { title, artist });
           const artwork = embedded.artwork || await cacheArtworkForTrack(entry, downloadsDirectory, id);
           const baseName = entry.name.replace(/\.[^.]+$/, '');
@@ -1491,7 +1535,15 @@ export const OfflineMusicService = {
           // Keep an existing imported copy intact until the replacement is fully copied
           // and its embedded tags have been read successfully.
           await stagingFile.move(audioFile, { overwrite: true });
-          imported.push(track);
+          const installedFile = new File(audioFile.uri);
+          if (
+            !installedFile.exists
+            || (installedFile.size ?? 0) <= 0
+            || (installedFile.size ?? 0) !== stagedSize
+          ) {
+            throw new Error(`Could not verify the saved audio file ${entry.name}.`);
+          }
+          imported.push({ ...track, localUri: installedFile.uri });
           if (embedded.lyricsText) embeddedLyricsCount += 1;
           if (sidecarLyrics) {
             const payload = lyricsPayloadFromTrack(track);
@@ -1501,7 +1553,11 @@ export const OfflineMusicService = {
           skippedCount += 1;
         } finally {
           try {
-            if (stagingFile.exists) stagingFile.delete();
+            // File.move() updates the source File instance to the destination URI.
+            // Recreate the staging reference from its original URI so cleanup can
+            // never delete the imported audio at audioFile.uri.
+            const leftoverStagingFile = new File(stagingUri);
+            if (leftoverStagingFile.exists) leftoverStagingFile.delete();
           } catch {
             // A failed temporary-file cleanup must not abort importing other tracks.
           }
@@ -1701,6 +1757,45 @@ export const OfflineMusicService = {
     const persistedTrack = { ...savedTrack, ...updatedTrack, localUri: savedTrack.localUri };
     await saveIndexedTracks(current.map((item) => item.id === track.id ? persistedTrack : item));
     return persistedTrack;
+  },
+
+  async clearEmbeddedLyrics(track: Track): Promise<Track> {
+    if (track.localUri) {
+      const audioFile = new File(track.localUri);
+      if (audioFile.extension.toLowerCase() === '.mp3') {
+        const prepared = await Id3SynchronizedLyricsService.createVerifiedMp3WithoutLyrics(
+          audioFile.uri,
+          audioFile.name,
+        );
+        try {
+          await this.replaceTrackAudio(track, prepared.uri);
+        } finally {
+          if (prepared.exists) prepared.delete();
+        }
+      }
+    }
+
+    const clearedTrack: Track = {
+      ...track,
+      syncedLyrics: undefined,
+      plainLyrics: undefined,
+      lyrics: undefined,
+      lyricsTtml: undefined,
+      lyricsFormat: undefined,
+      lyricsFileUri: undefined,
+      lyricsAvailable: false,
+      hasSyncedLyrics: false,
+      hasPlainLyrics: false,
+      lyricsSource: undefined,
+      lyricsAttribution: undefined,
+      lyricsLookupProviders: undefined,
+      lyricsLookupIssues: undefined,
+    };
+    const current = await this.getDownloadedTracks();
+    if (current.some((item) => item.id === track.id)) {
+      await saveIndexedTracks(current.map((item) => item.id === track.id ? clearedTrack : item));
+    }
+    return this.removeLyricsSidecars(clearedTrack);
   },
 
   /** Write the app's lyric payload into an MP3; other formats use the private track index. */

@@ -4,7 +4,7 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import type { LrcCheckState } from '../components/library/LrcCheckerRow';
 import type { Track } from '../types';
-import { MusicCatalogService } from './MusicCatalogService';
+import { lyricsCandidateSignature, MusicCatalogService } from './MusicCatalogService';
 
 const BACKGROUND_TASK_NAME = 'musiqapp-lrc-scan';
 const BACKGROUND_BATCH_SIZE = 24;
@@ -16,7 +16,11 @@ export type LrcCheckerRecord = {
   state: LrcCheckState;
   result?: Track;
   error?: string;
+  excludedCandidateSignatures?: string[];
+  previousResults?: Track[];
 };
+
+const MAX_PREVIOUS_RESULTS = 10;
 
 export type LrcCheckerSnapshot = {
   records: Record<string, LrcCheckerRecord>;
@@ -34,7 +38,7 @@ type PersistedLrcCheckerState = LrcCheckerSnapshot & {
 
 type ScanCallbacks = {
   loadAllTracks: () => Promise<Track[]>;
-  checkTrack: (track: Track, forceOnline?: boolean) => Promise<Track>;
+  checkTrack: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>;
 };
 
 const EMPTY_SNAPSHOT: LrcCheckerSnapshot = {
@@ -128,7 +132,15 @@ const hydrate = async () => {
               trackId,
               record?.state === 'checking'
                 ? { state: 'error', error: 'Lookup interrupted; it will be retried.' }
-                : record,
+                : {
+                    ...record,
+                    excludedCandidateSignatures: Array.isArray(record?.excludedCandidateSignatures)
+                      ? record.excludedCandidateSignatures.filter((signature): signature is string => typeof signature === 'string')
+                      : undefined,
+                    previousResults: Array.isArray(record?.previousResults)
+                      ? record.previousResults.filter((track): track is Track => Boolean(track && typeof track.id === 'string')).map(minimalTrack)
+                      : undefined,
+                  },
             ])) as Record<string, LrcCheckerRecord>,
             isScanning: value.isScanning === true,
             isLoadingCatalog: value.isLoadingCatalog === true,
@@ -171,9 +183,12 @@ const updateState = async (mutate: (state: PersistedLrcCheckerState) => void) =>
 
 const setRecord = async (trackId: string, record: LrcCheckerRecord) => {
   await updateState((state) => {
+    const previous = state.records[trackId];
     state.records[trackId] = {
       ...record,
+      excludedCandidateSignatures: record.excludedCandidateSignatures ?? previous?.excludedCandidateSignatures,
       result: record.result ? minimalTrack(record.result) : undefined,
+      previousResults: (record.previousResults ?? previous?.previousResults)?.slice(-MAX_PREVIOUS_RESULTS).map(minimalTrack),
     };
     if (state.scanTracks.length > 0) {
       state.progress.completed = state.scanTracks.filter((track) => isCompleteRecord(state.records[track.id])).length;
@@ -186,7 +201,14 @@ const setSessionTracks = async (tracks: Track[]) => {
   const uniqueTracks = [...new Map(tracks.map((track) => [track.id, minimalTrack(track)])).values()];
   await updateState((state) => {
     state.scanTracks = uniqueTracks;
-    for (const track of uniqueTracks) state.records[track.id] = { state: 'unchecked' };
+    for (const track of uniqueTracks) {
+      const previous = state.records[track.id];
+      state.records[track.id] = {
+        state: 'unchecked',
+        excludedCandidateSignatures: previous?.excludedCandidateSignatures,
+        previousResults: previous?.previousResults,
+      };
+    }
     state.progress.total = uniqueTracks.length;
     state.progress.completed = 0;
     state.isScanning = true;
@@ -358,7 +380,7 @@ export const LrcCheckerService = {
     return () => listeners.delete(listener);
   },
 
-  async startScan(loadAllTracks: () => Promise<Track[]>, checkTrack: (track: Track, forceOnline?: boolean) => Promise<Track>) {
+  async startScan(loadAllTracks: () => Promise<Track[]>, checkTrack: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>) {
     await hydrate();
     if (foregroundRun) return foregroundRun;
     return runForegroundScan({ loadAllTracks, checkTrack });
@@ -382,8 +404,93 @@ export const LrcCheckerService = {
     }
   },
 
+  async retryTrack(
+    track: Track,
+    check: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>,
+  ): Promise<LrcCheckerRecord> {
+    await hydrate();
+    const previous = persistedState.records[track.id];
+    const excluded = new Set(previous?.excludedCandidateSignatures ?? []);
+    const previousSignature = previous?.result ? lyricsCandidateSignature(previous.result) : '';
+    if (previousSignature) excluded.add(previousSignature);
+    const excludedCandidateSignatures = [...excluded];
+
+    await setRecord(track.id, {
+      state: 'checking',
+      result: previous?.result,
+      excludedCandidateSignatures,
+      previousResults: previous?.previousResults,
+    });
+    try {
+      const result = await check(track, true, excludedCandidateSignatures);
+      const record = recordFromResult(result);
+      const resultSignature = lyricsCandidateSignature(result);
+      const isDistinctResult = Boolean(resultSignature && resultSignature !== previousSignature);
+      const previousResults = isDistinctResult && previous?.result
+        ? [...(previous.previousResults ?? []), previous.result].slice(-MAX_PREVIOUS_RESULTS)
+        : previous?.previousResults;
+      const retryRecord: LrcCheckerRecord = isDistinctResult
+        ? {
+            ...record,
+            result,
+            excludedCandidateSignatures,
+            previousResults,
+          }
+        : previous?.result
+          ? {
+              ...recordFromResult(previous.result),
+              result: previous.result,
+              error: record.error || 'No different lyrics version was found. Previous results were skipped.',
+              excludedCandidateSignatures,
+              previousResults: previous.previousResults,
+            }
+          : { ...record, excludedCandidateSignatures, previousResults };
+      await setRecord(track.id, retryRecord);
+      return retryRecord;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The lyrics service request failed. Try again later.';
+      const retryRecord: LrcCheckerRecord = previous?.result
+        ? {
+            ...recordFromResult(previous.result),
+            result: previous.result,
+            error: message,
+            excludedCandidateSignatures,
+            previousResults: previous.previousResults,
+          }
+        : { state: 'error', error: message, excludedCandidateSignatures, previousResults: previous?.previousResults };
+      await setRecord(track.id, retryRecord);
+      throw error;
+    }
+  },
+
+  async undoRetry(trackId: string): Promise<LrcCheckerRecord | null> {
+    await hydrate();
+    const current = persistedState.records[trackId];
+    const history = current?.previousResults ?? [];
+    const previousResult = history[history.length - 1];
+    if (!current || !previousResult) return null;
+
+    const previousSignature = lyricsCandidateSignature(previousResult);
+    const excludedCandidateSignatures = (current.excludedCandidateSignatures ?? [])
+      .filter((signature) => signature !== previousSignature);
+    const restored: LrcCheckerRecord = {
+      ...recordFromResult(previousResult),
+      result: previousResult,
+      excludedCandidateSignatures,
+      previousResults: history.slice(0, -1),
+    };
+    await setRecord(trackId, restored);
+    return restored;
+  },
+
   async updateRecord(trackId: string, record: LrcCheckerRecord) {
-    await setRecord(trackId, record);
+    await hydrate();
+    const previous = persistedState.records[trackId];
+    await setRecord(trackId, {
+      ...record,
+      excludedCandidateSignatures: record.excludedCandidateSignatures ?? previous?.excludedCandidateSignatures,
+      previousResults: record.previousResults ?? previous?.previousResults,
+    });
   },
 
   async stopScan() {

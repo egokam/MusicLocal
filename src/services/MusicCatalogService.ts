@@ -70,6 +70,27 @@ const mergeTrackChanges = (track: Track, changes: TrackEditChanges): Track => {
     };
   }
   const lyrics = changes.lyrics.trim();
+  const ttmlLyrics = /<(?:[\w.-]+:)?tt\b/i.test(lyrics) ? parseTtmlLyrics(lyrics) : [];
+  if (ttmlLyrics.length) {
+    const syncedLyrics = lrcFromLyricLines(ttmlLyrics);
+    return {
+      ...track,
+      title: changes.title.trim() || track.title,
+      artist: changes.artist.trim() || track.artist,
+      album: changes.album.trim(),
+      artwork: changes.artworkUri ?? track.artwork,
+      syncedLyrics: syncedLyrics || undefined,
+      plainLyrics: undefined,
+      lyrics: ttmlLyrics,
+      lyricsAvailable: true,
+      hasSyncedLyrics: true,
+      hasPlainLyrics: false,
+      lyricsFormat: 'ttml',
+      lyricsTtml: lyrics,
+      lyricsSource: 'saved_ttml',
+      lyricsAttribution: undefined,
+    };
+  }
   const parsed = parseLyrics(lyrics);
   const hasSyncedLyrics = parsed.some((line) => line.timeMs !== null && line.text.trim());
   const syncedLyrics = hasSyncedLyrics ? lyrics : undefined;
@@ -124,6 +145,28 @@ const hasRenderableLyrics = (track: Track) => Boolean(
   || track.syncedLyrics?.trim()
   || track.plainLyrics?.trim(),
 );
+
+const isEmbeddedLyricsSource = (source?: string) => source === 'embedded_lrc'
+  || source === 'embedded_text'
+  || source === 'embedded_musiqapp';
+
+const withoutNonEmbeddedLyrics = (track: Track): Track => isEmbeddedLyricsSource(track.lyricsSource)
+  ? track
+  : {
+      ...track,
+      syncedLyrics: undefined,
+      plainLyrics: undefined,
+      lyrics: undefined,
+      lyricsTtml: undefined,
+      lyricsFormat: undefined,
+      lyricsAvailable: false,
+      hasSyncedLyrics: false,
+      hasPlainLyrics: false,
+      lyricsSource: undefined,
+      lyricsAttribution: undefined,
+      lyricsLookupProviders: undefined,
+      lyricsLookupIssues: undefined,
+    };
 
 const hasTimedText = (text: string) => /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(text);
 
@@ -884,13 +927,13 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
 
 const resolveLocalLyrics = async (track: Track) => {
   const embeddedTrack = await readEmbeddedLyrics(track, track);
-  if (
-    (embeddedTrack.lyricsSource === 'embedded_lrc'
-      || embeddedTrack.lyricsSource === 'embedded_text'
-      || embeddedTrack.lyricsSource === 'embedded_musiqapp')
-    && hasRenderableLyrics(embeddedTrack)
-  ) return embeddedTrack;
+  if (isEmbeddedLyricsSource(embeddedTrack.lyricsSource) && hasRenderableLyrics(embeddedTrack)) return embeddedTrack;
   return readLyricsFile(track);
+};
+
+const resolveEmbeddedLyricsOnly = (track: Track) => {
+  const cleanTrack = withoutSpicyApiLyrics(track);
+  return readEmbeddedLyrics(cleanTrack, withoutNonEmbeddedLyrics(cleanTrack));
 };
 
 const lookupLyricsOnline = async (track: Track, local: Track, syncedOnly: boolean): Promise<Track> => {
@@ -1041,6 +1084,56 @@ const qualityForLyrics = (track: Track) => {
   if (track.syncedLyrics?.trim() || track.lyricsFormat === 'line') return 3;
   if (track.plainLyrics?.trim() || track.lyricsFormat === 'plain' || track.lyrics?.some((line) => line.text.trim())) return 1;
   return 0;
+};
+
+const isAppleMusicTtml = (track: Track) => {
+  const provider = `${track.lyricsAttribution?.provider ?? ''} ${track.lyricsSource ?? ''}`
+    .toLocaleLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const hasTtml = track.lyricsFormat === 'ttml' || Boolean(track.lyricsTtml?.trim());
+  return /apple\s*music/.test(provider) && hasTtml;
+};
+
+const providerPriorityForLyrics = (track: Track) => {
+  const provider = `${track.lyricsAttribution?.provider ?? ''} ${track.lyricsSource ?? ''}`
+    .toLocaleLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Prefer named upstream providers over community catalogs within the same lyric format.
+  if (/\b(apple\s*music|spotify|musixmatch|genius|deezer|youtube\s*music|qq\s*music|kugou|netease(?:\s*cloud\s*music)?)\b/.test(provider)) {
+    return 1;
+  }
+
+  if (/\b(lrclib|liriqo|lrc\s*red|lrc\s*mux|better\s*lyrics|lyrically|unison|spicy\s*lyrics)\b/.test(provider)) {
+    return 0;
+  }
+  return -1;
+};
+
+const compareLyricsCandidates = (left: Track, right: Track) => {
+  const appleMusicTtmlPriority = Number(isAppleMusicTtml(right)) - Number(isAppleMusicTtml(left));
+  if (appleMusicTtmlPriority) return appleMusicTtmlPriority;
+  const formatPriority = qualityForLyrics(right) - qualityForLyrics(left);
+  return formatPriority || providerPriorityForLyrics(right) - providerPriorityForLyrics(left);
+};
+
+export const lyricsCandidateSignature = (track: Track) => {
+  const lyricText = track.lyrics?.map((line) => line.text).filter(Boolean).join('\n')
+    || track.syncedLyrics
+    || track.plainLyrics
+    || (track.lyricsTtml ? xmlText(track.lyricsTtml) : '');
+  const normalized = normalizeTrackText(lyricText.replace(/\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g, ' '));
+  if (!normalized) return '';
+
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = Math.imul(hash ^ normalized.charCodeAt(index), 0x01000193);
+  }
+  return `${normalized.length}:${(hash >>> 0).toString(16)}`;
 };
 
 const liriQoCandidateFromRecord = (track: Track, record: Record<string, unknown>): Track | null => {
@@ -1701,7 +1794,7 @@ const applySpicyLyricsEntry = (local: Track, entry: SpicyLyricsCacheEntry, synce
   };
 };
 
-const searchLyricsForChecker = async (track: Track): Promise<Track> => {
+const searchLyricsForChecker = async (track: Track, excludedCandidateSignatures: string[] = []): Promise<Track> => {
   const candidates: Track[] = [];
   const searchedProviders: string[] = [];
   const issues: string[] = [];
@@ -1752,9 +1845,34 @@ const searchLyricsForChecker = async (track: Track): Promise<Track> => {
     attempt('LRCLIB', () => searchLrclibForTrack(track, (message) => addIssue('LRCLIB', message))),
   ]);
 
-  candidates.sort((left, right) => qualityForLyrics(right) - qualityForLyrics(left));
-  const bestCandidate = candidates[0];
-  const result = bestCandidate ?? await resolveLocalLyrics(withoutSpicyApiLyrics(track));
+  const excluded = new Set(excludedCandidateSignatures);
+  const availableCandidates = candidates.filter((candidate) => {
+    const signature = lyricsCandidateSignature(candidate);
+    return signature && !excluded.has(signature);
+  });
+  availableCandidates.sort(compareLyricsCandidates);
+  const bestCandidate = availableCandidates[0];
+  let result: Track;
+  if (bestCandidate) {
+    result = bestCandidate;
+  } else if (excluded.size > 0) {
+    addIssue('Lyrics Checker', 'No different lyrics version was found. Previous results were skipped.');
+    result = {
+      ...withoutSpicyApiLyrics(track),
+      syncedLyrics: undefined,
+      plainLyrics: undefined,
+      lyrics: undefined,
+      lyricsTtml: undefined,
+      lyricsFormat: undefined,
+      lyricsAvailable: false,
+      hasSyncedLyrics: false,
+      hasPlainLyrics: false,
+      lyricsSource: undefined,
+      lyricsAttribution: undefined,
+    };
+  } else {
+    result = await resolveLocalLyrics(withoutSpicyApiLyrics(track));
+  }
   return withLookupProviders(result, searchedProviders, [...new Set(issues)]);
 };
 
@@ -1911,10 +2029,56 @@ export const MusicCatalogService = {
 
   async updateTrack(track: Track, changes: TrackEditChanges): Promise<Track> {
     const updated = mergeTrackChanges(track, changes);
-    return OfflineMusicService.updateTrack(
-      updated,
-      changes.artworkUri ? { uri: changes.artworkUri, mimeType: changes.artworkMimeType } : undefined,
-    );
+    const artworkSelection = changes.artworkUri
+      ? { uri: changes.artworkUri, mimeType: changes.artworkMimeType }
+      : undefined;
+    if (changes.lyrics === undefined) {
+      return OfflineMusicService.updateTrack(updated, artworkSelection);
+    }
+
+    // Save the other track fields first while retaining the current lyric record.
+    // If rewriting an MP3 fails, the previous lyrics stay intact in the library.
+    const metadataOnlyTrack: Track = {
+      ...updated,
+      syncedLyrics: track.syncedLyrics,
+      plainLyrics: track.plainLyrics,
+      lyrics: track.lyrics,
+      lyricsTtml: track.lyricsTtml,
+      lyricsFormat: track.lyricsFormat,
+      lyricsAvailable: track.lyricsAvailable,
+      hasSyncedLyrics: track.hasSyncedLyrics,
+      hasPlainLyrics: track.hasPlainLyrics,
+      lyricsSource: track.lyricsSource,
+      lyricsAttribution: track.lyricsAttribution,
+    };
+    const savedTrack = await OfflineMusicService.updateTrack(metadataOnlyTrack, artworkSelection);
+    const lyricsText = changes.lyrics.trim();
+    if (!lyricsText) return OfflineMusicService.clearEmbeddedLyrics(savedTrack);
+
+    const lyricsTrack: Track = {
+      ...savedTrack,
+      syncedLyrics: updated.syncedLyrics,
+      plainLyrics: updated.plainLyrics,
+      lyrics: updated.lyrics,
+      lyricsTtml: updated.lyricsTtml,
+      lyricsFormat: updated.lyricsFormat,
+      lyricsAvailable: true,
+      hasSyncedLyrics: updated.hasSyncedLyrics,
+      hasPlainLyrics: updated.hasPlainLyrics,
+      lyricsSource: 'embedded_musiqapp',
+      lyricsAttribution: undefined,
+    };
+    const format: 'ttml' | 'line' | 'plain' = updated.lyricsFormat === 'ttml' && updated.lyricsTtml
+      ? 'ttml'
+      : updated.hasSyncedLyrics ? 'line' : 'plain';
+    const storedLyrics = format === 'ttml' ? updated.lyricsTtml!.trim() : lyricsText;
+    const payload = { version: 1 as const, format, text: storedLyrics };
+    const localUri = savedTrack.localUri ?? '';
+    if (/\.mp3(?:$|[?#])/i.test(localUri)) {
+      const embedded = await OfflineMusicService.embedLyricsInTrackAudio(lyricsTrack, payload);
+      if (!embedded) throw new Error('Could not embed lyrics into this MP3. The saved lyrics were left unchanged.');
+    }
+    return OfflineMusicService.saveEmbeddedLyrics(lyricsTrack, storedLyrics);
   },
 
   async deleteTrack(track: Track): Promise<void> {
@@ -1947,8 +2111,12 @@ export const MusicCatalogService = {
     return lookupLyricsOnline(track, result, syncedOnly);
   },
 
-  async searchLyricsForChecker(track: Track): Promise<Track> {
-    return searchLyricsForChecker(track);
+  async getEmbeddedLyrics(track: Track): Promise<Track> {
+    return resolveEmbeddedLyricsOnly(track);
+  },
+
+  async searchLyricsForChecker(track: Track, excludedCandidateSignatures: string[] = []): Promise<Track> {
+    return searchLyricsForChecker(track, excludedCandidateSignatures);
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<void> {

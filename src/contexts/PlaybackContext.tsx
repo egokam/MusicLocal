@@ -31,7 +31,7 @@ type PlaybackActions = {
   loadFavoriteTracks: () => Promise<Track[]>;
   loadPlaylists: () => Promise<PlaylistSummary[]>;
   loadPlaylistTracks: (playlistId: string) => Promise<Track[]>;
-  checkTrackLyrics: (track: Track, forceOnline?: boolean) => Promise<Track>;
+  checkTrackLyrics: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>;
   saveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
   saveSynchronizedTrack: (
     track: Track,
