@@ -71,6 +71,7 @@ export type Track = {
   lyricsTtml?: string;
   lyricsLookupProviders?: string[];
   lyricsLookupIssues?: string[];
+  lyricsQualityWarning?: string;
   isFavorite?: boolean;
   playCount?: number;
   licenseUrl?: string;

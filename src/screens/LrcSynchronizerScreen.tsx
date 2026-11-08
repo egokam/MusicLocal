@@ -5,6 +5,7 @@ import {
   Alert,
   FlatList,
   Image,
+  LayoutAnimation,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -14,6 +15,8 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  type ScrollViewInstance,
+  type ViewInstance,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -48,6 +51,15 @@ type TimedLyricLine = {
   id: string;
   text: string;
   timeMs: number | null;
+};
+
+type LyricsLineLayout = { y: number; height: number };
+type LyricsLineDrag = {
+  lineId: string;
+  initialCenterY: number;
+  initialScrollOffset: number;
+  dy: number;
+  moveY: number;
 };
 
 const splitLyricText = (lyrics: string) => lyrics
@@ -189,9 +201,30 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   const [pasteModalVisible, setPasteModalVisible] = useState(false);
   const [pastedLyrics, setPastedLyrics] = useState('');
   const [lineEditor, setLineEditor] = useState<{ lineId: string | null; text: string } | null>(null);
+  const [draggingLineId, setDraggingLineId] = useState<string | null>(null);
+  const [lyricDragResponders, setLyricDragResponders] = useState(
+    () => new Map<string, ReturnType<typeof PanResponder.create>>(),
+  );
   const trackPickerTranslateY = useMemo(() => new Animated.Value(0), []);
   const pauseToastOpacity = useMemo(() => new Animated.Value(0), []);
+  const lyricDragTranslationY = useMemo(() => new Animated.Value(0), []);
   const saveChoiceDialogOpen = useRef(false);
+  const syncScrollRef = useRef<ScrollViewInstance | null>(null);
+  const syncViewportRef = useRef<ViewInstance | null>(null);
+  const lyricLinesContainerRef = useRef<ViewInstance | null>(null);
+  const selectedLineRowRef = useRef<ViewInstance | null>(null);
+  const syncScrollOffset = useRef(0);
+  const syncScrollContentHeight = useRef(0);
+  const isManuallyScrollingLyrics = useRef(false);
+  const recenterLyricsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recenterLyricsFrame = useRef<number | null>(null);
+  const lyricLinesRef = useRef(lyricLines);
+  const lyricRowLayouts = useRef(new Map<string, LyricsLineLayout>());
+  const lyricDragRef = useRef<LyricsLineDrag | null>(null);
+  const lyricDragViewport = useRef<{ top: number; bottom: number; height: number } | null>(null);
+  const lyricListContentOrigin = useRef(0);
+  const lyricDragAutoScrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lyricDragAutoScrollDirection = useRef<-1 | 0 | 1>(0);
   const preparedMp3Ref = useRef<{
     sourceUri: string;
     syncedLyrics: string;
@@ -314,6 +347,13 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
   }, [windowHeight]);
 
   useEffect(() => {
+    const scrollListener = scrollY.addListener(({ value }) => {
+      syncScrollOffset.current = value;
+    });
+    return () => scrollY.removeListener(scrollListener);
+  }, [scrollY]);
+
+  useEffect(() => {
     if (!trackPickerVisible) return;
     isDismissingTrackPicker.current = false;
     trackPickerTranslateY.setValue(pickerWindowHeight.current);
@@ -330,12 +370,25 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     playerStatusRef.current = playerStatus;
   }, [playerStatus]);
 
+  useEffect(() => {
+    lyricLinesRef.current = lyricLines;
+    const viewport = syncViewportRef.current;
+    const listContainer = lyricLinesContainerRef.current;
+    if (!viewport || !listContainer) return;
+    viewport.measureInWindow((_viewportX, viewportY) => {
+      listContainer.measureInWindow((_listX, listY) => {
+        lyricListContentOrigin.current = listY - viewportY + syncScrollOffset.current;
+      });
+    });
+  }, [lyricLines]);
+
   useEffect(() => () => {
     pauseToastOpacity.stopAnimation();
   }, [pauseToastOpacity]);
 
   const loadLyrics = useCallback((lyrics: string | null) => {
     const lines = lyrics === null ? [] : parseLyrics(lyrics);
+    lyricRowLayouts.current.clear();
     setLyricLines(lines);
     setSelectedLineId(lines.find((line) => line.text.trim())?.id ?? null);
   }, []);
@@ -642,6 +695,271 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       : currentId
   ), null);
 
+  const clearLyricsRecenterTimer = useCallback(() => {
+    if (recenterLyricsTimer.current) {
+      clearTimeout(recenterLyricsTimer.current);
+      recenterLyricsTimer.current = null;
+    }
+  }, []);
+
+  const stopLyricsLineAutoScroll = useCallback(() => {
+    if (lyricDragAutoScrollTimer.current) {
+      clearInterval(lyricDragAutoScrollTimer.current);
+      lyricDragAutoScrollTimer.current = null;
+    }
+    lyricDragAutoScrollDirection.current = 0;
+  }, []);
+
+  const animateLyricsLineDrop = useCallback(() => {
+    Animated.spring(lyricDragTranslationY, {
+      toValue: 0,
+      damping: 22,
+      stiffness: 280,
+      mass: 0.78,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setDraggingLineId(null);
+    });
+  }, [lyricDragTranslationY]);
+
+  const cancelLyricsLineDrag = useCallback(() => {
+    const wasDragging = Boolean(lyricDragRef.current);
+    stopLyricsLineAutoScroll();
+    lyricDragRef.current = null;
+    lyricDragViewport.current = null;
+    if (wasDragging) animateLyricsLineDrop();
+  }, [animateLyricsLineDrop, stopLyricsLineAutoScroll]);
+
+  const startLyricsLineDrag = useCallback((lineId: string) => {
+    if (playerStatusRef.current.playing) return;
+    const rowLayout = lyricRowLayouts.current.get(lineId);
+    if (!rowLayout) return;
+    const lineIndex = lyricLinesRef.current.findIndex((line) => line.id === lineId);
+    if (lineIndex < 0) return;
+
+    clearLyricsRecenterTimer();
+    lyricDragTranslationY.stopAnimation();
+    lyricDragTranslationY.setValue(0);
+    lyricDragRef.current = {
+      lineId,
+      initialCenterY: lyricListContentOrigin.current + rowLayout.y + rowLayout.height / 2,
+      initialScrollOffset: syncScrollOffset.current,
+      dy: 0,
+      moveY: 0,
+    };
+    setDraggingLineId(lineId);
+    syncViewportRef.current?.measureInWindow((_x, y, _width, height) => {
+      if (lyricDragRef.current?.lineId === lineId) {
+        lyricDragViewport.current = { top: y, bottom: y + height, height };
+      }
+    });
+  }, [clearLyricsRecenterTimer, lyricDragTranslationY]);
+
+  const updateLyricsLineDrag = useCallback((dy: number, moveY: number) => {
+    const drag = lyricDragRef.current;
+    if (!drag) return;
+    if (playerStatusRef.current.playing) {
+      cancelLyricsLineDrag();
+      return;
+    }
+
+    drag.dy = dy;
+    drag.moveY = moveY;
+    const viewport = lyricDragViewport.current;
+    const currentOffset = syncScrollOffset.current;
+    const draggedCenter = viewport
+      ? moveY - viewport.top + currentOffset
+      : drag.initialCenterY + dy + currentOffset - drag.initialScrollOffset;
+    lyricDragTranslationY.setValue(draggedCenter - drag.initialCenterY);
+
+    if (!viewport) return;
+    const edgeSize = Math.min(82, viewport.height * 0.16);
+    const direction = moveY < viewport.top + edgeSize
+      ? -1
+      : moveY > viewport.bottom - edgeSize ? 1 : 0;
+    if (direction === 0) {
+      stopLyricsLineAutoScroll();
+      return;
+    }
+    if (lyricDragAutoScrollTimer.current && lyricDragAutoScrollDirection.current === direction) return;
+    stopLyricsLineAutoScroll();
+    lyricDragAutoScrollDirection.current = direction;
+
+    lyricDragAutoScrollTimer.current = setInterval(() => {
+      const activeDrag = lyricDragRef.current;
+      const activeViewport = lyricDragViewport.current;
+      if (!activeDrag || !activeViewport || playerStatusRef.current.playing) {
+        stopLyricsLineAutoScroll();
+        return;
+      }
+      const maxOffset = Math.max(0, syncScrollContentHeight.current - activeViewport.height);
+      const nextOffset = Math.max(
+        0,
+        Math.min(maxOffset, syncScrollOffset.current + direction * 11),
+      );
+      if (nextOffset === syncScrollOffset.current) {
+        stopLyricsLineAutoScroll();
+        return;
+      }
+      syncScrollOffset.current = nextOffset;
+      syncScrollRef.current?.scrollTo({ y: nextOffset, animated: false });
+      const activeCenter = activeDrag.moveY - activeViewport.top + nextOffset;
+      lyricDragTranslationY.setValue(activeCenter - activeDrag.initialCenterY);
+    }, 16);
+  }, [cancelLyricsLineDrag, lyricDragTranslationY, stopLyricsLineAutoScroll]);
+
+  const finishLyricsLineDrag = useCallback((lineId: string, dy: number, moveY: number) => {
+    const drag = lyricDragRef.current;
+    if (!drag || drag.lineId !== lineId) return;
+    stopLyricsLineAutoScroll();
+    lyricDragRef.current = null;
+
+    if (!playerStatusRef.current.playing) {
+      const currentLines = lyricLinesRef.current;
+      const fromIndex = currentLines.findIndex((line) => line.id === lineId);
+      const rowLayout = lyricRowLayouts.current.get(lineId);
+      const viewport = lyricDragViewport.current;
+      if (fromIndex >= 0 && rowLayout && Math.abs(dy) > 12) {
+        const projectedCenter = viewport
+          ? moveY - viewport.top + syncScrollOffset.current
+          : drag.initialCenterY + dy + syncScrollOffset.current - drag.initialScrollOffset;
+        const remainingLines = currentLines.filter((line) => line.id !== lineId);
+        const toIndex = remainingLines.reduce((insertIndex, line) => {
+          const layout = lyricRowLayouts.current.get(line.id);
+          const lineCenter = layout
+            ? lyricListContentOrigin.current + layout.y + layout.height / 2
+            : Number.POSITIVE_INFINITY;
+          const crossedLineCenter = dy >= 0 ? projectedCenter >= lineCenter : projectedCenter > lineCenter;
+          return layout && crossedLineCenter
+            ? insertIndex + 1
+            : insertIndex;
+        }, 0);
+
+        if (toIndex !== fromIndex) {
+          const reordered = [
+            ...remainingLines.slice(0, toIndex),
+            currentLines[fromIndex],
+            ...remainingLines.slice(toIndex),
+          ];
+          const linesWithValidTimings = reordered.map((line) => (
+            line.id === lineId && line.timeMs !== null
+              ? { ...line, timeMs: null }
+              : line
+          ));
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          lyricLinesRef.current = linesWithValidTimings;
+          setLyricLines(linesWithValidTimings);
+          setSelectedLineId(lineId);
+          preparedMp3Ref.current = null;
+          setPlaybackError(null);
+          setSaveError(null);
+        }
+      }
+    }
+
+    lyricDragViewport.current = null;
+    animateLyricsLineDrop();
+  }, [animateLyricsLineDrop, stopLyricsLineAutoScroll]);
+
+  useEffect(() => {
+    const responders = new Map<string, ReturnType<typeof PanResponder.create>>();
+    if (!playerStatus.playing) {
+      lyricLines.forEach((line) => {
+        if (!line.text.trim()) return;
+        responders.set(line.id, PanResponder.create({
+          onStartShouldSetPanResponder: () => !playerStatusRef.current.playing,
+          onMoveShouldSetPanResponder: () => !playerStatusRef.current.playing,
+          onPanResponderTerminationRequest: () => false,
+          onPanResponderGrant: () => startLyricsLineDrag(line.id),
+          onPanResponderMove: (_event, gestureState) => (
+            updateLyricsLineDrag(gestureState.dy, gestureState.moveY)
+          ),
+          onPanResponderRelease: (_event, gestureState) => (
+            finishLyricsLineDrag(line.id, gestureState.dy, gestureState.moveY)
+          ),
+          onPanResponderTerminate: () => cancelLyricsLineDrag(),
+        }));
+      });
+    }
+    setLyricDragResponders(responders);
+  }, [cancelLyricsLineDrag, finishLyricsLineDrag, lyricLines, playerStatus.playing, startLyricsLineDrag, updateLyricsLineDrag]);
+
+  useEffect(() => {
+    if (playerStatus.playing && lyricDragRef.current) cancelLyricsLineDrag();
+  }, [cancelLyricsLineDrag, playerStatus.playing]);
+
+  const centerSelectedLyricsLine = useCallback((animated = true) => {
+    const selectedRow = selectedLineRowRef.current;
+    const viewport = syncViewportRef.current;
+    const scrollView = syncScrollRef.current;
+    if (!selectedRow || !viewport || !scrollView) return;
+
+    viewport.measureInWindow((_viewportX, viewportY, _viewportWidth, viewportHeight) => {
+      selectedRow.measureInWindow((_rowX, rowY, _rowWidth, rowHeight) => {
+        const maxOffset = Math.max(0, syncScrollContentHeight.current - viewportHeight);
+        const targetOffset = syncScrollOffset.current
+          + rowY + rowHeight / 2
+          - (viewportY + viewportHeight / 2);
+        scrollView.scrollTo({
+          y: Math.max(0, Math.min(maxOffset, targetOffset)),
+          animated,
+        });
+      });
+    });
+  }, []);
+
+  const scheduleLyricsRecentering = useCallback(() => {
+    clearLyricsRecenterTimer();
+    if (!playerStatus.playing) {
+      isManuallyScrollingLyrics.current = false;
+      return;
+    }
+    recenterLyricsTimer.current = setTimeout(() => {
+      recenterLyricsTimer.current = null;
+      if (!playerStatusRef.current.playing) {
+        isManuallyScrollingLyrics.current = false;
+        return;
+      }
+      isManuallyScrollingLyrics.current = false;
+      centerSelectedLyricsLine(true);
+    }, 1000);
+  }, [centerSelectedLyricsLine, clearLyricsRecenterTimer, playerStatus.playing]);
+
+  const handleLyricsScrollBeginDrag = useCallback(() => {
+    isManuallyScrollingLyrics.current = true;
+    clearLyricsRecenterTimer();
+  }, [clearLyricsRecenterTimer]);
+
+  useEffect(() => {
+    if (!selectedLineId) return;
+    clearLyricsRecenterTimer();
+    isManuallyScrollingLyrics.current = false;
+    if (recenterLyricsFrame.current !== null) cancelAnimationFrame(recenterLyricsFrame.current);
+    recenterLyricsFrame.current = requestAnimationFrame(() => {
+      recenterLyricsFrame.current = null;
+      centerSelectedLyricsLine(true);
+    });
+
+    return () => {
+      if (recenterLyricsFrame.current !== null) {
+        cancelAnimationFrame(recenterLyricsFrame.current);
+        recenterLyricsFrame.current = null;
+      }
+    };
+  }, [centerSelectedLyricsLine, clearLyricsRecenterTimer, selectedLineId]);
+
+  useEffect(() => {
+    if (playerStatus.playing) return;
+    clearLyricsRecenterTimer();
+    isManuallyScrollingLyrics.current = false;
+  }, [clearLyricsRecenterTimer, playerStatus.playing]);
+
+  useEffect(() => () => {
+    clearLyricsRecenterTimer();
+    stopLyricsLineAutoScroll();
+    if (recenterLyricsFrame.current !== null) cancelAnimationFrame(recenterLyricsFrame.current);
+  }, [clearLyricsRecenterTimer, stopLyricsLineAutoScroll]);
+
   const saveSynchronizedMp3 = async (mode: 'overwrite' | 'new') => {
     if (!selectedMp3 || !canSave) return;
     setIsSaving(true);
@@ -759,12 +1077,26 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
-      <View style={{ flex: 1, marginTop: -topInsetCompensation }}>
+      <View ref={syncViewportRef} style={{ flex: 1, marginTop: -topInsetCompensation }}>
         <Animated.ScrollView
+          ref={syncScrollRef}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { y: scrollY } } }],
             { useNativeDriver: true },
           )}
+          onContentSizeChange={(_width, height) => {
+            syncScrollContentHeight.current = height;
+          }}
+          onScrollBeginDrag={handleLyricsScrollBeginDrag}
+          onScrollEndDrag={() => {
+            if (isManuallyScrollingLyrics.current) scheduleLyricsRecentering();
+          }}
+          onMomentumScrollBegin={() => {
+            if (isManuallyScrollingLyrics.current) clearLyricsRecenterTimer();
+          }}
+          onMomentumScrollEnd={() => {
+            if (isManuallyScrollingLyrics.current) scheduleLyricsRecentering();
+          }}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingTop: 58, paddingBottom: 380 + persistentPanelBottom }}
@@ -881,6 +1213,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               ? 'From MP3 · '
                               : selectedMp3.lyricsSource === 'sidecar' ? 'From LRC file · ' : 'Pasted · '}
                           {lyricLines.filter((line) => line.text.trim()).length} lines
+                          {' · '}{playerStatus.playing ? 'Pause to reorder' : 'Drag handles to reorder'}
                         </Text>
                       </View>
                       <TouchableOpacity
@@ -904,10 +1237,20 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                         <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700' }}>Delete all</Text>
                       </TouchableOpacity>
                     </View>
-                    <View style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, backgroundColor: '#111113' }}>
-                      {lyricLines.map((line, index) => (
-                        <View
-                          key={`${index}-${line}`}
+                    <View
+                      ref={lyricLinesContainerRef}
+                      style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, backgroundColor: '#111113' }}
+                    >
+                      {lyricLines.map((line, index) => {
+                        const dragResponder = lyricDragResponders.get(line.id);
+                        return (
+                        <Animated.View
+                          key={line.id}
+                          ref={selectedLineId === line.id ? selectedLineRowRef : undefined}
+                          onLayout={(event) => {
+                            const { y, height } = event.nativeEvent.layout;
+                            lyricRowLayouts.current.set(line.id, { y, height });
+                          }}
                           style={{
                             minHeight: line.text.trim() ? 48 : 20,
                             paddingVertical: line.text.trim() ? 10 : 3,
@@ -922,6 +1265,11 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                             backgroundColor: selectedLineId === line.id
                               ? 'rgba(250,82,101,0.08)'
                               : playingLineId === line.id ? 'rgba(255,255,255,0.04)' : 'transparent',
+                            transform: [{
+                              translateY: draggingLineId === line.id ? lyricDragTranslationY : 0,
+                            }],
+                            zIndex: draggingLineId === line.id ? 2 : 0,
+                            elevation: draggingLineId === line.id ? 4 : 0,
                           }}
                         >
                           {line.text.trim() ? (
@@ -949,6 +1297,29 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               ) : null}
                             </TouchableOpacity>
                           ) : <View style={{ flex: 1 }} />}
+                          {line.text.trim() && !playerStatus.playing ? (
+                            <View
+                              {...(dragResponder?.panHandlers ?? {})}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Drag to reorder lyric line ${index + 1}`}
+                              accessibilityHint="Move this lyric line before or after another line"
+                              style={{
+                                width: 34,
+                                height: 36,
+                                marginLeft: 3,
+                                borderRadius: 10,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                backgroundColor: draggingLineId === line.id ? 'rgba(250,82,101,0.16)' : 'transparent',
+                              }}
+                            >
+                              <Ionicons
+                                name="reorder-three-outline"
+                                size={21}
+                                color={draggingLineId === line.id ? '#FA5265' : '#77777F'}
+                              />
+                            </View>
+                          ) : null}
                           {line.text.trim() ? (
                             <TouchableOpacity
                               onPress={() => setLineEditor({ lineId: line.id, text: line.text })}
@@ -971,8 +1342,8 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               <Ionicons name="trash-outline" size={15} color="#8E8E93" />
                             </TouchableOpacity>
                           ) : null}
-                        </View>
-                      ))}
+                        </Animated.View>
+                      );})}
                     </View>
                   </View>
                 ) : (

@@ -1086,6 +1086,132 @@ const qualityForLyrics = (track: Track) => {
   return 0;
 };
 
+type LyricsCoverage = {
+  score: number;
+  isTimed: boolean;
+  timedLineRatio: number;
+  timedWordRatio?: number;
+  timelineSpanRatio?: number;
+  textRatio: number;
+};
+
+const clampRatio = (value: number) => Math.max(0, Math.min(1, value));
+
+const lyricWordCount = (track: Track) => {
+  const lines = track.lyrics?.length
+    ? track.lyrics
+    : parseLyrics(track.syncedLyrics, track.plainLyrics);
+  return lines.reduce((total, line) => total + (line.text.trim().match(/\S+/g)?.length ?? 0)
+    + (line.background?.reduce((backgroundTotal, voice) => backgroundTotal + (voice.text.trim().match(/\S+/g)?.length ?? 0), 0) ?? 0), 0);
+};
+
+const lyricsCoverageFor = (track: Track, referenceWordCount: number): LyricsCoverage => {
+  const sourceLines = track.lyrics?.length
+    ? track.lyrics
+    : parseLyrics(track.syncedLyrics, track.plainLyrics);
+  const lyricUnits = sourceLines.flatMap((line) => [
+    { text: line.text, timeMs: line.timeMs, endTimeMs: line.endTimeMs, words: line.words ?? [] },
+    ...(line.background ?? []).map((voice) => ({ text: voice.text, timeMs: voice.timeMs, endTimeMs: null, words: voice.words ?? [] })),
+  ]).filter((line) => line.text.trim());
+  const durationSeconds = durationSecondsForTrack(track);
+  const durationMs = durationSeconds ? durationSeconds * 1000 : undefined;
+  const isValidTime = (time: number | null | undefined) => typeof time === 'number'
+    && Number.isFinite(time)
+    && time >= 0
+    && (!durationMs || time <= durationMs + 15_000);
+  const lyricTimingBounds: number[] = [];
+  let timedLineCount = 0;
+  let totalWordCount = 0;
+  let timedWordCount = 0;
+  const wordTimingWasProvided = lyricUnits.some((line) => line.words.some((word) => (
+    isValidTime(word.startTimeMs)
+    || isValidTime(word.endTimeMs)
+    || word.syllables?.some((syllable) => isValidTime(syllable.startTimeMs) || isValidTime(syllable.endTimeMs))
+  )));
+
+  for (const line of lyricUnits) {
+    const lineWordCount = Math.max(line.words.length, line.text.trim().match(/\S+/g)?.length ?? 0);
+    totalWordCount += lineWordCount;
+
+    const validWords = line.words.filter((word) => (
+      isValidTime(word.startTimeMs)
+      || isValidTime(word.endTimeMs)
+      || word.syllables?.some((syllable) => isValidTime(syllable.startTimeMs) || isValidTime(syllable.endTimeMs))
+    ));
+    timedWordCount += validWords.length;
+
+    const validLineTime = isValidTime(line.timeMs) ? line.timeMs : null;
+    const validWordTimes = line.words.flatMap((word) => [
+      word.startTimeMs,
+      word.endTimeMs,
+      ...(word.syllables ?? []).flatMap((syllable) => [syllable.startTimeMs, syllable.endTimeMs]),
+    ])
+      .filter((time): time is number => isValidTime(time));
+    const firstValidWordTime = validWordTimes.length ? Math.min(...validWordTimes) : null;
+    const effectiveLineTime = validLineTime ?? firstValidWordTime;
+    if (effectiveLineTime !== null) {
+      timedLineCount += 1;
+      lyricTimingBounds.push(effectiveLineTime);
+    }
+    if (typeof line.endTimeMs === 'number' && isValidTime(line.endTimeMs)) {
+      lyricTimingBounds.push(line.endTimeMs);
+    }
+    lyricTimingBounds.push(...validWordTimes);
+  }
+
+  const isTimed = qualityForLyrics(track) >= 3;
+  const timedLineRatio = lyricUnits.length ? timedLineCount / lyricUnits.length : 0;
+  const timedWordRatio = totalWordCount ? timedWordCount / totalWordCount : undefined;
+  const timingRatio = wordTimingWasProvided && timedWordRatio !== undefined
+    ? (timedLineRatio * 0.45) + (timedWordRatio * 0.55)
+    : timedLineRatio;
+  const timelineSpanRatio = durationMs && lyricTimingBounds.length > 1
+    ? (Math.max(...lyricTimingBounds) - Math.min(...lyricTimingBounds)) / durationMs
+    : durationMs && lyricTimingBounds.length === 1
+      ? 0
+      : undefined;
+  // A track can have a real instrumental intro or outro. Allow 18% of its
+  // duration outside the lyric span before treating that span as incomplete.
+  const normalizedTimelineCoverage = timelineSpanRatio === undefined
+    ? undefined
+    : clampRatio(timelineSpanRatio / 0.82);
+  const textRatio = referenceWordCount > 0
+    ? clampRatio(lyricWordCount(track) / referenceWordCount)
+    : 1;
+  const score = !isTimed
+    ? 0
+    : normalizedTimelineCoverage === undefined
+      ? (timingRatio * 0.7) + (textRatio * 0.3)
+      : (timingRatio * 0.45) + (normalizedTimelineCoverage * 0.35) + (textRatio * 0.2);
+
+  return {
+    score,
+    isTimed,
+    timedLineRatio,
+    ...(timedWordRatio !== undefined && wordTimingWasProvided ? { timedWordRatio } : {}),
+    ...(timelineSpanRatio !== undefined ? { timelineSpanRatio } : {}),
+    textRatio,
+  };
+};
+
+const lyricsCoverageWarning = (coverage: LyricsCoverage) => {
+  if (!coverage.isTimed) return undefined;
+  const warnings: string[] = [];
+  if (coverage.timelineSpanRatio !== undefined && coverage.timelineSpanRatio < 0.58) {
+    warnings.push(`timed lyrics span about ${Math.round(coverage.timelineSpanRatio * 100)}% of the track`);
+  }
+  if (coverage.timedLineRatio < 0.86) {
+    warnings.push(`only ${Math.round(coverage.timedLineRatio * 100)}% of lyric lines have usable timing`);
+  }
+  if (coverage.timedWordRatio !== undefined && coverage.timedWordRatio < 0.78) {
+    warnings.push(`word timings cover only ${Math.round(coverage.timedWordRatio * 100)}% of lyric words`);
+  }
+  if (coverage.textRatio < 0.7) {
+    warnings.push('this result contains much less lyric text than another result');
+  }
+  return warnings.length ? `Possible partial sync: ${warnings.join('; ')}.` : undefined;
+};
+
 const isAppleMusicTtml = (track: Track) => {
   const provider = `${track.lyricsAttribution?.provider ?? ''} ${track.lyricsSource ?? ''}`
     .toLocaleLowerCase()
@@ -1114,11 +1240,20 @@ const providerPriorityForLyrics = (track: Track) => {
   return -1;
 };
 
-const compareLyricsCandidates = (left: Track, right: Track) => {
+const compareLyricsCandidates = (
+  left: Track,
+  right: Track,
+  leftCoverage: LyricsCoverage,
+  rightCoverage: LyricsCoverage,
+) => {
+  if (leftCoverage.isTimed !== rightCoverage.isTimed) return Number(rightCoverage.isTimed) - Number(leftCoverage.isTimed);
+  if (leftCoverage.score !== rightCoverage.score) return rightCoverage.score - leftCoverage.score;
   const appleMusicTtmlPriority = Number(isAppleMusicTtml(right)) - Number(isAppleMusicTtml(left));
   if (appleMusicTtmlPriority) return appleMusicTtmlPriority;
   const formatPriority = qualityForLyrics(right) - qualityForLyrics(left);
-  return formatPriority || providerPriorityForLyrics(right) - providerPriorityForLyrics(left);
+  return formatPriority
+    || rightCoverage.score - leftCoverage.score
+    || providerPriorityForLyrics(right) - providerPriorityForLyrics(left);
 };
 
 export const lyricsCandidateSignature = (track: Track) => {
@@ -1850,11 +1985,24 @@ const searchLyricsForChecker = async (track: Track, excludedCandidateSignatures:
     const signature = lyricsCandidateSignature(candidate);
     return signature && !excluded.has(signature);
   });
-  availableCandidates.sort(compareLyricsCandidates);
-  const bestCandidate = availableCandidates[0];
+  const referenceWordCount = Math.max(0, ...availableCandidates.map(lyricWordCount));
+  const rankedCandidates = availableCandidates.map((candidate) => ({
+    candidate,
+    coverage: lyricsCoverageFor(candidate, referenceWordCount),
+  }));
+  rankedCandidates.sort((left, right) => compareLyricsCandidates(
+    left.candidate,
+    right.candidate,
+    left.coverage,
+    right.coverage,
+  ));
+  const bestCandidate = rankedCandidates[0];
   let result: Track;
   if (bestCandidate) {
-    result = bestCandidate;
+    result = {
+      ...bestCandidate.candidate,
+      lyricsQualityWarning: lyricsCoverageWarning(bestCandidate.coverage),
+    };
   } else if (excluded.size > 0) {
     addIssue('Lyrics Checker', 'No different lyrics version was found. Previous results were skipped.');
     result = {

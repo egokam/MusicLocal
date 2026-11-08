@@ -566,7 +566,11 @@ export default function App() {
     const isRadioTrack = selectedTrack.provider === 'radio';
     const isQuranTrack = selectedTrack.provider === 'quran';
     const selectedTrackHasLyrics = Boolean(selectedTrack.lyrics?.some((line) => line.text.trim()));
-    const shouldResolveLyrics = !isRadioTrack && !isQuranTrack && (Boolean(selectedTrack.localUri) || !selectedTrackHasLyrics);
+    const shouldResolveLyrics = !isRadioTrack && !isQuranTrack && (
+      Boolean(selectedTrack.localUri)
+      || !selectedTrackHasLyrics
+      || spicyLyricsEnabled
+    );
     const shouldShowLyricsLoading = shouldResolveLyrics && !selectedTrackHasLyrics;
     setLyricsLoadingTrackId(shouldShowLyricsLoading ? selectedTrack.id : null);
     const musicApiHeaders = selectedTrack.provider === 'local' ? getMusicApiHeaders() : {};
@@ -614,7 +618,7 @@ export default function App() {
           ));
         });
     }
-  }, [incrementPlayCount, player, updatePlaybackQueue]);
+  }, [incrementPlayCount, player, spicyLyricsEnabled, updatePlaybackQueue]);
 
   const playTrack = useCallback((track: Track, queue = tracksRef.current) => {
     playSelectedTrack(track, queue);
