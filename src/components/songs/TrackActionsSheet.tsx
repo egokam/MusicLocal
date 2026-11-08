@@ -140,7 +140,7 @@ export const TrackActionsSheet = ({
   const [album, setAlbum] = useState(track?.album ?? '');
   const [artworkSelection, setArtworkSelection] = useState<{ uri: string; mimeType?: string } | null>(null);
   const [choosingArtwork, setChoosingArtwork] = useState(false);
-  const [lyrics, setLyrics] = useState(track?.syncedLyrics ?? track?.plainLyrics ?? '');
+  const [lyrics, setLyrics] = useState('');
   const [lyricsDirty, setLyricsDirty] = useState(false);
   const lyricsTouched = useRef(false);
   const [playlistName, setPlaylistName] = useState('');
@@ -226,11 +226,23 @@ export const TrackActionsSheet = ({
     });
   };
 
+  const openEditPage = () => {
+    lyricsTouched.current = false;
+    setLyrics('');
+    setLyricsDirty(false);
+    transitionToPage('edit');
+  };
+
   useEffect(() => {
     if (!visible || page !== 'edit' || !track || track.provider !== 'local') return;
     let mounted = true;
     void MusicCatalogService.getLyrics(track, false, false, false).then((result) => {
-      if (mounted && !lyricsTouched.current) setLyrics(result.syncedLyrics ?? result.plainLyrics ?? '');
+      const readableLyrics = result.syncedLyrics?.trim()
+        || result.plainLyrics?.trim()
+        || result.lyrics?.map((line) => line.text.trim()).filter(Boolean).join('\n')
+        || result.lyricsTtml?.trim()
+        || '';
+      if (mounted && !lyricsTouched.current) setLyrics(readableLyrics);
     }).catch(() => undefined);
     return () => {
       mounted = false;
@@ -445,7 +457,7 @@ export const TrackActionsSheet = ({
                   <>
                     <View style={{ height: 58, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8 }}>
                       <TouchableOpacity
-                        onPress={() => transitionToPage('edit')}
+                        onPress={openEditPage}
                         disabled={busy}
                         accessibilityRole="button"
                         accessibilityLabel="Edit track details"
@@ -526,7 +538,9 @@ export const TrackActionsSheet = ({
                   </TouchableOpacity>
                 </View>
                 <Field
-                  label="Lyrics · synced LRC or plain text"
+                  label={track.localUri && (track.fileExtension?.toLowerCase() === '.mp3' || /\.mp3(?:$|[?#])/i.test(track.localUri))
+                    ? 'Embedded MP3 lyrics · synced LRC or plain text'
+                    : 'Lyrics · synced LRC or plain text'}
                   value={lyrics}
                   onChangeText={(value) => {
                     lyricsTouched.current = true;
