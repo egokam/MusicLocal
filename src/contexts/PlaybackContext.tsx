@@ -59,7 +59,12 @@ type PlaybackActions = {
     sourceUrl?: string,
     artworkUrl?: string,
   ) => Promise<Track>;
-  importMusicFolder: () => Promise<{ importedCount: number; skippedCount: number; artworkCount: number } | null>;
+  importMusicFolder: () => Promise<{
+    importedCount: number;
+    skippedCount: number;
+    artworkCount: number;
+    embeddedLyricsCount: number;
+  } | null>;
   updateTrack: (track: Track, changes: TrackEditChanges) => Promise<Track>;
   deleteTrack: (track: Track) => Promise<void>;
   toggleFavorite: (track: Track) => Promise<Track>;

@@ -306,9 +306,9 @@ const DeveloperProfileScreen = ({
       const destinationDirectory = await Directory.pickDirectoryAsync();
       const result = await OfflineMusicService.exportDownloadedTracksAsZip(destinationDirectory);
       Alert.alert(
-        result.exportedCount > 0 ? 'Library ZIP exported' : 'No tracks exported',
+        result.exportedCount > 0 ? 'Music.zip exported' : 'No tracks exported',
         result.exportedCount > 0
-          ? `${result.fileName} saved with ${result.exportedCount} audio track${result.exportedCount === 1 ? '' : 's'}${result.lyricCount ? `, ${result.lyricCount} lyric file${result.lyricCount === 1 ? '' : 's'}` : ''}${result.artworkCount ? `, and ${result.artworkCount} artwork file${result.artworkCount === 1 ? '' : 's'}` : ''}.`
+          ? `${result.fileName} saved with ${result.exportedCount} audio track${result.exportedCount === 1 ? '' : 's'}.${result.metadataEmbeddingSkippedCount ? ` ${result.metadataEmbeddingSkippedCount} non-MP3 track${result.metadataEmbeddingSkippedCount === 1 ? ' may have' : 's may have'} Musiqapp lyrics or cover art that are not embedded in its audio file; those files were exported unchanged.` : ''}`
           : 'No saved audio files were available to export.',
       );
     } catch (error) {
@@ -622,7 +622,7 @@ const DeveloperProfileScreen = ({
                 Alert.alert(
                   result.importedCount > 0 ? 'Music imported' : 'No audio found',
                   result.importedCount > 0
-                    ? `${result.importedCount} track${result.importedCount === 1 ? '' : 's'} copied into your private Musiqapp library. Embedded artwork found on ${result.artworkCount} track${result.artworkCount === 1 ? '' : 's'}.${result.skippedCount ? ` ${result.skippedCount} unsupported file${result.skippedCount === 1 ? '' : 's'} skipped.` : ''}`
+                    ? `${result.importedCount} track${result.importedCount === 1 ? '' : 's'} copied into your private Musiqapp library. Embedded lyrics found on ${result.embeddedLyricsCount} track${result.embeddedLyricsCount === 1 ? '' : 's'}; artwork found on ${result.artworkCount}.${result.skippedCount ? ` ${result.skippedCount} unsupported file${result.skippedCount === 1 ? '' : 's'} skipped.` : ''}`
                     : 'Choose a folder containing MP3, M4A, AAC, WAV, FLAC, OGG, or OPUS files.',
                 );
               })
@@ -642,7 +642,7 @@ const DeveloperProfileScreen = ({
           <View style={{ flex: 1, marginLeft: 15 }}>
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Import a music folder</Text>
             <Text style={{ color: '#D2A9AF', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
-              Copy your audio and matching LRC files into Musiqapp’s private library.
+              Import tracks with embedded lyrics and artwork. LRC, TTML, and TXT sidecars are supported as a fallback.
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={21} color="#FA5265" />
@@ -652,16 +652,16 @@ const DeveloperProfileScreen = ({
           onPress={() => void exportLibrary()}
           disabled={isExportingLibrary}
           accessibilityRole="button"
-          accessibilityLabel="Export the full music library as a ZIP file"
+          accessibilityLabel="Export audio tracks as Music.zip"
           style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#3A3A3E', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isExportingLibrary ? 0.65 : 1 }}
         >
           <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
             {isExportingLibrary ? <ActivityIndicator color="white" /> : <Ionicons name="download-outline" size={28} color="white" />}
           </View>
           <View style={{ flex: 1, marginLeft: 15 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Export library ZIP</Text>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Export Music.zip</Text>
             <Text style={{ color: '#A1A1A6', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
-              Create one ZIP with your tracks, available lyrics, artwork, and library details.
+              Export audio files only, with lyrics and artwork embedded in MP3 copies.
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={21} color="#FA5265" />
