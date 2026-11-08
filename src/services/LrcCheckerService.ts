@@ -228,7 +228,7 @@ const recordFromResult = (result: Track): LrcCheckerRecord => {
   const hasTimedLyrics = isTimedLrc(result.syncedLyrics)
     || result.lyrics?.some((line) => line.timeMs !== null && line.text.trim());
   const hasPlainLyrics = Boolean(result.plainLyrics?.trim() || result.lyrics?.some((line) => line.text.trim()));
-  const isLocal = ['local_ttml', 'local_lrc', 'local_text', 'embedded_lrc', 'embedded_text', 'saved_lrc']
+  const isLocal = ['local_ttml', 'local_lrc', 'local_text', 'embedded_lrc', 'embedded_text', 'embedded_musiqapp', 'saved_lrc']
     .includes(result.lyricsSource ?? '');
   const isSpicyCache = result.lyricsSource === 'spicy_lyrics_api';
   const isCandidate = hasTimedLyrics || hasPlainLyrics;

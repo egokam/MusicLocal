@@ -1,5 +1,14 @@
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 import { parseBuffer } from 'music-metadata';
+import type { LyricsAttribution } from '../types';
+
+export type EmbeddedMp3LyricsPayload = {
+  version: 1;
+  format: 'ttml' | 'line' | 'plain';
+  text: string;
+  source?: string;
+  attribution?: LyricsAttribution;
+};
 
 export type SynchronizedLyricEntry = {
   text: string;
@@ -12,6 +21,7 @@ type Id3Frame = {
 };
 
 const SYNCHRONIZER_DESCRIPTOR = 'Musiqapp LRC Synchronizer';
+const MUSIQAPP_LYRICS_DESCRIPTOR = 'MUSIQAPP_LYRICS_V1';
 const OUTPUT_DIRECTORY = new Directory(Paths.cache, 'musiqapp-synchronized');
 
 const readSynchsafeInteger = (bytes: Uint8Array, offset: number) => {
@@ -89,6 +99,70 @@ const concatenate = (parts: Uint8Array[]) => {
   return result;
 };
 
+const createId3Frame = (id: string, payload: Uint8Array) => concatenate([
+  encodeUtf8(id),
+  writeSynchsafeInteger(payload.length),
+  new Uint8Array([0, 0]),
+  payload,
+]);
+
+const id3UserTextDescriptor = ({ id, payload }: Id3Frame) => {
+  if (id !== 'TXXX' || payload.length < 2) return '';
+  const encoding = payload[0];
+  if (encoding === 0 || encoding === 3) {
+    const descriptorEnd = payload.indexOf(0, 1);
+    return descriptorEnd > 1 ? String.fromCharCode(...payload.subarray(1, descriptorEnd)) : '';
+  }
+  if (encoding !== 1 && encoding !== 2) return '';
+
+  const descriptorBytes: number[] = [];
+  let offset = encoding === 1 && payload[1] === 0xff && payload[2] === 0xfe ? 3 : 1;
+  for (; offset + 1 < payload.length; offset += 2) {
+    if (payload[offset] === 0 && payload[offset + 1] === 0) break;
+    descriptorBytes.push(encoding === 1 ? payload[offset] : payload[offset + 1]);
+  }
+  return String.fromCharCode(...descriptorBytes);
+};
+
+const isLyricsDescriptor = (descriptor: string) => {
+  const normalized = descriptor.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return normalized.includes('lyric') || normalized === 'lrc' || normalized.includes('ttml');
+};
+
+const isMusiqappLyricsFrame = (frame: Id3Frame) => (
+  id3UserTextDescriptor(frame) === MUSIQAPP_LYRICS_DESCRIPTOR
+);
+
+const isLyricsFrame = (frame: Id3Frame) => (
+  frame.id === 'USLT'
+  || frame.id === 'SYLT'
+  || isMusiqappLyricsFrame(frame)
+  || isLyricsDescriptor(id3UserTextDescriptor(frame))
+);
+
+export const readEmbeddedMp3Lyrics = (
+  native: Record<string, { id: string; value: unknown }[]>,
+): EmbeddedMp3LyricsPayload | null => {
+  const frame = Object.values(native).flat().find((tag) => tag.id === `TXXX:${MUSIQAPP_LYRICS_DESCRIPTOR}`);
+  const raw = Array.isArray(frame?.value)
+    ? frame.value.find((value): value is string => typeof value === 'string')
+    : typeof frame?.value === 'string' ? frame.value : undefined;
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<EmbeddedMp3LyricsPayload>;
+    if (
+      parsed.version !== 1
+      || !['ttml', 'line', 'plain'].includes(parsed.format ?? '')
+      || typeof parsed.text !== 'string'
+      || !parsed.text.trim()
+    ) return null;
+    return parsed as EmbeddedMp3LyricsPayload;
+  } catch {
+    return null;
+  }
+};
+
 const parseId3Frames = (source: Uint8Array): { frames: Id3Frame[]; audioOffset: number } => {
   if (source.length < 3 || source[0] !== 0x49 || source[1] !== 0x44 || source[2] !== 0x33) {
     return { frames: [], audioOffset: 0 };
@@ -149,25 +223,21 @@ const createSyltFrame = (entries: SynchronizedLyricEntry[]) => {
   });
 
   const payload = concatenate(payloadParts);
-  return concatenate([
-    new Uint8Array([0x53, 0x59, 0x4c, 0x54]),
-    writeSynchsafeInteger(payload.length),
-    new Uint8Array([0, 0]),
-    payload,
-  ]);
+  return createId3Frame('SYLT', payload);
 };
 
-const createId3Tag = (sourceTag: Uint8Array, entries: SynchronizedLyricEntry[]) => {
+const createMusiqappLyricsFrame = (lyrics: EmbeddedMp3LyricsPayload) => createId3Frame('TXXX', concatenate([
+  new Uint8Array([3]),
+  encodeUtf8(MUSIQAPP_LYRICS_DESCRIPTOR),
+  new Uint8Array([0]),
+  encodeUtf8(JSON.stringify(lyrics)),
+]));
+
+const createId3TagWithFrames = (sourceTag: Uint8Array, extraFrames: Uint8Array[]) => {
   const { frames } = parseId3Frames(sourceTag);
-  // Keep one lyric source in the exported file: the new synchronized frame.
-  // Leaving USLT beside SYLT can make some players render the lyrics twice.
-  const frameBytes = frames.filter(({ id }) => id !== 'USLT' && id !== 'SYLT').map(({ id, payload }) => concatenate([
-    encodeUtf8(id),
-    writeSynchsafeInteger(payload.length),
-    new Uint8Array([0, 0]),
-    payload,
-  ]));
-  frameBytes.push(createSyltFrame(entries));
+  const frameBytes: Uint8Array[] = frames.filter((frame) => !isLyricsFrame(frame))
+    .map(({ id, payload }) => createId3Frame(id, payload));
+  frameBytes.push(...extraFrames);
   const frameData = concatenate(frameBytes);
   const header = concatenate([
     new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0]),
@@ -176,21 +246,16 @@ const createId3Tag = (sourceTag: Uint8Array, entries: SynchronizedLyricEntry[]) 
   return concatenate([header, frameData]);
 };
 
+const createId3Tag = (sourceTag: Uint8Array, entries: SynchronizedLyricEntry[]) => (
+  createId3TagWithFrames(sourceTag, [createSyltFrame(entries)])
+);
+
+const createId3TagWithMusiqappLyrics = (sourceTag: Uint8Array, lyrics: EmbeddedMp3LyricsPayload) => (
+  createId3TagWithFrames(sourceTag, [createMusiqappLyricsFrame(lyrics)])
+);
+
 const createId3TagWithoutLyrics = (sourceTag: Uint8Array) => {
-  const { frames } = parseId3Frames(sourceTag);
-  const frameData = concatenate(frames
-    .filter(({ id }) => id !== 'USLT' && id !== 'SYLT')
-    .map(({ id, payload }) => concatenate([
-      encodeUtf8(id),
-      writeSynchsafeInteger(payload.length),
-      new Uint8Array([0, 0]),
-      payload,
-    ])));
-  return concatenate([
-    new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0]),
-    writeSynchsafeInteger(frameData.length),
-    frameData,
-  ]);
+  return createId3TagWithFrames(sourceTag, []);
 };
 
 const readMetadataSample = async (file: File) => {
@@ -216,6 +281,12 @@ const collectFrames = (metadata: Awaited<ReturnType<typeof parseBuffer>>, frameI
   Object.values(metadata.native).flatMap((frames) => frames.filter((frame) => frame.id === frameId))
 );
 
+const collectLyricsUserTextFrames = (metadata: Awaited<ReturnType<typeof parseBuffer>>) => (
+  Object.values(metadata.native).flatMap((frames) => frames.filter((frame) => (
+    frame.id.startsWith('TXXX:') && isLyricsDescriptor(frame.id.slice('TXXX:'.length))
+  )))
+);
+
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null
 );
@@ -223,7 +294,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
 const verifyOutput = async (output: File, expected: SynchronizedLyricEntry[]) => {
   if (!output.exists || (output.size ?? 0) === 0) throw new Error('The synchronized MP3 file could not be created.');
   const metadata = await parseBuffer(await readMetadataSample(output), 'audio/mpeg');
-  if (collectFrames(metadata, 'USLT').length !== 0 || collectFrames(metadata, 'SYLT').length !== 1) {
+  if (
+    collectFrames(metadata, 'USLT').length !== 0
+    || collectFrames(metadata, 'SYLT').length !== 1
+    || collectLyricsUserTextFrames(metadata).length !== 0
+    || readEmbeddedMp3Lyrics(metadata.native)
+  ) {
     throw new Error('The exported file contains conflicting lyric metadata frames. Nothing was exported.');
   }
 
@@ -260,7 +336,12 @@ const verifyLyricsRemoved = async (output: File) => {
   const hasNativeLyrics = Object.values(metadata.native).some((frames) => (
     frames.some((frame) => frame.id === 'USLT' || frame.id === 'SYLT')
   ));
-  if (hasNativeLyrics || metadata.common.lyrics?.some((entry) => Boolean(entry.text?.trim() || entry.syncText?.length))) {
+  if (
+    hasNativeLyrics
+    || collectLyricsUserTextFrames(metadata).length !== 0
+    || readEmbeddedMp3Lyrics(metadata.native)
+    || metadata.common.lyrics?.some((entry) => Boolean(entry.text?.trim() || entry.syncText?.length))
+  ) {
     throw new Error('Lyrics remain in another embedded metadata tag. The original MP3 was not changed.');
   }
 };
@@ -353,6 +434,42 @@ export const Id3SynchronizedLyricsService = {
       'synchronized',
       (sourceTag) => createId3Tag(sourceTag, entries),
       (output) => verifyOutput(output, entries),
+    );
+  },
+
+  async createVerifiedMp3WithLyrics(
+    sourceUri: string,
+    sourceFileName: string,
+    lyrics: EmbeddedMp3LyricsPayload,
+  ) {
+    if (!lyrics.text.trim()) throw new Error('Add lyrics before embedding them in the MP3.');
+    if (!['ttml', 'line', 'plain'].includes(lyrics.format)) {
+      throw new Error('This lyric format cannot be embedded in the MP3.');
+    }
+
+    const payload = { ...lyrics, version: 1 as const };
+    return rewriteMp3(
+      sourceUri,
+      sourceFileName,
+      'lyrics-embedded',
+      (sourceTag) => createId3TagWithMusiqappLyrics(sourceTag, payload),
+      async (output) => {
+        if (!output.exists || (output.size ?? 0) === 0) throw new Error('The MP3 with embedded lyrics could not be created.');
+        const metadata = await parseBuffer(await readMetadataSample(output), 'audio/mpeg');
+        const embedded = readEmbeddedMp3Lyrics(metadata.native);
+        if (
+          !embedded
+          || collectFrames(metadata, 'USLT').length !== 0
+          || collectFrames(metadata, 'SYLT').length !== 0
+          || collectLyricsUserTextFrames(metadata).length !== 1
+          || embedded.format !== payload.format
+          || embedded.text !== payload.text
+          || embedded.source !== payload.source
+          || JSON.stringify(embedded.attribution) !== JSON.stringify(payload.attribution)
+        ) {
+          throw new Error('The embedded lyrics could not be verified. The original MP3 was not changed.');
+        }
+      },
     );
   },
 

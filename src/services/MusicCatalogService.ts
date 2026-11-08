@@ -20,7 +20,13 @@ let spicyLyricsResumeTimer: ReturnType<typeof setTimeout> | null = null;
 const spicyLyricsPrefetchQueue: Track[] = [];
 const spicyLyricsPrefetchQueuedIds = new Set<string>();
 const spicyLyricsLookups = new Map<string, Promise<SpicyLyricsCacheEntry | null>>();
-const embeddedLyricsLookups = new Map<string, Promise<{ text: string; synced: boolean } | null>>();
+type EmbeddedLyricsLookup = {
+  text: string;
+  format: 'ttml' | 'line' | 'plain';
+  source: string;
+  attribution?: LyricsAttribution;
+} | null;
+const embeddedLyricsLookups = new Map<string, Promise<EmbeddedLyricsLookup>>();
 let spicyApiRequestQueue: Promise<void> = Promise.resolve();
 let lastSpicyApiRequestAt = 0;
 
@@ -555,6 +561,33 @@ const titleFromUrl = (url: string) => {
   }
 };
 
+const persistLyricsAsEmbedded = async (
+  track: Track,
+  resolvedTrack: Track,
+  format: 'ttml' | 'line' | 'plain',
+  text: string,
+): Promise<Track> => {
+  const payload = { version: 1 as const, format, text: text.trim(), source: resolvedTrack.lyricsAttribution?.provider, attribution: resolvedTrack.lyricsAttribution };
+  const embeddedTrack: Track = {
+    ...resolvedTrack,
+    lyricsFormat: format,
+    lyricsSource: 'embedded_musiqapp',
+  };
+  if (track.localUri && new File(track.localUri).extension.toLowerCase() === '.mp3') {
+    try {
+      await OfflineMusicService.embedLyricsInTrackAudio(embeddedTrack, payload);
+    } catch {
+      // Keep a private indexed copy even when an older MP3 cannot be rewritten.
+    }
+  }
+  try {
+    return await OfflineMusicService.saveEmbeddedLyrics(embeddedTrack, payload.text);
+  } catch {
+    // Keep the discovered lyrics available even when a legacy file cannot be migrated.
+    return resolvedTrack;
+  }
+};
+
 const readLyricsFile = async (track: Track): Promise<Track> => {
   const ttmlCandidates: File[] = [];
   const lrcCandidates: File[] = [];
@@ -570,8 +603,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
     }
   };
 
-  // A sibling LRC is the user's explicit lyric choice. Check it before any
-  // cached or embedded lyrics already attached to the track.
+  // Legacy sidecars are considered only after audio metadata has been checked.
   if (track.localUri) {
     try {
       const audioFile = new File(track.localUri);
@@ -592,7 +624,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
       const lyrics = parseTtmlLyrics(ttml);
       const syncedLyrics = lrcFromLyricLines(lyrics);
       if (!lyrics.length || !syncedLyrics) continue;
-      return {
+      const resolvedTrack: Track = {
         ...track,
         syncedLyrics,
         plainLyrics: undefined,
@@ -604,6 +636,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
         hasPlainLyrics: false,
         lyricsSource: 'local_ttml',
       };
+      return persistLyricsAsEmbedded(track, resolvedTrack, 'ttml', ttml);
     } catch {
       // An unavailable or malformed rich sidecar should not block LRC fallback.
     }
@@ -616,7 +649,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
       if (!text) continue;
       const syncedLyrics = deduplicateSyncedLyrics(text);
       if (!syncedLyrics) continue;
-      return {
+      const resolvedTrack: Track = {
         ...track,
         syncedLyrics,
         plainLyrics: undefined,
@@ -627,6 +660,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
         hasPlainLyrics: false,
         lyricsSource: 'local_lrc',
       };
+      return persistLyricsAsEmbedded(track, resolvedTrack, 'line', syncedLyrics);
     } catch {
       // A sidecar can disappear between the exists check and read.
     }
@@ -663,7 +697,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
       if (!text) continue;
       if (hasTimedText(text)) {
         const syncedLyrics = deduplicateSyncedLyrics(text);
-        return {
+        const resolvedTrack: Track = {
           ...track,
           syncedLyrics,
           plainLyrics: undefined,
@@ -674,8 +708,9 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
           hasPlainLyrics: false,
           lyricsSource: 'local_lrc',
         };
+        return persistLyricsAsEmbedded(track, resolvedTrack, 'line', syncedLyrics);
       }
-      return {
+      const resolvedTrack: Track = {
         ...track,
         plainLyrics: text,
         lyrics: parseLyrics(undefined, text),
@@ -684,13 +719,31 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
         hasPlainLyrics: true,
         lyricsSource: 'local_text',
       };
+      return persistLyricsAsEmbedded(track, resolvedTrack, 'plain', text);
     } catch {
       // Keep the fallback non-fatal for offline playback.
     }
   }
 
-  // This is reached after checking embedded metadata. Prefer the sidecar files,
-  // then retain indexed lyric text as a compatibility fallback for older imports.
+  // Retain indexed lyrics as a compatibility fallback for older imports.
+  if (track.lyricsTtml?.trim()) {
+    const ttml = track.lyricsTtml.trim();
+    const lyrics = parseTtmlLyrics(ttml);
+    const syncedLyrics = lrcFromLyricLines(lyrics);
+    if (lyrics.length && syncedLyrics) {
+      return persistLyricsAsEmbedded(track, {
+        ...track,
+        syncedLyrics,
+        plainLyrics: undefined,
+        lyrics,
+        lyricsFormat: 'ttml',
+        lyricsAvailable: true,
+        hasSyncedLyrics: true,
+        hasPlainLyrics: false,
+        lyricsSource: 'embedded_musiqapp',
+      }, 'ttml', ttml);
+    }
+  }
   const indexedSyncedLyrics = track.syncedLyrics?.trim();
   const indexedPlainLyrics = track.plainLyrics?.trim();
   if (indexedSyncedLyrics || indexedPlainLyrics) {
@@ -699,7 +752,7 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
       : undefined;
     const plainLyrics = indexedPlainLyrics || (syncedLyrics && !hasTimedText(syncedLyrics) ? syncedLyrics : undefined);
     const timedLyrics = syncedLyrics && hasTimedText(syncedLyrics) ? syncedLyrics : undefined;
-    return {
+    const resolvedTrack: Track = {
       ...track,
       syncedLyrics: timedLyrics,
       plainLyrics: timedLyrics ? undefined : plainLyrics,
@@ -709,15 +762,50 @@ const readLyricsFile = async (track: Track): Promise<Track> => {
       hasSyncedLyrics: Boolean(timedLyrics),
       hasPlainLyrics: Boolean(plainLyrics),
     };
+    return persistLyricsAsEmbedded(
+      track,
+      resolvedTrack,
+      timedLyrics ? 'line' : 'plain',
+      timedLyrics || plainLyrics || '',
+    );
   }
-  if (track.lyrics?.some((line) => line.text.trim())) return track;
+  if (track.lyrics?.some((line) => line.text.trim())) {
+    const timedLyrics = lrcFromLyricLines(track.lyrics);
+    const plainLyrics = track.lyrics.map((line) => line.text.trim()).filter(Boolean).join('\n');
+    return persistLyricsAsEmbedded(
+      track,
+      {
+        ...track,
+        syncedLyrics: timedLyrics || undefined,
+        plainLyrics: timedLyrics ? undefined : plainLyrics,
+        lyricsFormat: timedLyrics ? 'line' : 'plain',
+        lyricsAvailable: Boolean(timedLyrics || plainLyrics),
+        hasSyncedLyrics: Boolean(timedLyrics),
+        hasPlainLyrics: Boolean(!timedLyrics && plainLyrics),
+      },
+      timedLyrics ? 'line' : 'plain',
+      timedLyrics || plainLyrics,
+    );
+  }
 
   return track;
 };
 
 const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Track> => {
   const isIndexedEmbeddedLyrics = localTrack.lyricsSource === 'embedded_lrc'
-    || localTrack.lyricsSource === 'embedded_text';
+    || localTrack.lyricsSource === 'embedded_text'
+    || localTrack.lyricsSource === 'embedded_musiqapp';
+  if (isIndexedEmbeddedLyrics && localTrack.lyricsFormat === 'ttml' && localTrack.lyricsTtml?.trim()) {
+    const lyrics = parseTtmlLyrics(localTrack.lyricsTtml);
+    const syncedLyrics = lrcFromLyricLines(lyrics);
+    if (lyrics.length) return {
+      ...localTrack,
+      lyrics,
+      syncedLyrics: syncedLyrics || localTrack.syncedLyrics,
+      lyricsAvailable: true,
+      hasSyncedLyrics: Boolean(syncedLyrics),
+    };
+  }
   if (isIndexedEmbeddedLyrics && hasRenderableLyrics(localTrack)) return localTrack;
   if (!track.localUri) return localTrack;
   try {
@@ -727,8 +815,22 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
     if (!lookup) {
       lookup = OfflineMusicService.inspectLocalAudioMetadata(track.localUri)
         .then((metadata) => {
-          const text = metadata.lyricsText?.trim();
-          return text ? { text, synced: Boolean(metadata.hasSyncedLyrics || hasTimedText(text)) } : null;
+          const format: 'ttml' | 'line' | 'plain' = metadata.lyricsFormat === 'ttml'
+            ? 'ttml'
+            : metadata.lyricsFormat === 'line' || metadata.hasSyncedLyrics
+              ? 'line'
+              : 'plain';
+          const text = (format === 'ttml'
+            ? metadata.lyricsTtml
+            : format === 'line'
+              ? metadata.syncedLyrics ?? metadata.lyricsText
+              : metadata.plainLyrics ?? metadata.lyricsText)?.trim();
+          return text ? {
+            text,
+            format,
+            source: metadata.lyricsSource ?? (format === 'plain' ? 'embedded_text' : 'embedded_lrc'),
+            attribution: metadata.lyricsAttribution,
+          } : null;
         })
         .catch(() => null);
       embeddedLyricsLookups.set(cacheKey, lookup);
@@ -737,9 +839,28 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
         if (oldestKey) embeddedLyricsLookups.delete(oldestKey);
       }
     }
+    if (!lookup) return localTrack;
     const embedded = await lookup;
     if (!embedded) return localTrack;
-    const syncedLyrics = embedded.synced
+    if (embedded.format === 'ttml') {
+      const lyrics = parseTtmlLyrics(embedded.text);
+      if (!lyrics.length) return localTrack;
+      const syncedLyrics = lrcFromLyricLines(lyrics);
+      return {
+        ...localTrack,
+        syncedLyrics: syncedLyrics || undefined,
+        plainLyrics: undefined,
+        lyrics,
+        lyricsTtml: embedded.text,
+        lyricsFormat: 'ttml',
+        lyricsAvailable: true,
+        hasSyncedLyrics: Boolean(syncedLyrics),
+        hasPlainLyrics: false,
+        lyricsSource: embedded.source,
+        lyricsAttribution: embedded.attribution,
+      };
+    }
+    const syncedLyrics = embedded.format === 'line' || hasTimedText(embedded.text)
       ? deduplicateSyncedLyrics(embedded.text)
       : undefined;
     const plainLyrics = syncedLyrics ? undefined : embedded.text;
@@ -752,7 +873,8 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
       hasSyncedLyrics: Boolean(syncedLyrics),
       hasPlainLyrics: Boolean(plainLyrics),
       lyricsFormat: syncedLyrics ? 'line' : 'plain',
-      lyricsSource: syncedLyrics ? 'embedded_lrc' : 'embedded_text',
+      lyricsSource: embedded.source,
+      lyricsAttribution: embedded.attribution,
     };
   } catch {
     // Embedded metadata is a last local fallback; keep audio playback intact.
@@ -763,7 +885,9 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
 const resolveLocalLyrics = async (track: Track) => {
   const embeddedTrack = await readEmbeddedLyrics(track, track);
   if (
-    (embeddedTrack.lyricsSource === 'embedded_lrc' || embeddedTrack.lyricsSource === 'embedded_text')
+    (embeddedTrack.lyricsSource === 'embedded_lrc'
+      || embeddedTrack.lyricsSource === 'embedded_text'
+      || embeddedTrack.lyricsSource === 'embedded_musiqapp')
     && hasRenderableLyrics(embeddedTrack)
   ) return embeddedTrack;
   return readLyricsFile(track);

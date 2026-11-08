@@ -270,7 +270,7 @@ export const LrcCheckerScreen = ({
 
   const openCustomLrc = (track: Track) => {
     if (track.provider !== 'local' || !track.providerId) {
-      Alert.alert('Local track required', 'Custom LRC files are saved beside audio files in your local library.');
+      Alert.alert('Local track required', 'Custom lyrics can be embedded only for a track in your local library.');
       return;
     }
     setCustomLrcTrack(track);
@@ -289,7 +289,7 @@ export const LrcCheckerScreen = ({
   const applyCustomLrc = async () => {
     if (!customLrcTrack) return;
     if (customLrcTrack.provider !== 'local' || !customLrcTrack.providerId) {
-      setCustomLrcError('This song is not a local library file, so its LRC cannot be saved beside the audio.');
+      setCustomLrcError('This song is not a local library track, so its lyrics cannot be embedded.');
       setCustomLrcPreview(false);
       return;
     }
@@ -308,7 +308,7 @@ export const LrcCheckerScreen = ({
       setCustomLrcText('');
       setCustomLrcPreview(false);
     } catch (error) {
-      setCustomLrcError(error instanceof Error ? error.message : 'Could not save this LRC beside the local track.');
+      setCustomLrcError(error instanceof Error ? error.message : 'Could not embed these lyrics in the local track.');
       setCustomLrcPreview(false);
     } finally {
       setIsSavingCustomLrc(false);
@@ -531,14 +531,15 @@ export const LrcCheckerScreen = ({
             </View>
             <Text style={{ color: '#8E8E93', fontSize: 12, lineHeight: 17, marginTop: 13 }}>
               {reviewTrack?.lyricsSource === 'spicy_lyrics_api'
-                ? 'This Spicy Lyrics result is cached in the app for playback and will not be exported to a separate file.'
-                : reviewTrack?.lyricsFormat === 'ttml'
-                  ? `Review the ${reviewTrack.lyricsAttribution?.provider ?? 'TTML'} match before applying it. Word timing and TTML source data will be kept in a .ttml sidecar.`
-                  : reviewTrack?.lyricsFormat === 'word'
-                    ? `Review the ${reviewTrack.lyricsAttribution?.provider ?? 'word-timed'} match before applying it. Word timing will be kept in a .ttml sidecar.`
-                  : reviewTrack?.lyricsFormat === 'plain'
-                    ? 'Review the plain text match before applying it. It will be saved as a text lyrics file.'
-                    : 'Review the match before applying it. The synchronized lyrics will be saved with your local track.'}
+                ? 'This Spicy Lyrics result is cached in the app for playback; service terms prevent embedding it in the audio file.'
+                : reviewTrack?.localUri && (
+                  reviewTrack.fileExtension?.toLowerCase() === '.mp3'
+                  || /\.mp3(?:$|[?#])/i.test(reviewTrack.localUri)
+                )
+                  ? `Review the ${reviewTrack.lyricsAttribution?.provider ?? 'lyrics'} match before applying it. The full ${reviewTrack.lyricsFormat === 'plain' ? 'plain text' : reviewTrack.lyricsFormat === 'line' ? 'timed LRC' : 'TTML'} will be embedded in the MP3 metadata for Musiqapp playback.`
+                  : reviewTrack?.localUri
+                    ? `Review the ${reviewTrack.lyricsAttribution?.provider ?? 'lyrics'} match before applying it. These lyrics will be stored with your local track for Musiqapp playback.`
+                    : 'Review the match before applying it. The lyrics will be saved in Musiqapp for this track.'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
               <TouchableOpacity onPress={discardReview} disabled={isSavingReview} style={{ flex: 1, height: 46, borderRadius: 23, backgroundColor: '#303033', alignItems: 'center', justifyContent: 'center' }}>
@@ -596,7 +597,7 @@ export const LrcCheckerScreen = ({
             )}
 
             <Text style={{ color: '#8E8E93', fontSize: 12, lineHeight: 17, marginTop: 12 }}>
-              Paste LRC lines like [00:12.34]lyric text. Every lyric line must have a valid, ordered time tag. Applying saves the LRC beside the local audio file.
+              Paste LRC lines like [00:12.34]lyric text. Every lyric line must have a valid, ordered time tag. Applying replaces the track’s current lyrics with this embedded version.
             </Text>
             {customLrcError ? <Text style={{ color: '#FF6B5E', fontSize: 12, lineHeight: 17, marginTop: 9 }}>{customLrcError}</Text> : null}
 

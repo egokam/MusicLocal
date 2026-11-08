@@ -2,6 +2,7 @@ import { Directory, File, FileMode, Paths, type FileHandle } from 'expo-file-sys
 import * as FileSystem from 'expo-file-system/legacy';
 import { parseBuffer } from 'music-metadata';
 import { deduplicateSyncedLyrics, parseLyrics } from './LyricsParser';
+import { Id3SynchronizedLyricsService, readEmbeddedMp3Lyrics, type EmbeddedMp3LyricsPayload } from './Id3SynchronizedLyricsService';
 import { cacheArtworkForTrack } from './ArtworkService';
 import type { LyricsAttribution, LyricLine, Track } from '../types';
 
@@ -112,6 +113,74 @@ const lyricSidecarsForTrack = (track: Track) => {
   add(new File(downloadsDirectory, `${safeName(track.id)}.lrc`).uri);
   add(new File(downloadsDirectory, `${safeName(track.id)}.txt`).uri);
   return [...candidates.values()];
+};
+
+const lyricsPayloadFromTrack = (track: Track): EmbeddedMp3LyricsPayload | null => {
+  if (track.lyricsSource === 'spicy_lyrics_api') return null;
+  if ((track.lyricsFormat === 'ttml' || track.lyricsFormat === 'word') && track.lyricsTtml?.trim()) {
+    return {
+      version: 1,
+      format: 'ttml',
+      text: track.lyricsTtml.trim(),
+      source: track.lyricsAttribution?.provider,
+      attribution: track.lyricsAttribution,
+    };
+  }
+  const syncedLyrics = track.syncedLyrics?.trim();
+  if (syncedLyrics) {
+    return {
+      version: 1,
+      format: 'line',
+      text: deduplicateSyncedLyrics(syncedLyrics),
+      source: track.lyricsAttribution?.provider,
+      attribution: track.lyricsAttribution,
+    };
+  }
+  const plainLyrics = track.plainLyrics?.trim();
+  return plainLyrics ? {
+    version: 1,
+    format: 'plain',
+    text: plainLyrics,
+    source: track.lyricsAttribution?.provider,
+    attribution: track.lyricsAttribution,
+  } : null;
+};
+
+const trackLyricsFromText = (text: string, extension: string): Pick<Track,
+  'syncedLyrics' | 'plainLyrics' | 'lyrics' | 'lyricsTtml' | 'lyricsFormat' | 'lyricsAvailable' | 'hasSyncedLyrics' | 'hasPlainLyrics' | 'lyricsSource'
+> => {
+  const trimmed = text.trim();
+  if (extension.toLowerCase() === '.ttml') {
+    return {
+      lyricsTtml: trimmed,
+      lyricsFormat: 'ttml',
+      lyricsAvailable: Boolean(trimmed),
+      hasSyncedLyrics: Boolean(trimmed),
+      hasPlainLyrics: false,
+      lyricsSource: 'embedded_musiqapp',
+    };
+  }
+  if (extension.toLowerCase() === '.lrc' || /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(trimmed)) {
+    const syncedLyrics = deduplicateSyncedLyrics(trimmed);
+    return {
+      syncedLyrics,
+      lyrics: parseLyrics(syncedLyrics),
+      lyricsFormat: 'line',
+      lyricsAvailable: Boolean(syncedLyrics),
+      hasSyncedLyrics: Boolean(syncedLyrics),
+      hasPlainLyrics: false,
+      lyricsSource: 'embedded_musiqapp',
+    };
+  }
+  return {
+    plainLyrics: trimmed,
+    lyrics: parseLyrics(undefined, trimmed),
+    lyricsFormat: 'plain',
+    lyricsAvailable: Boolean(trimmed),
+    hasSyncedLyrics: false,
+    hasPlainLyrics: Boolean(trimmed),
+    lyricsSource: 'embedded_musiqapp',
+  };
 };
 const safeExportName = (value: string) => value
   .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
@@ -297,12 +366,6 @@ const extensionFromUrl = (url: string) => {
   }
 };
 
-const writeTextFile = (file: File, text: string) => {
-  if (file.exists) file.delete();
-  file.create({ intermediates: true });
-  file.write(text);
-};
-
 const supportedAudio = /\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i;
 
 const metadataFromFile = (fileName: string) => {
@@ -397,7 +460,12 @@ const installLegacyTextDecoderSupport = () => {
 
 installLegacyTextDecoderSupport();
 
-const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { title: string; artist: string }) => {
+const extractEmbeddedMetadata = async (
+  audioFile: File,
+  id: string,
+  fallback: { title: string; artist: string },
+  persistAssets = true,
+) => {
   let title = fallback.title;
   let artist = fallback.artist;
   let album = '';
@@ -409,7 +477,13 @@ const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { 
   let artwork: string | undefined;
   let durationSeconds: number | undefined;
   let lyricsFileUri: string | undefined;
-  let embeddedLyrics = '';
+  let lyricsText: string | undefined;
+  let syncedLyrics: string | undefined;
+  let plainLyrics: string | undefined;
+  let lyricsTtml: string | undefined;
+  let lyricsFormat: Track['lyricsFormat'];
+  let lyricsSource: string | undefined;
+  let lyricsAttribution: LyricsAttribution | undefined;
   let hasSyncedLyrics = false;
   let hasPlainLyrics = false;
   try {
@@ -429,7 +503,7 @@ const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { 
     const pictures = result.common.picture ?? [];
     const picture = pictures.find((candidate) => /cover\s*\(front\)|front/i.test(candidate.type ?? ''))
       ?? pictures.find((candidate) => candidate.data?.length > 0);
-    if (picture?.data?.length) {
+    if (picture?.data?.length && persistAssets) {
       const mimeType = picture.format.toLowerCase();
       const extension = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : mimeType.includes('gif') ? 'gif' : 'jpg';
       const artworkFile = new File(downloadsDirectory, `${safeName(id)}-artwork.${extension}`);
@@ -439,40 +513,85 @@ const extractEmbeddedMetadata = async (audioFile: File, id: string, fallback: { 
       if (artworkFile.exists && (artworkFile.size ?? 0) > 0) artwork = artworkFile.uri;
       else console.warn(`[Music import] Embedded artwork was parsed but not saved for ${audioFile.name}.`);
     }
-    const lyricEntries = result.common.lyrics ?? [];
-    // Containers can expose one song twice: once as unsynced USLT text and
-    // once as timed SYLT rows. Prefer a single timed source instead of
-    // concatenating both representations into the cached LRC.
-    const syncedEntry = lyricEntries.find((entry) => entry.syncText?.some((line) => line.text?.trim()));
-    const plainEntry = lyricEntries.find((entry) => entry.text?.trim());
-    if (syncedEntry?.syncText?.length) {
-      embeddedLyrics = deduplicateSyncedLyrics(syncedEntry.syncText.map((line) => {
-        const rawTime = Math.max(0, line.timestamp ?? 0);
-        const time = syncedEntry.timeStampFormat === 1
-          ? rawTime * 1152 / (result.format.sampleRate || 44100) * 1000
-          : rawTime;
-        const minutes = Math.floor(time / 60000);
-        const seconds = (time % 60000) / 1000;
-        return `[${String(minutes).padStart(2, '0')}:${seconds.toFixed(2).padStart(5, '0')}]${line.text}`;
-      }).join('\n'));
-      hasSyncedLyrics = Boolean(embeddedLyrics);
-    } else if (plainEntry?.text?.trim()) {
-      embeddedLyrics = plainEntry.text.trim();
-      hasSyncedLyrics = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(embeddedLyrics);
-    }
+    const embeddedLyrics = readEmbeddedMp3Lyrics(result.native);
     if (embeddedLyrics) {
-      hasPlainLyrics = !hasSyncedLyrics;
-      const lyricsFile = new File(downloadsDirectory, `${safeName(id)}.${hasSyncedLyrics ? 'lrc' : 'txt'}`);
-      if (lyricsFile.exists) lyricsFile.delete();
-      writeTextFile(lyricsFile, embeddedLyrics);
-      lyricsFileUri = lyricsFile.uri;
+      lyricsText = embeddedLyrics.text.trim();
+      lyricsFormat = embeddedLyrics.format;
+      lyricsSource = 'embedded_musiqapp';
+      lyricsAttribution = embeddedLyrics.attribution
+        ?? (embeddedLyrics.source ? { provider: embeddedLyrics.source } : undefined);
+      if (lyricsFormat === 'ttml') {
+        lyricsTtml = lyricsText;
+        hasSyncedLyrics = true;
+      } else if (lyricsFormat === 'line') {
+        syncedLyrics = deduplicateSyncedLyrics(lyricsText);
+        lyricsText = syncedLyrics;
+        hasSyncedLyrics = Boolean(syncedLyrics);
+      } else {
+        plainLyrics = lyricsText;
+        hasPlainLyrics = Boolean(plainLyrics);
+      }
+    } else {
+      const lyricEntries = result.common.lyrics ?? [];
+      // Containers can expose one song twice: once as unsynced USLT text and
+      // once as timed SYLT rows. Prefer a single timed source instead of
+      // concatenating both representations into the cached LRC.
+      const syncedEntry = lyricEntries.find((entry) => entry.syncText?.some((line) => line.text?.trim()));
+      const plainEntry = lyricEntries.find((entry) => entry.text?.trim());
+      if (syncedEntry?.syncText?.length) {
+        lyricsText = deduplicateSyncedLyrics(syncedEntry.syncText.map((line) => {
+          const rawTime = Math.max(0, line.timestamp ?? 0);
+          const time = syncedEntry.timeStampFormat === 1
+            ? rawTime * 1152 / (result.format.sampleRate || 44100) * 1000
+            : rawTime;
+          const minutes = Math.floor(time / 60000);
+          const seconds = (time % 60000) / 1000;
+          return `[${String(minutes).padStart(2, '0')}:${seconds.toFixed(2).padStart(5, '0')}]${line.text}`;
+        }).join('\n').trim());
+        hasSyncedLyrics = Boolean(lyricsText);
+        lyricsFormat = hasSyncedLyrics ? 'line' : undefined;
+        syncedLyrics = lyricsText;
+        lyricsSource = hasSyncedLyrics ? 'embedded_lrc' : undefined;
+      } else if (plainEntry?.text?.trim()) {
+        lyricsText = plainEntry.text.trim();
+        hasSyncedLyrics = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(lyricsText);
+        lyricsFormat = hasSyncedLyrics ? 'line' : 'plain';
+        syncedLyrics = hasSyncedLyrics ? deduplicateSyncedLyrics(lyricsText) : undefined;
+        plainLyrics = hasSyncedLyrics ? undefined : lyricsText;
+        lyricsSource = hasSyncedLyrics ? 'embedded_lrc' : 'embedded_text';
+      }
+    }
+    if (lyricsText) {
+      hasPlainLyrics = lyricsFormat === 'plain' || (!lyricsFormat && !hasSyncedLyrics);
     }
   } catch (error) {
     // Keep importing the audio, but report the parser failure instead of
     // silently making an embedded-cover failure impossible to diagnose.
     console.warn(`[Music import] Could not read embedded metadata from ${audioFile.name}:`, error);
   }
-  return { title, artist, album, albumArtist, trackNumber, year, genre, composer, artwork, artworkFileUri: artwork, durationSeconds, lyricsFileUri, hasSyncedLyrics, hasPlainLyrics };
+  return {
+    title,
+    artist,
+    album,
+    albumArtist,
+    trackNumber,
+    year,
+    genre,
+    composer,
+    artwork,
+    artworkFileUri: artwork,
+    durationSeconds,
+    lyricsFileUri,
+    lyricsText,
+    syncedLyrics,
+    plainLyrics,
+    lyricsTtml,
+    lyricsFormat,
+    lyricsSource,
+    lyricsAttribution,
+    hasSyncedLyrics,
+    hasPlainLyrics,
+  };
 };
 
 const readIndexedTracks = async (): Promise<Track[]> => {
@@ -641,11 +760,19 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[];
         duration: (!track.duration || track.duration === '—') && embedded?.durationSeconds
           ? formatDuration(embedded.durationSeconds)
           : track.duration,
+        ...(embedded?.lyricsSource === 'embedded_musiqapp' ? {
+          syncedLyrics: embedded.syncedLyrics,
+          plainLyrics: embedded.plainLyrics,
+          lyricsTtml: embedded.lyricsTtml,
+          lyricsFormat: embedded.lyricsFormat,
+          lyricsSource: embedded.lyricsSource,
+          lyricsAttribution: embedded.lyricsAttribution,
+        } : {}),
         lyricsFileUri,
         dateAdded: track.dateAdded ?? audioFile.modificationTime ?? audioFile.creationTime ?? Date.now(),
         artwork: artwork || embedded?.artwork || track.artwork,
         artworkFileUri: track.artworkFileUri || embedded?.artworkFileUri || artwork,
-        lyricsAvailable: Boolean(track.lyricsAvailable || lyricsFileUri),
+        lyricsAvailable: Boolean(track.lyricsAvailable || lyricsFileUri || (embedded?.lyricsSource === 'embedded_musiqapp' && embedded.lyricsText)),
         hasSyncedLyrics: Boolean(track.hasSyncedLyrics || ttml.exists || lrc.exists || embedded?.hasSyncedLyrics),
         hasPlainLyrics: Boolean(track.hasPlainLyrics || (!ttml.exists && !lrc.exists && txt.exists) || embedded?.hasPlainLyrics),
       };
@@ -689,7 +816,13 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[];
       fileExtension: item.extension,
       localUri: item.uri,
       lyricsFileUri: ttml.exists ? ttml.uri : lrc.exists ? lrc.uri : txt.exists ? txt.uri : embedded.lyricsFileUri,
-      lyricsAvailable: ttml.exists || lrc.exists || txt.exists || Boolean(embedded.lyricsFileUri),
+      syncedLyrics: embedded.syncedLyrics,
+      plainLyrics: embedded.plainLyrics,
+      lyricsTtml: embedded.lyricsTtml,
+      lyricsFormat: embedded.lyricsFormat,
+      lyricsSource: embedded.lyricsSource,
+      lyricsAttribution: embedded.lyricsAttribution,
+      lyricsAvailable: ttml.exists || lrc.exists || txt.exists || Boolean(embedded.lyricsFileUri || embedded.lyricsText),
       hasSyncedLyrics: ttml.exists || lrc.exists || embedded.hasSyncedLyrics,
       hasPlainLyrics: !ttml.exists && !lrc.exists && (txt.exists || embedded.hasPlainLyrics),
       dateAdded: item.modificationTime ?? item.creationTime ?? Date.now(),
@@ -703,6 +836,16 @@ const scanLooseAudioFiles = async (indexed: Track[]): Promise<{ tracks: Track[];
 };
 
 export const OfflineMusicService = {
+  async inspectLocalAudioMetadata(sourceUri: string) {
+    const audioFile = new File(sourceUri);
+    return extractEmbeddedMetadata(
+      audioFile,
+      'local-audio-preview',
+      { title: 'Unknown', artist: 'Unknown' },
+      false,
+    );
+  },
+
   async getDownloadedTracks(): Promise<Track[]> {
     if (downloadedTracksCache) return downloadedTracksCache;
     if (downloadedTracksLoad) return downloadedTracksLoad;
@@ -799,6 +942,20 @@ export const OfflineMusicService = {
     });
     if (renewedCount > 0) await writeSpicyLyricsCache(cache);
     return renewedCount;
+  },
+
+  /** Keep a manually saved local lyric replacement ahead of Spicy API results. */
+  async setLocalLyricsOverride(trackId: string): Promise<void> {
+    const cache = await readSpicyLyricsCache();
+    if (cache[trackId]) {
+      delete cache[trackId];
+      await writeSpicyLyricsCache(cache);
+    }
+    const ignored = await readSpicyLyricsIgnoredTrackIds();
+    if (!ignored.has(trackId)) {
+      ignored.add(trackId);
+      await writeSpicyLyricsIgnoredTrackIds(ignored);
+    }
   },
 
   async pruneSpicyLyricsCache(trackIdsToKeep?: string[]): Promise<void> {
@@ -1046,33 +1203,33 @@ export const OfflineMusicService = {
       idempotent: true,
     });
     const artwork = await cacheArtworkForTrack(audioFile, downloadsDirectory, track.id, track.artwork);
-
-    let lyricsFileUri: string | undefined;
-    if (track.lyricsFormat === 'ttml' && track.lyricsTtml?.trim()) {
-      const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.ttml`);
-      writeTextFile(lyricsFile, track.lyricsTtml);
-      lyricsFileUri = lyricsFile.uri;
-    } else if (track.syncedLyrics?.trim()) {
-      const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.lrc`);
-      writeTextFile(lyricsFile, track.syncedLyrics);
-      lyricsFileUri = lyricsFile.uri;
-    } else if (track.plainLyrics?.trim()) {
-      const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.txt`);
-      writeTextFile(lyricsFile, track.plainLyrics);
-      lyricsFileUri = lyricsFile.uri;
-    }
-
+    const isSpicyApiResult = track.lyricsSource === 'spicy_lyrics_api';
     const downloadedTrack: Track = {
       ...track,
+      ...(isSpicyApiResult ? {
+        syncedLyrics: undefined,
+        plainLyrics: undefined,
+        lyrics: undefined,
+        lyricsTtml: undefined,
+        lyricsFormat: undefined,
+        lyricsSource: undefined,
+        lyricsAttribution: undefined,
+        lyricsAvailable: false,
+        hasSyncedLyrics: false,
+        hasPlainLyrics: false,
+      } : {}),
       ...(artwork ? { artwork } : {}),
       localUri: audioFile.uri,
-      lyricsFileUri,
+      lyricsFileUri: undefined,
       dateAdded: Date.now(),
     };
     const current = await this.getDownloadedTracks();
     const updated = [...current.filter((item) => item.id !== track.id), downloadedTrack];
     await saveIndexedTracks(updated);
-    return downloadedTrack;
+    const payload = lyricsPayloadFromTrack(downloadedTrack);
+    if (!payload) return downloadedTrack;
+    await this.embedLyricsInTrackAudio(downloadedTrack, payload);
+    return this.saveEmbeddedLyrics({ ...downloadedTrack, lyricsSource: 'embedded_musiqapp' }, payload.text);
   },
 
   /** Import a direct audio URL into the app's private Documents library. */
@@ -1151,28 +1308,13 @@ export const OfflineMusicService = {
     if (audioFile.exists) audioFile.delete();
     await new File(sourceUri).copy(audioFile);
     const embedded = await extractEmbeddedMetadata(audioFile, id, { title, artist });
-    let lyricsFileUri = embedded.lyricsFileUri;
-    let hasSyncedLyrics = embedded.hasSyncedLyrics;
-    let hasPlainLyrics = embedded.hasPlainLyrics;
-    if (sidecarTtml) {
-      const destination = new File(downloadsDirectory, `${safeName(id)}.ttml`);
-      writeTextFile(destination, sidecarTtml);
-      lyricsFileUri = destination.uri;
-      hasSyncedLyrics = true;
-      hasPlainLyrics = false;
-    } else if (sidecarLrc) {
-      const destination = new File(downloadsDirectory, `${safeName(id)}.lrc`);
-      writeTextFile(destination, sidecarLrc);
-      lyricsFileUri = destination.uri;
-      hasSyncedLyrics = true;
-      hasPlainLyrics = false;
-    } else if (sidecarText && !embedded.hasSyncedLyrics && !embedded.hasPlainLyrics) {
-      const destination = new File(downloadsDirectory, `${safeName(id)}.txt`);
-      writeTextFile(destination, sidecarText);
-      lyricsFileUri = destination.uri;
-      hasSyncedLyrics = false;
-      hasPlainLyrics = true;
-    }
+    const legacySidecar = !embedded.lyricsText
+      ? sidecarTtml ? { text: sidecarTtml, extension: '.ttml' }
+        : sidecarLrc ? { text: sidecarLrc, extension: '.lrc' }
+          : sidecarText ? { text: sidecarText, extension: '.txt' }
+            : undefined
+      : undefined;
+    const legacyLyrics = legacySidecar ? trackLyricsFromText(legacySidecar.text, legacySidecar.extension) : undefined;
     const artwork = embedded.artwork || await cacheArtworkForTrack(new File(sourceUri), downloadsDirectory, id, sourceArtwork);
     const track: Track = {
       id,
@@ -1195,21 +1337,36 @@ export const OfflineMusicService = {
       localUri: audioFile.uri,
       shareUrl: sourceUrl || undefined,
       dateAdded: Date.now(),
-      lyricsFileUri,
-      lyricsAvailable: Boolean(lyricsFileUri),
-      hasSyncedLyrics,
-      hasPlainLyrics,
+      lyricsFileUri: undefined,
+      syncedLyrics: embedded.lyricsText ? embedded.syncedLyrics : legacyLyrics?.syncedLyrics,
+      plainLyrics: embedded.lyricsText ? embedded.plainLyrics : legacyLyrics?.plainLyrics,
+      lyrics: embedded.lyricsText ? undefined : legacyLyrics?.lyrics,
+      lyricsTtml: embedded.lyricsText ? embedded.lyricsTtml : legacyLyrics?.lyricsTtml,
+      lyricsFormat: embedded.lyricsText ? embedded.lyricsFormat : legacyLyrics?.lyricsFormat,
+      lyricsSource: embedded.lyricsText ? embedded.lyricsSource : legacyLyrics?.lyricsSource,
+      lyricsAttribution: embedded.lyricsAttribution,
+      lyricsAvailable: Boolean(embedded.lyricsText || legacySidecar),
+      hasSyncedLyrics: embedded.lyricsText ? embedded.hasSyncedLyrics : Boolean(legacyLyrics?.hasSyncedLyrics),
+      hasPlainLyrics: embedded.lyricsText ? embedded.hasPlainLyrics : Boolean(legacyLyrics?.hasPlainLyrics),
     };
     const current = await this.getDownloadedTracks();
     await saveIndexedTracks([...current.filter((item) => item.id !== id), track]);
-    return track;
+    const payload = legacyLyrics ? lyricsPayloadFromTrack(track) : null;
+    if (!payload) return track;
+    try {
+      await this.embedLyricsInTrackAudio(track, payload);
+    } catch {
+      // Keep lyrics in the private track record if an older audio file cannot be rewritten.
+    }
+    return this.saveEmbeddedLyrics(track, payload.text);
   },
 
-  /** Recursively copy supported audio and matching lyric sidecars into private storage. */
+  /** Import supported audio and fold legacy lyric sidecars into the track metadata. */
   async importLocalFolder(sourceDirectory: Directory): Promise<{ importedCount: number; skippedCount: number; artworkCount: number }> {
     ensureDirectory();
     const current = await this.getDownloadedTracks();
     const imported: Track[] = [];
+    const lyricsToEmbed = new Map<string, EmbeddedMp3LyricsPayload>();
     let skippedCount = 0;
 
     const visit = async (directory: Directory): Promise<void> => {
@@ -1242,32 +1399,25 @@ export const OfflineMusicService = {
           const sourceTtml = new File(entry.parentDirectory, `${baseName}.ttml`);
           const sourceLrc = new File(entry.parentDirectory, `${baseName}.lrc`);
           const sourceText = new File(entry.parentDirectory, `${baseName}.txt`);
-          let lyricsFileUri: string | undefined = embedded.lyricsFileUri;
-          let hasSyncedLyrics = embedded.hasSyncedLyrics;
-          let hasPlainLyrics = embedded.hasPlainLyrics;
-          if (sourceTtml.exists) {
-            const destination = new File(downloadsDirectory, `${safeName(id)}.ttml`);
-            if (destination.exists) destination.delete();
-            await sourceTtml.copy(destination);
-            lyricsFileUri = destination.uri;
-            hasSyncedLyrics = true;
-            hasPlainLyrics = false;
-          } else if (sourceLrc.exists) {
-            const destination = new File(downloadsDirectory, `${safeName(id)}.lrc`);
-            if (destination.exists) destination.delete();
-            await sourceLrc.copy(destination);
-            lyricsFileUri = destination.uri;
-            hasSyncedLyrics = true;
-            hasPlainLyrics = false;
-          } else if (sourceText.exists) {
-            const destination = new File(downloadsDirectory, `${safeName(id)}.txt`);
-            if (destination.exists) destination.delete();
-            await sourceText.copy(destination);
-            lyricsFileUri = destination.uri;
-            hasSyncedLyrics = false;
-            hasPlainLyrics = true;
+          const readSidecar = async (file: File) => {
+            if (!file.exists) return '';
+            try {
+              return (await file.text()).trim();
+            } catch {
+              return '';
+            }
+          };
+          let sidecar: { file: File; text: string } | undefined;
+          if (!embedded.lyricsText) {
+            for (const candidate of [sourceTtml, sourceLrc, sourceText]) {
+              const text = await readSidecar(candidate);
+              if (!text) continue;
+              sidecar = { file: candidate, text };
+              break;
+            }
           }
-          imported.push({
+          const sidecarLyrics = sidecar?.text ? trackLyricsFromText(sidecar.text, sidecar.file.extension) : undefined;
+          const track: Track = {
             id,
             title: embedded.title,
             artist: embedded.artist,
@@ -1286,12 +1436,24 @@ export const OfflineMusicService = {
             fileExtension,
             downloadAllowed: false,
             localUri: audioFile.uri,
-            lyricsFileUri,
-            lyricsAvailable: Boolean(lyricsFileUri),
-            hasSyncedLyrics,
-            hasPlainLyrics,
+            lyricsFileUri: undefined,
+            syncedLyrics: embedded.lyricsText ? embedded.syncedLyrics : sidecarLyrics?.syncedLyrics,
+            plainLyrics: embedded.lyricsText ? embedded.plainLyrics : sidecarLyrics?.plainLyrics,
+            lyrics: embedded.lyricsText ? undefined : sidecarLyrics?.lyrics,
+            lyricsTtml: embedded.lyricsText ? embedded.lyricsTtml : sidecarLyrics?.lyricsTtml,
+            lyricsFormat: embedded.lyricsText ? embedded.lyricsFormat : sidecarLyrics?.lyricsFormat,
+            lyricsSource: embedded.lyricsText ? embedded.lyricsSource : sidecarLyrics?.lyricsSource,
+            lyricsAttribution: embedded.lyricsAttribution,
+            lyricsAvailable: Boolean(sidecarLyrics || embedded.lyricsText),
+            hasSyncedLyrics: embedded.lyricsText ? embedded.hasSyncedLyrics : Boolean(sidecarLyrics?.hasSyncedLyrics),
+            hasPlainLyrics: embedded.lyricsText ? embedded.hasPlainLyrics : Boolean(sidecarLyrics?.hasPlainLyrics),
             dateAdded: Date.now(),
-          });
+          };
+          imported.push(track);
+          if (sidecarLyrics) {
+            const payload = lyricsPayloadFromTrack(track);
+            if (payload) lyricsToEmbed.set(id, payload);
+          }
         } catch {
           skippedCount += 1;
         }
@@ -1303,14 +1465,23 @@ export const OfflineMusicService = {
       const byId = new Map(current.map((track) => [track.id, track]));
       imported.forEach((track) => byId.set(track.id, track));
       await saveIndexedTracks([...byId.values()]);
+      for (const track of imported) {
+        const payload = lyricsToEmbed.get(track.id);
+        if (!payload) continue;
+        try {
+          await this.embedLyricsInTrackAudio(track, payload);
+        } catch {
+          // The indexed lyrics remain usable if a legacy audio file cannot be rewritten.
+        }
+        await this.saveEmbeddedLyrics({ ...track, lyricsSource: 'embedded_musiqapp' }, payload.text);
+      }
     }
     return { importedCount: imported.length, skippedCount, artworkCount: imported.filter((track) => Boolean(track.artwork)).length };
   },
 
   async saveSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {
-    const cleanedTrack = await this.removeLyricsSidecars(track);
     const replacementLyrics = deduplicateSyncedLyrics(syncedLyrics);
-    const trackWithLyrics: Track = {
+    return this.saveEmbeddedLyrics({
       ...track,
       syncedLyrics: replacementLyrics,
       plainLyrics: undefined,
@@ -1320,80 +1491,36 @@ export const OfflineMusicService = {
       lyricsAvailable: true,
       hasSyncedLyrics: true,
       hasPlainLyrics: false,
-    };
-    const current = await this.getDownloadedTracks();
-    const savedTrack = current.find((item) => item.id === track.id);
-    if (!savedTrack) {
-      ensureDirectory();
-      const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.lrc`);
-      writeTextFile(lyricsFile, replacementLyrics);
-      return { ...cleanedTrack, ...trackWithLyrics, lyricsFileUri: lyricsFile.uri };
-    }
-
-    ensureDirectory();
-    const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.lrc`);
-    writeTextFile(lyricsFile, replacementLyrics);
-
-    const updatedTrack: Track = {
-      ...savedTrack,
-      ...cleanedTrack,
-      ...trackWithLyrics,
-      localUri: savedTrack.localUri,
-      lyricsFileUri: lyricsFile.uri,
-    };
-    const updatedTracks = [...current.filter((item) => item.id !== track.id), updatedTrack];
-    await saveIndexedTracks(updatedTracks);
-    return updatedTrack;
+      lyricsSource: 'embedded_musiqapp',
+    }, replacementLyrics);
   },
 
   async saveTtmlLyrics(track: Track, ttml: string): Promise<Track> {
-    const cleanedTrack = await this.removeLyricsSidecars(track);
-    ensureDirectory();
-    const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.ttml`);
-    writeTextFile(lyricsFile, ttml);
-    const current = await this.getDownloadedTracks();
-    const savedTrack = current.find((item) => item.id === track.id);
-    const updatedTrack: Track = {
-      ...cleanedTrack,
+    return this.saveEmbeddedLyrics({
       ...track,
-      ...(savedTrack ? { ...savedTrack, ...cleanedTrack, ...track, localUri: savedTrack.localUri } : {}),
-      lyricsFileUri: lyricsFile.uri,
       lyricsTtml: ttml,
       lyricsFormat: 'ttml',
       lyricsAvailable: true,
       hasSyncedLyrics: true,
       hasPlainLyrics: false,
-    };
-    if (!savedTrack) return updatedTrack;
-    await saveIndexedTracks([...current.filter((item) => item.id !== track.id), updatedTrack]);
-    return updatedTrack;
+      lyricsSource: 'embedded_musiqapp',
+    }, ttml);
   },
 
   async savePlainLyrics(track: Track, plainLyrics: string): Promise<Track> {
-    const cleanedTrack = await this.removeLyricsSidecars(track);
     const replacementLyrics = plainLyrics.trim();
-    ensureDirectory();
-    const lyricsFile = new File(downloadsDirectory, `${safeName(track.id)}.txt`);
-    writeTextFile(lyricsFile, replacementLyrics);
-    const current = await this.getDownloadedTracks();
-    const savedTrack = current.find((item) => item.id === track.id);
-    const updatedTrack: Track = {
-      ...cleanedTrack,
+    return this.saveEmbeddedLyrics({
       ...track,
-      ...(savedTrack ? { ...savedTrack, ...cleanedTrack, ...track, localUri: savedTrack.localUri } : {}),
       syncedLyrics: undefined,
       plainLyrics: replacementLyrics,
       lyrics: parseLyrics(undefined, replacementLyrics),
-      lyricsFileUri: lyricsFile.uri,
       lyricsTtml: undefined,
       lyricsFormat: 'plain',
       lyricsAvailable: Boolean(replacementLyrics),
       hasSyncedLyrics: false,
       hasPlainLyrics: Boolean(replacementLyrics),
-    };
-    if (!savedTrack) return updatedTrack;
-    await saveIndexedTracks([...current.filter((item) => item.id !== track.id), updatedTrack]);
-    return updatedTrack;
+      lyricsSource: 'embedded_musiqapp',
+    }, replacementLyrics);
   },
 
   /** Remove competing local lyric files, optionally keeping the selected sidecar. */
@@ -1452,7 +1579,7 @@ export const OfflineMusicService = {
     return cleanedTrack;
   },
 
-  /** Store synchronized lyrics only in the MP3 metadata, without creating a duplicate sidecar. */
+  /** Keep the track index aligned with synchronized lyrics already embedded in its MP3. */
   async saveEmbeddedSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {
     const replacementLyrics = deduplicateSyncedLyrics(syncedLyrics);
     const cleanedTrack = await this.removeLyricsSidecars(track);
@@ -1474,6 +1601,80 @@ export const OfflineMusicService = {
     const persistedTrack = { ...savedTrack, ...updatedTrack, localUri: savedTrack.localUri };
     await saveIndexedTracks(current.map((item) => item.id === track.id ? persistedTrack : item));
     return persistedTrack;
+  },
+
+  /** Store TTML, timed LRC, or plain lyrics in the app's private track index. */
+  async saveEmbeddedLyrics(track: Track, lyricsText: string): Promise<Track> {
+    const replacementLyrics = lyricsText.trim();
+    if (!replacementLyrics) throw new Error('Add lyrics before saving them with this track.');
+
+    const cleanedTrack = await this.removeLyricsSidecars(track);
+    const current = await this.getDownloadedTracks();
+    const savedTrack = current.find((item) => item.id === track.id);
+    const lyricsFormat = track.lyricsFormat === 'word' && track.lyricsTtml?.trim()
+      ? 'ttml'
+      : track.lyricsFormat === 'ttml' && track.lyricsTtml?.trim()
+        ? 'ttml'
+        : track.lyricsFormat === 'plain'
+          ? 'plain'
+          : 'line';
+    const storedText = lyricsFormat === 'ttml'
+      ? track.lyricsTtml!.trim()
+      : lyricsFormat === 'plain'
+        ? (track.plainLyrics?.trim() || replacementLyrics)
+        : (track.syncedLyrics?.trim() || replacementLyrics);
+    const updatedTrack: Track = {
+      ...cleanedTrack,
+      ...track,
+      syncedLyrics: lyricsFormat === 'line' ? storedText : lyricsFormat === 'ttml' ? track.syncedLyrics : undefined,
+      plainLyrics: lyricsFormat === 'plain' ? storedText : undefined,
+      lyricsTtml: lyricsFormat === 'ttml' ? track.lyricsTtml : undefined,
+      lyrics: track.lyrics?.length
+        ? track.lyrics
+        : parseLyrics(
+          lyricsFormat === 'line' ? storedText : lyricsFormat === 'ttml' ? track.syncedLyrics : undefined,
+          lyricsFormat === 'plain' ? storedText : undefined,
+        ),
+      lyricsFileUri: undefined,
+      lyricsFormat: lyricsFormat === 'ttml' && track.lyricsFormat === 'word' ? 'word' : lyricsFormat,
+      lyricsAvailable: true,
+      hasSyncedLyrics: lyricsFormat !== 'plain',
+      hasPlainLyrics: lyricsFormat === 'plain',
+      lyricsSource: 'embedded_musiqapp',
+    };
+    if (!savedTrack) return updatedTrack;
+
+    const persistedTrack = { ...savedTrack, ...updatedTrack, localUri: savedTrack.localUri };
+    await saveIndexedTracks(current.map((item) => item.id === track.id ? persistedTrack : item));
+    return persistedTrack;
+  },
+
+  /** Write the app's lyric payload into an MP3; other formats use the private track index. */
+  async embedLyricsInTrackAudio(track: Track, payload = lyricsPayloadFromTrack(track)): Promise<boolean> {
+    if (!track.localUri || !payload) return false;
+    const audioFile = new File(track.localUri);
+    if (audioFile.extension.toLowerCase() !== '.mp3') return false;
+
+    const prepared = await Id3SynchronizedLyricsService.createVerifiedMp3WithLyrics(
+      audioFile.uri,
+      audioFile.name,
+      payload,
+    );
+    try {
+      const indexed = await this.getIndexedDownloadedTracks();
+      if (indexed.some((item) => item.id === track.id)) {
+        await this.replaceTrackAudio(track, prepared.uri);
+      } else {
+        const expectedSize = prepared.size ?? 0;
+        await prepared.copy(audioFile, { overwrite: true });
+        if (!audioFile.exists || (audioFile.size ?? 0) !== expectedSize) {
+          throw new Error('Could not verify the MP3 after embedding its lyrics.');
+        }
+      }
+      return true;
+    } finally {
+      if (prepared.exists) prepared.delete();
+    }
   },
 
   async replaceTrackAudio(track: Track, replacementUri: string): Promise<void> {

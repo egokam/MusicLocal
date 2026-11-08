@@ -27,6 +27,7 @@ import { SearchScreen } from './src/screens/SearchScreen';
 import { MusicCatalogService, getMusicApiHeaders, parseLyrics, type TrackEditChanges } from './src/services/MusicCatalogService';
 import { LrcCheckerService } from './src/services/LrcCheckerService';
 import { OfflineMusicService } from './src/services/OfflineMusicService';
+import { Id3SynchronizedLyricsService } from './src/services/Id3SynchronizedLyricsService';
 import { PlaylistStorageService } from './src/services/PlaylistStorageService';
 import type { PlaylistCoverSelection, PlaylistSummary, Track } from './src/types';
 import './styles.css';
@@ -986,7 +987,7 @@ export default function App() {
     player.setVolume(nextVolume);
   }, [player]);
 
-  const updateTrackWithLyrics = useCallback(async (track: Track, syncedLyrics: string, embeddedOnly = false) => {
+  const updateTrackWithLyrics = useCallback(async (track: Track, syncedLyrics: string, embeddedOnly = false, embeddedMp3 = false) => {
     const lyricsFormat = track.lyricsFormat ?? (parseLyrics(syncedLyrics).some((line) => line.timeMs !== null) ? 'line' : 'plain');
     const lyricsTrack = {
       ...track,
@@ -997,10 +998,12 @@ export default function App() {
       lyricsAvailable: true,
       hasSyncedLyrics: lyricsFormat !== 'plain',
       hasPlainLyrics: lyricsFormat === 'plain',
-      lyricsSource: embeddedOnly ? 'embedded_lrc' : track.lyricsSource,
+      lyricsSource: embeddedOnly ? 'embedded_lrc' : embeddedMp3 ? 'embedded_musiqapp' : track.lyricsSource,
     };
     const updated = embeddedOnly
       ? await OfflineMusicService.saveEmbeddedSyncedLyrics(lyricsTrack, syncedLyrics)
+      : embeddedMp3
+        ? await OfflineMusicService.saveEmbeddedLyrics(lyricsTrack, syncedLyrics)
       : (lyricsFormat === 'ttml' || lyricsFormat === 'word') && lyricsTrack.lyricsTtml
         ? await OfflineMusicService.saveTtmlLyrics(lyricsTrack, lyricsTrack.lyricsTtml)
         : lyricsFormat === 'plain'
@@ -1092,11 +1095,6 @@ export default function App() {
     });
   }, [toggleFavorite]);
 
-  const updateTrack = useCallback(async (track: Track, changes: TrackEditChanges) => {
-    const updated = await MusicCatalogService.updateTrack(track, changes);
-    return updateTrackEverywhere(updated);
-  }, [updateTrackEverywhere]);
-
   const deleteTrack = useCallback(async (track: Track) => {
     await MusicCatalogService.deleteTrack(track);
     const nextTracks = tracksRef.current.filter((item) => item.id !== track.id);
@@ -1165,13 +1163,93 @@ export default function App() {
   const saveTrackLyrics = useCallback(async (track: Track, syncedLyrics: string) => {
     if (track.lyricsSource === 'spicy_lyrics_api') {
       // The result is already cached through the Spicy API for in-app playback.
-      // Its terms do not allow exporting it to a local sidecar file.
+      // Its terms do not allow exporting it into an audio file.
       return track;
     }
     if (!syncedLyrics.trim()) throw new Error('This result contains no lyric text.');
     const lyricsSource = track.lyricsSource ?? (track.lyricsFormat === 'plain' ? 'saved_text' : 'saved_lrc');
-    return updateTrackWithLyrics({ ...track, lyricsSource }, syncedLyrics);
-  }, [updateTrackWithLyrics]);
+    if (track.localUri) {
+      const audioFile = new File(track.localUri);
+      if (audioFile.extension.toLowerCase() === '.mp3') {
+        const format = (track.lyricsFormat === 'ttml' || track.lyricsFormat === 'word') && track.lyricsTtml?.trim()
+          ? 'ttml'
+          : track.lyricsFormat === 'plain'
+            ? 'plain'
+            : track.lyricsFormat === 'line' || parseLyrics(syncedLyrics).some((line) => line.timeMs !== null)
+              ? 'line'
+              : 'plain';
+        const text = format === 'ttml'
+          ? track.lyricsTtml!.trim()
+          : format === 'plain'
+            ? (track.plainLyrics?.trim() || syncedLyrics.trim())
+            : (track.syncedLyrics?.trim() || syncedLyrics.trim());
+        const preparedMp3 = await Id3SynchronizedLyricsService.createVerifiedMp3WithLyrics(
+          track.localUri,
+          audioFile.name,
+          {
+            version: 1,
+            format,
+            text,
+            source: track.lyricsAttribution?.provider,
+            attribution: track.lyricsAttribution,
+          },
+        );
+        const isActiveTrack = activeTrackRef.current?.id === track.id;
+        const wasPlaying = playerPlayingRef.current;
+        const playbackPosition = playerCurrentTimeRef.current;
+        if (isActiveTrack) player.pause();
+
+        try {
+          await OfflineMusicService.replaceTrackAudio(track, preparedMp3.uri);
+          const updated = await updateTrackWithLyrics(
+            { ...track, lyricsSource: 'embedded_musiqapp' },
+            syncedLyrics,
+            false,
+            true,
+          );
+          await OfflineMusicService.setLocalLyricsOverride(track.id);
+          return updated;
+        } finally {
+          if (isActiveTrack && track.localUri) {
+            try {
+              player.replace({ uri: track.localUri });
+              await player.seekTo(playbackPosition);
+              if (wasPlaying) player.play();
+            } catch {
+              if (wasPlaying) player.play();
+            }
+          }
+          if (preparedMp3.exists) preparedMp3.delete();
+        }
+      }
+    }
+    const updated = await updateTrackWithLyrics({ ...track, lyricsSource }, syncedLyrics);
+    await OfflineMusicService.setLocalLyricsOverride(track.id);
+    return updated;
+  }, [player, updateTrackWithLyrics]);
+
+  const updateTrack = useCallback(async (track: Track, changes: TrackEditChanges) => {
+    const { lyrics, ...metadataChanges } = changes;
+    const updatedMetadata = await MusicCatalogService.updateTrack(track, metadataChanges);
+    if (lyrics === undefined) return updateTrackEverywhere(updatedMetadata);
+
+    const editedLyrics = lyrics.trim();
+    const timed = parseLyrics(editedLyrics).some((line) => line.timeMs !== null && line.text.trim());
+    const lyricsTrack: Track = {
+      ...updatedMetadata,
+      syncedLyrics: timed ? editedLyrics : undefined,
+      plainLyrics: editedLyrics && !timed ? editedLyrics : undefined,
+      lyrics: parseLyrics(timed ? editedLyrics : undefined, timed ? undefined : editedLyrics),
+      lyricsFormat: timed ? 'line' : 'plain',
+      lyricsTtml: undefined,
+      lyricsAvailable: Boolean(editedLyrics),
+      hasSyncedLyrics: timed,
+      hasPlainLyrics: Boolean(editedLyrics && !timed),
+      lyricsSource: timed ? 'saved_lrc' : undefined,
+      lyricsAttribution: undefined,
+    };
+    return saveTrackLyrics(lyricsTrack, editedLyrics);
+  }, [saveTrackLyrics, updateTrackEverywhere]);
 
   const saveSynchronizedTrack = useCallback(async (
     track: Track,
@@ -1190,7 +1268,9 @@ export default function App() {
 
       try {
         await OfflineMusicService.replaceTrackAudio(track, preparedMp3Uri);
-        return await updateTrackWithLyrics({ ...track, lyricsSource: 'embedded_lrc' }, syncedLyrics, true);
+        const updated = await updateTrackWithLyrics({ ...track, lyricsSource: 'embedded_lrc' }, syncedLyrics, true);
+        await OfflineMusicService.setLocalLyricsOverride(track.id);
+        return updated;
       } finally {
         if (isActiveTrack && track.localUri) {
           try {
@@ -1216,6 +1296,7 @@ export default function App() {
       { ...namedTrack, lyricsSource: 'embedded_lrc' },
       syncedLyrics,
     );
+    await OfflineMusicService.setLocalLyricsOverride(updated.id);
     const trackWithFavoriteState = {
       ...updated,
       isFavorite: favoriteIdsRef.current.has(updated.id),
