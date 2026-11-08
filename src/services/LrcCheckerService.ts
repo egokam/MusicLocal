@@ -15,6 +15,7 @@ const storageFile = new File(storageDirectory, 'lrc-checker.json');
 export type LrcCheckerRecord = {
   state: LrcCheckState;
   result?: Track;
+  pendingReview?: boolean;
   error?: string;
   excludedCandidateSignatures?: string[];
   previousResults?: Track[];
@@ -24,6 +25,7 @@ const MAX_PREVIOUS_RESULTS = 10;
 
 export type LrcCheckerSnapshot = {
   records: Record<string, LrcCheckerRecord>;
+  hasSavedScan: boolean;
   isScanning: boolean;
   isLoadingCatalog: boolean;
   isStopping: boolean;
@@ -34,6 +36,7 @@ export type LrcCheckerSnapshot = {
 type PersistedLrcCheckerState = LrcCheckerSnapshot & {
   version: 1;
   scanTracks: Track[];
+  completedTrackIds: string[];
 };
 
 type ScanCallbacks = {
@@ -43,6 +46,7 @@ type ScanCallbacks = {
 
 const EMPTY_SNAPSHOT: LrcCheckerSnapshot = {
   records: {},
+  hasSavedScan: false,
   isScanning: false,
   isLoadingCatalog: false,
   isStopping: false,
@@ -85,8 +89,55 @@ const isCompleteRecord = (record: LrcCheckerRecord | undefined) => Boolean(
   record && record.state !== 'unchecked' && record.state !== 'checking' && record.state !== 'error',
 );
 
+const normalizeTrackIdentityPart = (value: string | undefined) => (value ?? '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLocaleLowerCase()
+  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+  .trim()
+  .replace(/\s+/g, ' ');
+
+const trackIdentity = (track: Track) => {
+  const title = normalizeTrackIdentityPart(track.title);
+  const artist = normalizeTrackIdentityPart(track.artist);
+  return title && artist ? `${title}\u0000${artist}` : '';
+};
+
+const trackDurationSeconds = (track: Track) => {
+  if (track.durationSeconds && Number.isFinite(track.durationSeconds) && track.durationSeconds > 0) {
+    return track.durationSeconds;
+  }
+  const parts = track.duration.split(':');
+  if (parts.length !== 2 || parts.some((part) => !/^\d+$/.test(part))) return undefined;
+  return Number(parts[0]) * 60 + Number(parts[1]);
+};
+
+const durationDifference = (left: Track, right: Track) => {
+  const leftDuration = trackDurationSeconds(left);
+  const rightDuration = trackDurationSeconds(right);
+  return leftDuration === undefined || rightDuration === undefined
+    ? undefined
+    : Math.abs(leftDuration - rightDuration);
+};
+
+const rebindResultToTrack = (result: Track | undefined, track: Track) => result ? {
+  ...track,
+  ...result,
+  id: track.id,
+  title: track.title,
+  artist: track.artist,
+  album: track.album,
+  duration: track.duration,
+  durationSeconds: track.durationSeconds,
+  artwork: track.artwork,
+  provider: track.provider,
+  providerId: track.providerId,
+  localUri: track.localUri,
+} : undefined;
+
 const copySnapshot = (state: PersistedLrcCheckerState): LrcCheckerSnapshot => ({
   records: { ...state.records },
+  hasSavedScan: state.hasSavedScan,
   isScanning: state.isScanning,
   isLoadingCatalog: state.isLoadingCatalog,
   isStopping: state.isStopping,
@@ -99,6 +150,7 @@ const makeDefaultPersistedState = (): PersistedLrcCheckerState => ({
   ...EMPTY_SNAPSHOT,
   records: {},
   scanTracks: [],
+  completedTrackIds: [],
 });
 
 let persistedState = makeDefaultPersistedState();
@@ -127,31 +179,46 @@ const hydrate = async () => {
         try {
           const value = JSON.parse(await storageFile.text()) as Partial<PersistedLrcCheckerState>;
           const savedRecords = value.records && typeof value.records === 'object' ? value.records : {};
+          const records = Object.fromEntries(Object.entries(savedRecords).map(([trackId, record]) => [
+            trackId,
+            record?.state === 'checking'
+              ? {
+                  ...record,
+                  state: 'error',
+                  pendingReview: record?.pendingReview === true,
+                  error: 'Lookup interrupted; it will be retried.',
+                }
+              : {
+                  ...record,
+                  pendingReview: record?.pendingReview === true || record?.state === 'candidate',
+                  excludedCandidateSignatures: Array.isArray(record?.excludedCandidateSignatures)
+                    ? record.excludedCandidateSignatures.filter((signature): signature is string => typeof signature === 'string')
+                    : undefined,
+                  previousResults: Array.isArray(record?.previousResults)
+                    ? record.previousResults.filter((track): track is Track => Boolean(track && typeof track.id === 'string')).map(minimalTrack)
+                    : undefined,
+                },
+          ])) as Record<string, LrcCheckerRecord>;
+          const scanTracks = Array.isArray(value.scanTracks)
+            ? value.scanTracks.filter((track): track is Track => Boolean(track && typeof track.id === 'string')).map(minimalTrack)
+            : [];
+          const completedTrackIds = Array.isArray(value.completedTrackIds)
+            ? value.completedTrackIds.filter((trackId): trackId is string => typeof trackId === 'string')
+            : scanTracks.filter((track) => isCompleteRecord(records[track.id])).map((track) => track.id);
           persistedState = {
             version: 1,
-            records: Object.fromEntries(Object.entries(savedRecords).map(([trackId, record]) => [
-              trackId,
-              record?.state === 'checking'
-                ? { state: 'error', error: 'Lookup interrupted; it will be retried.' }
-                : {
-                    ...record,
-                    excludedCandidateSignatures: Array.isArray(record?.excludedCandidateSignatures)
-                      ? record.excludedCandidateSignatures.filter((signature): signature is string => typeof signature === 'string')
-                      : undefined,
-                    previousResults: Array.isArray(record?.previousResults)
-                      ? record.previousResults.filter((track): track is Track => Boolean(track && typeof track.id === 'string')).map(minimalTrack)
-                      : undefined,
-                  },
-            ])) as Record<string, LrcCheckerRecord>,
-            isScanning: value.isScanning === true,
-            isLoadingCatalog: value.isLoadingCatalog === true,
+            records,
+            hasSavedScan: scanTracks.length > 0,
+            isScanning: false,
+            isLoadingCatalog: false,
             isStopping: false,
             progress: {
-              completed: Number.isFinite(value.progress?.completed) ? Number(value.progress?.completed) : 0,
-              total: Number.isFinite(value.progress?.total) ? Number(value.progress?.total) : 0,
+              completed: scanTracks.filter((track) => completedTrackIds.includes(track.id)).length,
+              total: scanTracks.length,
             },
             scanError: typeof value.scanError === 'string' ? value.scanError : null,
-            scanTracks: Array.isArray(value.scanTracks) ? value.scanTracks : [],
+            scanTracks,
+            completedTrackIds,
           };
         } catch {
           persistedState = makeDefaultPersistedState();
@@ -166,9 +233,8 @@ const hydrate = async () => {
 
 const persist = async () => {
   ensureStorageDirectory();
-  if (storageFile.exists) storageFile.delete();
-  storageFile.create({ intermediates: true });
-  storageFile.write(JSON.stringify(persistedState));
+  if (!storageFile.exists) storageFile.create({ intermediates: true });
+  await storageFile.write(JSON.stringify(persistedState));
 };
 
 const updateState = async (mutate: (state: PersistedLrcCheckerState) => void) => {
@@ -187,14 +253,27 @@ const setRecord = async (trackId: string, record: LrcCheckerRecord) => {
     const previous = state.records[trackId];
     state.records[trackId] = {
       ...record,
+      pendingReview: record.pendingReview ?? (
+        record.state === 'candidate'
+          ? true
+          : record.state === 'checking' || record.state === 'error'
+            ? previous?.pendingReview
+            : record.result ? false : previous?.pendingReview
+      ),
       excludedCandidateSignatures: record.excludedCandidateSignatures ?? previous?.excludedCandidateSignatures,
       result: record.result ? minimalTrack(record.result) : undefined,
       previousResults: (record.previousResults ?? previous?.previousResults)?.slice(-MAX_PREVIOUS_RESULTS).map(minimalTrack),
     };
-    if (state.scanTracks.length > 0) {
-      state.progress.completed = state.scanTracks.filter((track) => isCompleteRecord(state.records[track.id])).length;
-      state.progress.total = state.scanTracks.length;
-    }
+    state.progress.completed = state.scanTracks.filter((track) => state.completedTrackIds.includes(track.id)).length;
+    state.progress.total = state.scanTracks.length;
+  });
+};
+
+const markScanTrackCompleted = async (trackId: string) => {
+  await updateState((state) => {
+    if (!state.completedTrackIds.includes(trackId)) state.completedTrackIds.push(trackId);
+    state.progress.completed = state.scanTracks.filter((track) => state.completedTrackIds.includes(track.id)).length;
+    state.progress.total = state.scanTracks.length;
   });
 };
 
@@ -202,10 +281,14 @@ const setSessionTracks = async (tracks: Track[]) => {
   const uniqueTracks = [...new Map(tracks.map((track) => [track.id, minimalTrack(track)])).values()];
   await updateState((state) => {
     state.scanTracks = uniqueTracks;
+    state.completedTrackIds = [];
+    state.hasSavedScan = uniqueTracks.length > 0;
     for (const track of uniqueTracks) {
       const previous = state.records[track.id];
       state.records[track.id] = {
         state: 'unchecked',
+        result: previous?.result,
+        pendingReview: previous?.pendingReview ?? previous?.state === 'candidate',
         excludedCandidateSignatures: previous?.excludedCandidateSignatures,
         previousResults: previous?.previousResults,
       };
@@ -216,6 +299,79 @@ const setSessionTracks = async (tracks: Track[]) => {
     state.isLoadingCatalog = false;
     state.isStopping = false;
     state.scanError = null;
+  });
+};
+
+const reconcileSavedScanTracks = async (tracks: Track[], allowActiveScan = false) => {
+  await hydrate();
+  if (
+    !persistedState.hasSavedScan
+    || (!allowActiveScan && (persistedState.isScanning || persistedState.isLoadingCatalog))
+    || tracks.length === 0
+  ) return;
+
+  const uniqueTracks = [...new Map(tracks.map((track) => [track.id, minimalTrack(track)])).values()];
+  const currentIds = new Set(uniqueTracks.map((track) => track.id));
+  const existingIds = new Set(persistedState.scanTracks.map((track) => track.id));
+  const sameLibrary = currentIds.size === existingIds.size && [...currentIds].every((trackId) => existingIds.has(trackId));
+  if (sameLibrary) return;
+
+  const unmatchedOldTracks = persistedState.scanTracks.filter((track) => !currentIds.has(track.id));
+  const oldTracksUsed = new Set<string>();
+  const identityMatches = new Map<string, string>();
+
+  for (const currentTrack of uniqueTracks) {
+    if (existingIds.has(currentTrack.id)) continue;
+    const identity = trackIdentity(currentTrack);
+    if (!identity) continue;
+    const candidates = unmatchedOldTracks.filter((oldTrack) => (
+      !oldTracksUsed.has(oldTrack.id)
+      && trackIdentity(oldTrack) === identity
+    ));
+    if (candidates.length === 0) continue;
+
+    const ranked = candidates
+      .map((candidate) => ({ track: candidate, difference: durationDifference(currentTrack, candidate) }))
+      .filter(({ difference }) => difference === undefined || difference <= 8)
+      .sort((left, right) => (left.difference ?? Number.POSITIVE_INFINITY) - (right.difference ?? Number.POSITIVE_INFINITY));
+    const best = ranked[0];
+    if (!best) continue;
+    const hasClearBest = ranked.length === 1
+      || (best.difference !== undefined
+        && ranked[1].difference !== undefined
+        && ranked[1].difference - best.difference >= 2);
+    if (!hasClearBest) continue;
+
+    identityMatches.set(currentTrack.id, best.track.id);
+    oldTracksUsed.add(best.track.id);
+  }
+
+  await updateState((state) => {
+    const previousCompletedIds = new Set(state.completedTrackIds);
+    const nextCompletedIds = new Set<string>();
+    for (const track of uniqueTracks) {
+      const oldTrackId = identityMatches.get(track.id);
+      const previousId = oldTrackId ?? track.id;
+      const previousRecord = state.records[previousId];
+      const currentRecord = state.records[track.id];
+
+      if (oldTrackId && previousRecord && (!currentRecord || (!currentRecord.result && previousRecord.result))) {
+        state.records[track.id] = {
+          ...previousRecord,
+          result: rebindResultToTrack(previousRecord.result, track),
+        };
+      } else if (!currentRecord) {
+        state.records[track.id] = { state: 'unchecked' };
+      }
+
+      if (previousCompletedIds.has(previousId)) nextCompletedIds.add(track.id);
+    }
+
+    state.scanTracks = uniqueTracks;
+    state.completedTrackIds = [...nextCompletedIds];
+    state.progress.completed = state.completedTrackIds.length;
+    state.progress.total = uniqueTracks.length;
+    state.hasSavedScan = uniqueTracks.length > 0;
   });
 };
 
@@ -274,43 +430,81 @@ const recordFromResult = (result: Track): LrcCheckerRecord => {
   return { state: 'missing' };
 };
 
-const isSessionFinished = () => persistedState.scanTracks.every((track) => {
-  const state = persistedState.records[track.id]?.state;
-  return Boolean(state && state !== 'checking' && state !== 'unchecked');
-});
+const retainPendingReview = (previous: LrcCheckerRecord | undefined, next: LrcCheckerRecord): LrcCheckerRecord => {
+  if (!previous?.pendingReview || !previous.result) return next;
+  if (!next.result) return { ...previous, state: 'candidate' };
+
+  const previousSignature = lyricsCandidateSignature(previous.result);
+  const nextSignature = lyricsCandidateSignature(next.result);
+  if (!previousSignature || previousSignature === nextSignature) {
+    return { ...next, previousResults: next.previousResults ?? previous.previousResults };
+  }
+
+  return {
+    ...next,
+    previousResults: [...(previous.previousResults ?? []), previous.result].slice(-MAX_PREVIOUS_RESULTS),
+  };
+};
+
+const isSessionFinished = () => persistedState.scanTracks.every((track) => persistedState.completedTrackIds.includes(track.id));
 
 const finishSession = async () => {
   await setScanStatus({ isScanning: false, isLoadingCatalog: false, isStopping: false });
   await unregisterBackgroundTask();
 };
 
-const runForegroundScan = async (callbacks: ScanCallbacks) => {
+const runForegroundScan = async (callbacks: ScanCallbacks, resumeExisting = false) => {
   if (foregroundRun) return foregroundRun;
   foregroundRun = (async () => {
     stopRequested = false;
     try {
+      let tracks = persistedState.scanTracks;
       await setScanStatus({ isScanning: true, isLoadingCatalog: true, isStopping: false, scanError: null });
-      await setSessionTracks([]);
+      if (resumeExisting) {
+        const currentTracks = await callbacks.loadAllTracks();
+        await reconcileSavedScanTracks(currentTracks, true);
+        tracks = persistedState.scanTracks;
+        await updateState((state) => {
+          state.progress.total = state.scanTracks.length;
+          state.progress.completed = state.scanTracks.filter((track) => state.completedTrackIds.includes(track.id)).length;
+        });
+        await setScanStatus({ isLoadingCatalog: false });
+      } else {
+        tracks = await callbacks.loadAllTracks();
+        await setSessionTracks(tracks);
+      }
       await registerBackgroundTask();
-      const tracks = await callbacks.loadAllTracks();
-      await setSessionTracks(tracks);
 
       for (const track of tracks) {
         if (stopRequested) break;
-        await setRecord(track.id, { state: 'checking' });
+        const previous = persistedState.records[track.id];
+        if (resumeExisting && persistedState.completedTrackIds.includes(track.id)) continue;
+        await setRecord(track.id, {
+          state: 'checking',
+          result: previous?.result,
+          pendingReview: previous?.pendingReview,
+          excludedCandidateSignatures: previous?.excludedCandidateSignatures,
+          previousResults: previous?.previousResults,
+        });
         try {
-          const result = await callbacks.checkTrack(track, true);
-          await setRecord(track.id, recordFromResult(result));
+          const result = await callbacks.checkTrack(track, true, previous?.excludedCandidateSignatures);
+          const nextRecord = retainPendingReview(previous, recordFromResult(result));
+          await setRecord(track.id, nextRecord);
+          if (isCompleteRecord(nextRecord)) await markScanTrackCompleted(track.id);
         } catch (error) {
           await setRecord(track.id, {
             state: 'error',
+            result: previous?.result,
+            pendingReview: previous?.pendingReview,
+            excludedCandidateSignatures: previous?.excludedCandidateSignatures,
+            previousResults: previous?.previousResults,
             error: error instanceof Error ? error.message : 'The lyrics service request failed. Try again later.',
           });
         }
         if (!stopRequested) await new Promise((resolve) => setTimeout(resolve, 350));
       }
 
-      if (isSessionFinished() || stopRequested) await finishSession();
+      await finishSession();
     } catch (error) {
       await setScanStatus({ isLoadingCatalog: false, scanError: error instanceof Error ? error.message : 'Could not load the whole music library.' });
       await finishSession();
@@ -338,13 +532,26 @@ const runBackgroundBatch = async () => {
     let processed = 0;
     for (const track of persistedState.scanTracks) {
       if (expired || processed >= BACKGROUND_BATCH_SIZE) break;
-      await setRecord(track.id, { state: 'checking' });
+      const previous = persistedState.records[track.id];
+      if (persistedState.completedTrackIds.includes(track.id)) continue;
+      await setRecord(track.id, {
+        state: 'checking',
+        result: previous?.result,
+        pendingReview: previous?.pendingReview,
+        excludedCandidateSignatures: previous?.excludedCandidateSignatures,
+        previousResults: previous?.previousResults,
+      });
       try {
-        const result = await MusicCatalogService.searchLyricsForChecker(track);
-        await setRecord(track.id, recordFromResult(result));
+        const result = await MusicCatalogService.searchLyricsForChecker(track, previous?.excludedCandidateSignatures);
+        const nextRecord = retainPendingReview(previous, recordFromResult(result));
+        await setRecord(track.id, nextRecord);
+        if (isCompleteRecord(nextRecord)) await markScanTrackCompleted(track.id);
       } catch (error) {
         await setRecord(track.id, {
           state: 'error',
+          result: previous?.result,
+          excludedCandidateSignatures: previous?.excludedCandidateSignatures,
+          previousResults: previous?.previousResults,
           error: error instanceof Error ? error.message : 'The lyrics service request failed. Try again later.',
         });
       }
@@ -387,9 +594,32 @@ export const LrcCheckerService = {
     return runForegroundScan({ loadAllTracks, checkTrack });
   },
 
+  async resumeScan(
+    loadAllTracks: () => Promise<Track[]>,
+    checkTrack: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>,
+  ) {
+    await hydrate();
+    if (foregroundRun) return foregroundRun;
+    if (persistedState.scanTracks.length === 0) return;
+    return runForegroundScan({
+      loadAllTracks,
+      checkTrack,
+    }, true);
+  },
+
+  async reconcileSavedScanTracks(tracks: Track[]) {
+    return reconcileSavedScanTracks(tracks);
+  },
+
   async checkTrack(track: Track, check: (track: Track, forceOnline?: boolean) => Promise<Track>) {
     await hydrate();
-    await setRecord(track.id, { state: 'checking' });
+    const previous = persistedState.records[track.id];
+    await setRecord(track.id, {
+      state: 'checking',
+      result: previous?.result,
+      excludedCandidateSignatures: previous?.excludedCandidateSignatures,
+      previousResults: previous?.previousResults,
+    });
     try {
       const result = await check(track, true);
       const record = recordFromResult(result);
@@ -398,6 +628,9 @@ export const LrcCheckerService = {
     } catch (error) {
       const record: LrcCheckerRecord = {
         state: 'error',
+        result: previous?.result,
+        excludedCandidateSignatures: previous?.excludedCandidateSignatures,
+        previousResults: previous?.previousResults,
         error: error instanceof Error ? error.message : 'The lyrics service request failed. Try again later.',
       };
       await setRecord(track.id, record);
@@ -500,16 +733,4 @@ export const LrcCheckerService = {
     if (!foregroundRun) await finishSession();
   },
 
-  async resumeIfNeeded() {
-    await hydrate();
-    if (!persistedState.isScanning || foregroundRun) return;
-    const storedTracks = persistedState.scanTracks;
-    await runForegroundScan({
-      loadAllTracks: async () => {
-        if (storedTracks.length > 0) return storedTracks;
-        return MusicCatalogService.searchAllTracks();
-      },
-      checkTrack: (track) => MusicCatalogService.searchLyricsForChecker(track),
-    });
-  },
 };

@@ -531,7 +531,7 @@ export default function App() {
             });
         });
         void loadPlaylists().catch(() => undefined);
-        void LrcCheckerService.resumeIfNeeded().catch(() => undefined);
+        void LrcCheckerService.hydrate().catch(() => undefined);
         void NowPlayingWidgetService.initialize(savedTracks).catch(() => undefined);
       }, 100);
     }).catch(() => {
