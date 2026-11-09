@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -703,19 +703,32 @@ type ApiLyricsRow = {
   ignored: boolean;
 };
 
+const hasCachedApiLyrics = (entry: SpicyLyricsCacheEntry | null): entry is SpicyLyricsCacheEntry => Boolean(
+  entry && !entry.noLyrics && (entry.syncedLyrics || entry.plainLyrics || entry.lyrics?.length),
+);
+
 const ApiLyricsScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'ApiLyrics'>) => {
-  const { downloadedTracks, setSpicyLyricsIgnored } = usePlaybackActions();
+  const {
+    downloadedTracks,
+    setSpicyLyricsIgnored,
+    spicyLyricsConfigured,
+    spicyLyricsEnabled,
+  } = usePlaybackActions();
   const [rows, setRows] = useState<ApiLyricsRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyTrackId, setBusyTrackId] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<'renew-all' | 'renew-selected' | 'ignore-selected' | null>(null);
+  const [busyTrackAction, setBusyTrackAction] = useState<'check' | 'renew' | null>(null);
+  const [busyAction, setBusyAction] = useState<'check-all' | 'renew-all' | 'renew-selected' | 'ignore-selected' | 'undo-ignore-selected' | null>(null);
+  const [checkProgress, setCheckProgress] = useState<{ completed: number; total: number } | null>(null);
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set());
+  const canCheckOnline = spicyLyricsConfigured && spicyLyricsEnabled;
+  const actionsBusy = Boolean(busyAction || busyTrackId);
 
   const loadRows = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -726,12 +739,20 @@ const ApiLyricsScreen = ({
       ]);
       const entriesById = new Map(entries.map(({ trackId, entry }) => [trackId, entry]));
       const ignoredTrackIds = new Set(ignoredIds);
-      const nextRows = downloadedTracks.flatMap((track) => {
+      const nextRows = downloadedTracks.map((track) => {
         const entry = entriesById.get(track.id) ?? null;
         const ignored = ignoredTrackIds.has(track.id);
-        return entry || ignored ? [{ track, entry, ignored }] : [];
+        return { track, entry, ignored };
       });
-      nextRows.sort((first, second) => (second.entry?.cachedAt ?? 0) - (first.entry?.cachedAt ?? 0));
+      nextRows.sort((first, second) => {
+        const firstRank = hasCachedApiLyrics(first.entry) ? 0 : first.entry ? 1 : 2;
+        const secondRank = hasCachedApiLyrics(second.entry) ? 0 : second.entry ? 1 : 2;
+        if (firstRank !== secondRank) return firstRank - secondRank;
+        if (firstRank === 0 && first.entry && second.entry && first.entry.cachedAt !== second.entry.cachedAt) {
+          return second.entry.cachedAt - first.entry.cachedAt;
+        }
+        return first.track.title.localeCompare(second.track.title);
+      });
       setRows(nextRows);
     } catch {
       setMessage('Could not load saved API lyrics. Pull to retry or reopen this page.');
@@ -745,8 +766,9 @@ const ApiLyricsScreen = ({
   }, [loadRows]));
 
   const renewLyrics = async (row: ApiLyricsRow) => {
-    if (busyTrackId) return;
+    if (actionsBusy) return;
     setBusyTrackId(row.track.id);
+    setBusyTrackAction('renew');
     setMessage('');
     try {
       const renewed = await MusicCatalogService.renewSpicyLyrics(row.track);
@@ -757,11 +779,81 @@ const ApiLyricsScreen = ({
       Alert.alert('Could not renew lyrics', error instanceof Error ? error.message : 'Check your connection and try again.');
     } finally {
       setBusyTrackId(null);
+      setBusyTrackAction(null);
     }
   };
 
+  const showCheckUnavailable = () => {
+    const detail = !spicyLyricsConfigured
+      ? 'Add a Spicy Lyrics client key in Profile first.'
+      : 'Turn on Spicy Lyrics in Profile to search online.';
+    Alert.alert('Online lyric checks are unavailable', detail);
+  };
+
+  const checkLyrics = async (row: ApiLyricsRow) => {
+    if (actionsBusy) return;
+    if (!canCheckOnline) {
+      showCheckUnavailable();
+      return;
+    }
+    setBusyTrackId(row.track.id);
+    setBusyTrackAction('check');
+    setMessage('');
+    try {
+      const found = await MusicCatalogService.checkSpicyLyrics(row.track);
+      await loadRows(false);
+      setMessage(found
+        ? `API lyrics found and saved for ${row.track.title}.`
+        : `No API lyrics were found for ${row.track.title}.`);
+    } catch (error) {
+      Alert.alert('Could not check lyrics', error instanceof Error ? error.message : 'Check your connection and try again.');
+    } finally {
+      setBusyTrackId(null);
+      setBusyTrackAction(null);
+    }
+  };
+
+  const checkTracks = async (tracksToCheck: Track[]) => {
+    if (actionsBusy) return;
+    if (!canCheckOnline) {
+      showCheckUnavailable();
+      return;
+    }
+    const uniqueTracks = [...new Map(tracksToCheck.map((track) => [track.id, track])).values()];
+    setMenuOpen(false);
+    if (uniqueTracks.length === 0) {
+      setMessage('There are no tracks to check.');
+      return;
+    }
+
+    setBusyAction('check-all');
+    setCheckProgress({ completed: 0, total: uniqueTracks.length });
+    setMessage('');
+    let foundCount = 0;
+    let noLyricsCount = 0;
+    let failedCount = 0;
+
+    for (let index = 0; index < uniqueTracks.length; index += 1) {
+      const track = uniqueTracks[index];
+      try {
+        if (await MusicCatalogService.checkSpicyLyrics(track)) foundCount += 1;
+        else noLyricsCount += 1;
+      } catch {
+        failedCount += 1;
+      }
+      setCheckProgress({ completed: index + 1, total: uniqueTracks.length });
+    }
+
+    await loadRows(false);
+    setBusyAction(null);
+    setCheckProgress(null);
+    setMessage(
+      `Checked ${uniqueTracks.length} track${uniqueTracks.length === 1 ? '' : 's'}: ${foundCount} with API lyrics, ${noLyricsCount} without${failedCount ? `, ${failedCount} could not be checked` : ''}.`,
+    );
+  };
+
   const toggleIgnore = async (row: ApiLyricsRow, ignored: boolean) => {
-    if (busyTrackId) return;
+    if (actionsBusy) return;
     setBusyTrackId(row.track.id);
     setMessage('');
     try {
@@ -778,7 +870,9 @@ const ApiLyricsScreen = ({
   };
 
   const cacheStatus = (row: ApiLyricsRow) => {
-    if (!row.entry) return 'Cached API lyrics expired';
+    if (!hasCachedApiLyrics(row.entry)) {
+      return row.entry ? 'Checked · no API lyrics found' : 'Not checked';
+    }
     const expiresAt = row.entry.cachedAt + SPICY_LYRICS_CACHE_MAX_AGE_MS;
     const precision = row.entry.precision === 'syllable'
       ? 'Word-synced'
@@ -791,13 +885,17 @@ const ApiLyricsScreen = ({
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) return rows;
-    return rows.filter(({ track }) => `${track.title} ${track.artist}`.toLocaleLowerCase().includes(normalizedQuery));
+    return rows.filter(({ track }) => `${track.title} ${track.artist} ${track.album}`.toLocaleLowerCase().includes(normalizedQuery));
   }, [query, rows]);
 
   const selectedRows = useMemo(
     () => rows.filter(({ track }) => selectedTrackIds.has(track.id)),
     [rows, selectedTrackIds],
   );
+  const selectedLyricsRows = useMemo(() => selectedRows.filter((row) => hasCachedApiLyrics(row.entry)), [selectedRows]);
+  const selectedNotIgnoredRows = useMemo(() => selectedRows.filter((row) => !row.ignored), [selectedRows]);
+  const selectedIgnoredRows = useMemo(() => selectedRows.filter((row) => row.ignored), [selectedRows]);
+  const allFilteredRowsSelected = filteredRows.length > 0 && filteredRows.every(({ track }) => selectedTrackIds.has(track.id));
 
   const leaveSelectionMode = () => {
     setSelectionMode(false);
@@ -813,9 +911,18 @@ const ApiLyricsScreen = ({
     });
   };
 
+  const toggleSelectAllFiltered = () => {
+    setSelectedTrackIds((current) => {
+      const next = new Set(current);
+      if (allFilteredRowsSelected) filteredRows.forEach(({ track }) => next.delete(track.id));
+      else filteredRows.forEach(({ track }) => next.add(track.id));
+      return next;
+    });
+  };
+
   const renewAll = async () => {
-    if (busyAction || busyTrackId) return;
-    const trackIds = rows.filter((row) => !row.ignored && row.entry).map((row) => row.track.id);
+    if (actionsBusy) return;
+    const trackIds = rows.filter((row) => !row.ignored && hasCachedApiLyrics(row.entry)).map((row) => row.track.id);
     setMenuOpen(false);
     if (trackIds.length === 0) {
       setMessage('There are no active API lyrics to renew.');
@@ -835,11 +942,11 @@ const ApiLyricsScreen = ({
   };
 
   const renewSelected = async () => {
-    if (busyAction || busyTrackId || selectedRows.length === 0) return;
+    if (actionsBusy || selectedLyricsRows.length === 0) return;
     setBusyAction('renew-selected');
     setMessage('');
     let renewedCount = 0;
-    for (const row of selectedRows) {
+    for (const row of selectedLyricsRows) {
       try {
         if (await MusicCatalogService.renewSpicyLyrics(row.track)) renewedCount += 1;
       } catch {
@@ -849,23 +956,21 @@ const ApiLyricsScreen = ({
     await loadRows(false);
     setBusyAction(null);
     leaveSelectionMode();
-    if (renewedCount === selectedRows.length) {
+    if (renewedCount === selectedLyricsRows.length) {
       setMessage(`${renewedCount} track${renewedCount === 1 ? '' : 's'} renewed for another 30 days.`);
     } else {
-      Alert.alert('Some lyrics could not be renewed', `${renewedCount} of ${selectedRows.length} selected tracks were renewed. Check your connection and Spicy Lyrics settings.`);
+      Alert.alert('Some lyrics could not be renewed', `${renewedCount} of ${selectedLyricsRows.length} selected tracks were renewed. Check your connection and Spicy Lyrics settings.`);
     }
   };
 
   const ignoreSelected = async () => {
-    if (busyAction || busyTrackId || selectedRows.length === 0) return;
+    if (actionsBusy || selectedNotIgnoredRows.length === 0) return;
     setBusyAction('ignore-selected');
     setMessage('');
     try {
-      for (const row of selectedRows) {
-        if (!row.ignored) await setSpicyLyricsIgnored(row.track.id, true);
-      }
+      for (const row of selectedNotIgnoredRows) await setSpicyLyricsIgnored(row.track.id, true);
       await loadRows(false);
-      setMessage(`API lyrics ignored for ${selectedRows.length} selected track${selectedRows.length === 1 ? '' : 's'}. Local lyrics will be used.`);
+      setMessage(`API lyrics ignored for ${selectedNotIgnoredRows.length} track${selectedNotIgnoredRows.length === 1 ? '' : 's'}. Local lyrics will be used.`);
     } catch (error) {
       Alert.alert('Could not ignore lyrics', error instanceof Error ? error.message : 'Please try again.');
     } finally {
@@ -874,7 +979,220 @@ const ApiLyricsScreen = ({
     }
   };
 
-  const actionsBusy = Boolean(busyAction || busyTrackId);
+  const undoIgnoreSelected = async () => {
+    if (actionsBusy || selectedIgnoredRows.length === 0) return;
+    setBusyAction('undo-ignore-selected');
+    setMessage('');
+    try {
+      for (const row of selectedIgnoredRows) await setSpicyLyricsIgnored(row.track.id, false);
+      await loadRows(false);
+      setMessage(`API lyrics enabled again for ${selectedIgnoredRows.length} track${selectedIgnoredRows.length === 1 ? '' : 's'}.`);
+    } catch (error) {
+      Alert.alert('Could not restore API lyrics', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setBusyAction(null);
+      leaveSelectionMode();
+    }
+  };
+
+  const openCheckAllOptions = () => {
+    setMenuOpen(false);
+    if (!canCheckOnline) {
+      showCheckUnavailable();
+      return;
+    }
+    const tracksWithoutApiLyrics = rows.filter((row) => !hasCachedApiLyrics(row.entry)).map((row) => row.track);
+    Alert.alert(
+      'Check API lyrics',
+      'Choose whether to refresh every track or only look up tracks without saved API lyrics.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Only tracks without API lyrics', onPress: () => void checkTracks(tracksWithoutApiLyrics) },
+        { text: 'Recheck all tracks', onPress: () => void checkTracks(rows.map((row) => row.track)) },
+      ],
+    );
+  };
+
+  const listHeader = (
+    <View>
+      <Text style={{ color: 'white', fontSize: 28, fontWeight: '800', marginBottom: 6 }}>API lyrics</Text>
+      <Text style={{ color: '#A1A1A6', fontSize: 14, lineHeight: 20, marginBottom: 13 }}>
+        Check your library, keep API lyrics available offline for 30 days, or ignore them to use lyrics from your files.
+      </Text>
+      {!canCheckOnline ? (
+        <View style={{ borderRadius: 14, backgroundColor: '#211A1C', paddingHorizontal: 13, paddingVertical: 11, marginBottom: 14 }}>
+          <Text style={{ color: '#D8B5BA', fontSize: 12, lineHeight: 17 }}>
+            {!spicyLyricsConfigured ? 'Add a Spicy Lyrics key in Profile to check tracks.' : 'Turn on Spicy Lyrics in Profile to check tracks.'}
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={{ minHeight: 50, borderRadius: 16, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+        <Ionicons name="search" size={20} color="#A1A1A6" />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search your library"
+          placeholderTextColor="#77777D"
+          returnKeyType="search"
+          accessibilityLabel="Search library tracks"
+          style={{ flex: 1, color: 'white', fontSize: 15, paddingVertical: 11, marginLeft: 10 }}
+        />
+        {query ? (
+          <TouchableOpacity onPress={() => setQuery('')} accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={10}>
+            <Ionicons name="close-circle" size={19} color="#77777D" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {selectionMode ? (
+        <View style={{ marginBottom: 16, padding: 11, borderRadius: 16, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '600', marginHorizontal: 4 }}>
+              {selectedRows.length ? `${selectedRows.length} selected` : 'Select tracks to manage'}
+            </Text>
+            <TouchableOpacity onPress={leaveSelectionMode} disabled={actionsBusy} accessibilityRole="button" accessibilityLabel="Cancel selection" style={{ paddingHorizontal: 9, paddingVertical: 6 }}>
+              <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            onPress={toggleSelectAllFiltered}
+            disabled={actionsBusy || filteredRows.length === 0}
+            accessibilityRole="checkbox"
+            accessibilityLabel="Select all matching tracks"
+            accessibilityState={{ checked: allFilteredRowsSelected, disabled: actionsBusy || filteredRows.length === 0 }}
+            style={{ minHeight: 38, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, opacity: filteredRows.length ? 1 : 0.5 }}
+          >
+            <Ionicons name={allFilteredRowsSelected ? 'checkbox' : 'square-outline'} size={20} color={allFilteredRowsSelected ? '#FA5265' : '#A1A1A6'} />
+            <Text style={{ color: 'white', fontSize: 13, fontWeight: '600', marginLeft: 9 }}>
+              Select all{query.trim() ? ' matching tracks' : ' tracks'} ({filteredRows.length})
+            </Text>
+          </TouchableOpacity>
+          {selectedRows.length > 0 ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+              <TouchableOpacity onPress={() => void renewSelected()} disabled={actionsBusy || selectedLyricsRows.length === 0} accessibilityRole="button" style={{ flexGrow: 1, flexBasis: '30%', minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy || selectedLyricsRows.length === 0 ? 0.45 : 1 }}>
+                {busyAction === 'renew-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={17} color="#FA5265" />}
+                <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Renew</Text>
+              </TouchableOpacity>
+              {selectedNotIgnoredRows.length > 0 ? (
+                <TouchableOpacity onPress={() => void ignoreSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flexGrow: 1, flexBasis: '30%', minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.45 : 1 }}>
+                  {busyAction === 'ignore-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="eye-off-outline" size={17} color="#FA5265" />}
+                  <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Ignore</Text>
+                </TouchableOpacity>
+              ) : null}
+              {selectedIgnoredRows.length > 0 ? (
+                <TouchableOpacity onPress={() => void undoIgnoreSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flexGrow: 1, flexBasis: '30%', minHeight: 42, borderRadius: 13, backgroundColor: '#202024', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.45 : 1 }}>
+                  {busyAction === 'undo-ignore-selected' ? <ActivityIndicator size="small" color="#D1D1D6" /> : <Ionicons name="eye-outline" size={17} color="#D1D1D6" />}
+                  <Text style={{ color: '#D1D1D6', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Undo ignore</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {message ? (
+        <Text accessibilityLiveRegion="polite" style={{ color: '#A1A1A6', fontSize: 13, lineHeight: 18, marginBottom: 14 }}>
+          {message}
+        </Text>
+      ) : null}
+      {checkProgress ? (
+        <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+          <ActivityIndicator size="small" color="#FA5265" />
+          <Text style={{ color: '#A1A1A6', fontSize: 13, marginLeft: 10 }}>
+            Checking API lyrics · {checkProgress.completed} of {checkProgress.total}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const renderApiLyricsRow = ({ item: row }: { item: ApiLyricsRow }) => {
+    const isBusy = busyTrackId === row.track.id;
+    const isChecking = isBusy && busyTrackAction === 'check';
+    const isRenewing = isBusy && busyTrackAction === 'renew';
+    const selected = selectedTrackIds.has(row.track.id);
+    const hasApiLyrics = hasCachedApiLyrics(row.entry);
+
+    return (
+      <View style={{ borderRadius: 20, backgroundColor: selected ? '#241A1D' : '#1C1C1E', borderWidth: 1, borderColor: selected ? '#71303A' : '#36363A', padding: 14, marginBottom: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {selectionMode ? (
+            <TouchableOpacity
+              onPress={() => toggleSelected(row.track.id)}
+              accessibilityRole="checkbox"
+              accessibilityLabel={`Select ${row.track.title}`}
+              accessibilityState={{ checked: selected }}
+              style={{ width: 32, height: 58, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
+            >
+              <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={23} color={selected ? '#FA5265' : '#77777D'} />
+            </TouchableOpacity>
+          ) : null}
+          <View style={{ width: 58, height: 58, borderRadius: 13, overflow: 'hidden', backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
+            {row.track.artwork ? (
+              <Image
+                source={{ uri: row.track.artwork, ...(row.track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
+                resizeMode="cover"
+                style={{ width: '100%', height: '100%' }}
+              />
+            ) : <Ionicons name="musical-notes" size={23} color="#FA5265" />}
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text numberOfLines={1} style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{row.track.title}</Text>
+            <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 13, marginTop: 3 }}>{row.track.artist}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+              <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: hasApiLyrics ? '#30D158' : '#737378', marginRight: 6 }} />
+              <Text numberOfLines={1} style={{ flex: 1, color: hasApiLyrics ? '#A1A1A6' : '#85858B', fontSize: 11 }}>{cacheStatus(row)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {!selectionMode ? (
+          <View style={{ marginTop: 13, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#333337' }}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => void checkLyrics(row)}
+                disabled={actionsBusy || !canCheckOnline}
+                accessibilityRole="button"
+                accessibilityLabel={`Check API lyrics for ${row.track.title}`}
+                style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: '#2A171C', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy || !canCheckOnline ? 0.48 : 1 }}
+              >
+                {isChecking ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="search-outline" size={17} color="#FA5265" />}
+                <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Check</Text>
+              </TouchableOpacity>
+              {hasApiLyrics ? (
+                <TouchableOpacity
+                  onPress={() => void renewLyrics(row)}
+                  disabled={actionsBusy}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Renew API lyrics for ${row.track.title}`}
+                  style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: '#2A171C', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.48 : 1 }}
+                >
+                  {isRenewing ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={17} color="#FA5265" />}
+                  <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Renew</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <View style={{ minHeight: 39, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 7 }}>
+              <Text style={{ color: row.ignored ? '#FA5265' : '#A1A1A6', fontSize: 13, fontWeight: '600' }}>
+                {row.ignored ? 'Ignore API' : 'Use API lyrics'}
+              </Text>
+              <Switch
+                value={row.ignored}
+                onValueChange={(ignored) => void toggleIgnore(row, ignored)}
+                disabled={actionsBusy}
+                trackColor={{ false: '#48484A', true: '#FA5265' }}
+                thumbColor="#FFFFFF"
+                accessibilityLabel={row.ignored
+                  ? `Use API lyrics for ${row.track.title}`
+                  : `Ignore API lyrics for ${row.track.title}`}
+              />
+            </View>
+          </View>
+        ) : null}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
@@ -901,157 +1219,55 @@ const ApiLyricsScreen = ({
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 170 }} showsVerticalScrollIndicator={false}>
-        <Text style={{ color: 'white', fontSize: 28, fontWeight: '800', marginBottom: 6 }}>API lyrics</Text>
-        <Text style={{ color: '#A1A1A6', fontSize: 14, lineHeight: 20, marginBottom: 20 }}>
-          Renew saved lyrics for 30 more days, or ignore them to use lyrics from your files.
-        </Text>
-
-        <View style={{ minHeight: 50, borderRadius: 16, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-          <Ionicons name="search" size={20} color="#A1A1A6" />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search tracks"
-            placeholderTextColor="#77777D"
-            returnKeyType="search"
-            accessibilityLabel="Search downloaded API lyrics"
-            style={{ flex: 1, color: 'white', fontSize: 15, paddingVertical: 11, marginLeft: 10 }}
-          />
-          {query ? (
-            <TouchableOpacity onPress={() => setQuery('')} accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={10}>
-              <Ionicons name="close-circle" size={19} color="#77777D" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-
-        {selectionMode ? (
-          <View style={{ marginBottom: 18, padding: 10, borderRadius: 16, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: selectedRows.length ? 10 : 0 }}>
-              <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '600', marginHorizontal: 5 }}>
-                {selectedRows.length ? `${selectedRows.length} selected` : 'Select tracks to manage'}
-              </Text>
-              <TouchableOpacity onPress={leaveSelectionMode} disabled={actionsBusy} accessibilityRole="button" accessibilityLabel="Cancel selection" style={{ paddingHorizontal: 10, paddingVertical: 7 }}>
-                <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-            {selectedRows.length > 0 ? (
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <TouchableOpacity onPress={() => void renewSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flex: 1, minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.6 : 1 }}>
-                  {busyAction === 'renew-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={17} color="#FA5265" />}
-                  <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Renew</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => void ignoreSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flex: 1, minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.6 : 1 }}>
-                  {busyAction === 'ignore-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="eye-off-outline" size={17} color="#FA5265" />}
-                  <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Ignore</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-          </View>
-        ) : null}
-
-        {message ? (
-          <Text accessibilityLiveRegion="polite" style={{ color: '#A1A1A6', fontSize: 13, lineHeight: 18, marginBottom: 14 }}>
-            {message}
-          </Text>
-        ) : null}
-
-        {loading ? (
+      <FlatList
+        data={filteredRows}
+        keyExtractor={(row) => row.track.id}
+        renderItem={renderApiLyricsRow}
+        extraData={{ selectedTrackIds, selectionMode, busyTrackId, busyTrackAction, rows }}
+        ListHeaderComponent={listHeader}
+        refreshing={loading}
+        onRefresh={() => void loadRows()}
+        ListEmptyComponent={loading ? (
           <View style={{ paddingVertical: 56, alignItems: 'center' }}>
             <ActivityIndicator color="#FA5265" size="large" />
-            <Text style={{ color: '#8E8E93', fontSize: 14, marginTop: 14 }}>Loading saved lyrics…</Text>
+            <Text style={{ color: '#8E8E93', fontSize: 14, marginTop: 14 }}>Loading your library…</Text>
           </View>
         ) : rows.length === 0 ? (
           <View style={{ minHeight: 220, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 24, alignItems: 'center', justifyContent: 'center' }}>
             <View style={{ width: 58, height: 58, borderRadius: 20, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
               <Ionicons name="musical-notes-outline" size={27} color="#FA5265" />
             </View>
-            <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>No API lyrics saved yet</Text>
+            <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>Your library is empty</Text>
             <Text style={{ color: '#8E8E93', fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 7 }}>
-              Lyrics cached from Spicy Lyrics will appear here.
+              Tracks added to your library will appear here so you can check their API lyrics.
             </Text>
           </View>
-        ) : filteredRows.length === 0 ? (
+        ) : query.trim() ? (
           <View style={{ paddingVertical: 44, alignItems: 'center' }}>
             <Ionicons name="search-outline" size={30} color="#77777D" />
             <Text style={{ color: '#A1A1A6', fontSize: 15, marginTop: 10 }}>No matching tracks</Text>
           </View>
-        ) : filteredRows.map((row) => {
-          const isBusy = busyTrackId === row.track.id;
-          const selected = selectedTrackIds.has(row.track.id);
-          return (
-            <View key={row.track.id} style={{ borderRadius: 20, backgroundColor: selected ? '#241A1D' : '#1C1C1E', borderWidth: 1, borderColor: selected ? '#71303A' : '#36363A', padding: 14, marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                {selectionMode ? (
-                  <TouchableOpacity
-                    onPress={() => toggleSelected(row.track.id)}
-                    accessibilityRole="checkbox"
-                    accessibilityLabel={`Select ${row.track.title}`}
-                    accessibilityState={{ checked: selected }}
-                    style={{ width: 32, height: 58, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
-                  >
-                    <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={23} color={selected ? '#FA5265' : '#77777D'} />
-                  </TouchableOpacity>
-                ) : null}
-                <View style={{ width: 58, height: 58, borderRadius: 13, overflow: 'hidden', backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-                  {row.track.artwork ? (
-                    <Image
-                      source={{ uri: row.track.artwork, ...(row.track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
-                      resizeMode="cover"
-                      style={{ width: '100%', height: '100%' }}
-                    />
-                  ) : <Ionicons name="musical-notes" size={23} color="#FA5265" />}
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text numberOfLines={1} style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{row.track.title}</Text>
-                  <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 13, marginTop: 3 }}>{row.track.artist}</Text>
-                  <Text numberOfLines={1} style={{ color: row.entry ? '#A1A1A6' : '#FA8A98', fontSize: 11, marginTop: 5 }}>{cacheStatus(row)}</Text>
-                </View>
-              </View>
-
-              {!selectionMode ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#333337' }}>
-                <TouchableOpacity
-                  onPress={() => void renewLyrics(row)}
-                  disabled={Boolean(busyTrackId)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Renew API lyrics for ${row.track.title}`}
-                  activeOpacity={0.75}
-                  style={{ minHeight: 42, borderRadius: 21, backgroundColor: '#2A171C', paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', opacity: busyTrackId && !isBusy ? 0.45 : 1 }}
-                >
-                  {isBusy ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={18} color="#FA5265" />}
-                  <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700', marginLeft: 7 }}>Renew</Text>
-                </TouchableOpacity>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={{ color: row.ignored ? '#FA5265' : '#A1A1A6', fontSize: 13, fontWeight: '600', marginRight: 9 }}>
-                    {row.ignored ? 'Ignored' : 'Ignore API'}
-                  </Text>
-                  <Switch
-                    value={row.ignored}
-                    onValueChange={(ignored) => void toggleIgnore(row, ignored)}
-                    disabled={Boolean(busyTrackId)}
-                    trackColor={{ false: '#48484A', true: '#FA5265' }}
-                    thumbColor="#FFFFFF"
-                    accessibilityLabel={row.ignored
-                      ? `Use API lyrics for ${row.track.title}`
-                      : `Ignore API lyrics for ${row.track.title}`}
-                  />
-                </View>
-              </View> : null}
-            </View>
-          );
-        })}
-      </ScrollView>
+        ) : undefined}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 170, flexGrow: 1 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      />
 
       {menuOpen ? (
         <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
           <TouchableOpacity onPress={() => setMenuOpen(false)} activeOpacity={1} accessibilityLabel="Close options" style={StyleSheet.absoluteFill} />
-          <View style={{ position: 'absolute', top: 62, right: 18, width: 210, borderRadius: 16, backgroundColor: '#252527', borderWidth: 1, borderColor: '#454549', padding: 6, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 12 }}>
+          <View style={{ position: 'absolute', top: 62, right: 18, width: 240, borderRadius: 16, backgroundColor: '#252527', borderWidth: 1, borderColor: '#454549', padding: 6, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 12 }}>
             <TouchableOpacity onPress={() => void renewAll()} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
               {busyAction === 'renew-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={19} color="#FA5265" />}
               <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Renew all</Text>
             </TouchableOpacity>
             <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#454549', marginHorizontal: 7 }} />
-            <TouchableOpacity onPress={() => { setMenuOpen(false); setSelectionMode(true); setSelectedTrackIds(new Set()); }} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center' }}>
+            <TouchableOpacity onPress={openCheckAllOptions} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
+              {busyAction === 'check-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="search-outline" size={19} color="#FA5265" />}
+              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Check all</Text>
+            </TouchableOpacity>
+            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#454549', marginHorizontal: 7 }} />
+            <TouchableOpacity onPress={() => { setMenuOpen(false); setSelectionMode(true); setSelectedTrackIds(new Set()); }} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
               <Ionicons name="checkbox-outline" size={19} color="#D1D1D6" />
               <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Select</Text>
             </TouchableOpacity>
