@@ -965,6 +965,12 @@ export const OfflineMusicService = {
     }
   },
 
+  async refreshDownloadedTracks(): Promise<Track[]> {
+    downloadedTracksCache = null;
+    downloadedTracksRevision += 1;
+    return this.getDownloadedTracks();
+  },
+
   /** Read the saved library, rebuilding it from app-owned audio if the index is empty. */
   async getIndexedDownloadedTracks(): Promise<Track[]> {
     ensureDirectory();

@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioLockScreenOptions, type AudioMetadata } from 'expo-audio';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
@@ -160,6 +161,14 @@ export default function App() {
   const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
+  const canRotatePlayer = playerVisible && Boolean(activeTrack) && !isLrcSynchronizerActive;
+
+  useEffect(() => {
+    const orientationRequest = canRotatePlayer
+      ? ScreenOrientation.unlockAsync()
+      : ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    void orientationRequest.catch(() => undefined);
+  }, [canRotatePlayer]);
 
   const tracksRef = useRef<Track[]>([]);
   const downloadsRef = useRef<Track[]>([]);
@@ -1130,52 +1139,96 @@ export default function App() {
       return track;
     }
     if (!syncedLyrics.trim()) throw new Error('This result contains no lyric text.');
+    const indexedTrack = downloadsRef.current.find((item) => item.id === track.id);
+    const fileExists = (uri: string | undefined) => {
+      if (!uri) return false;
+      try {
+        return new File(uri).exists;
+      } catch {
+        return false;
+      }
+    };
+    let libraryTrack = indexedTrack && fileExists(indexedTrack.localUri) ? indexedTrack : undefined;
+    if (!libraryTrack && (indexedTrack?.localUri || track.localUri)) {
+      const refreshedTracks = await OfflineMusicService.refreshDownloadedTracks();
+      const refreshedTrackById = refreshedTracks.find((item) => item.id === track.id && fileExists(item.localUri));
+      const normalizeIdentity = (value: string | undefined) => (value ?? '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[.,!?\u2018\u2019'"()[\]{}:;_\-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const titleIdentity = normalizeIdentity(track.title);
+      const artistIdentity = normalizeIdentity(track.artist);
+      const identityMatches = refreshedTracks.filter((item) => (
+        fileExists(item.localUri)
+        && normalizeIdentity(item.title) === titleIdentity
+        && normalizeIdentity(item.artist) === artistIdentity
+        && (!track.durationSeconds || !item.durationSeconds || Math.abs(item.durationSeconds - track.durationSeconds) <= 3)
+      ));
+      libraryTrack = refreshedTrackById ?? (identityMatches.length === 1 ? identityMatches[0] : undefined);
+      const refreshedWithFavoriteState = refreshedTracks.map((item) => ({
+        ...item,
+        isFavorite: favoriteIdsRef.current.has(item.id),
+      }));
+      downloadsRef.current = refreshedWithFavoriteState;
+      tracksRef.current = refreshedWithFavoriteState;
+      setDownloadedTracks(refreshedWithFavoriteState);
+      setTracks(refreshedWithFavoriteState);
+      if (!libraryTrack) {
+        throw new Error('The track is still listed in your library, but its current audio file could not be located. Reopen the library and try again.');
+      }
+    }
+    const sourceTrack = libraryTrack
+      ? { ...track, id: libraryTrack.id, localUri: libraryTrack.localUri }
+      : track;
     const lyricsSource = track.lyricsSource ?? (track.lyricsFormat === 'plain' ? 'saved_text' : 'saved_lrc');
-    if (track.localUri) {
-      const audioFile = new File(track.localUri);
+    if (sourceTrack.localUri) {
+      const audioFile = new File(sourceTrack.localUri);
       if (audioFile.extension.toLowerCase() === '.mp3') {
-        const format = (track.lyricsFormat === 'ttml' || track.lyricsFormat === 'word') && track.lyricsTtml?.trim()
+        const format = (sourceTrack.lyricsFormat === 'ttml' || sourceTrack.lyricsFormat === 'word') && sourceTrack.lyricsTtml?.trim()
           ? 'ttml'
-          : track.lyricsFormat === 'plain'
+          : sourceTrack.lyricsFormat === 'plain'
             ? 'plain'
-            : track.lyricsFormat === 'line' || parseLyrics(syncedLyrics).some((line) => line.timeMs !== null)
+            : sourceTrack.lyricsFormat === 'line' || parseLyrics(syncedLyrics).some((line) => line.timeMs !== null)
               ? 'line'
               : 'plain';
         const text = format === 'ttml'
-          ? track.lyricsTtml!.trim()
+          ? sourceTrack.lyricsTtml!.trim()
           : format === 'plain'
-            ? (track.plainLyrics?.trim() || syncedLyrics.trim())
-            : (track.syncedLyrics?.trim() || syncedLyrics.trim());
+            ? (sourceTrack.plainLyrics?.trim() || syncedLyrics.trim())
+            : (sourceTrack.syncedLyrics?.trim() || syncedLyrics.trim());
         const preparedMp3 = await Id3SynchronizedLyricsService.createVerifiedMp3WithLyrics(
-          track.localUri,
+          sourceTrack.localUri,
           audioFile.name,
           {
             version: 1,
             format,
             text,
-            source: track.lyricsAttribution?.provider,
-            attribution: track.lyricsAttribution,
+            source: sourceTrack.lyricsAttribution?.provider,
+            attribution: sourceTrack.lyricsAttribution,
           },
         );
-        const isActiveTrack = activeTrackRef.current?.id === track.id;
+        const isActiveTrack = activeTrackRef.current?.id === sourceTrack.id || activeTrackRef.current?.id === track.id;
         const wasPlaying = playerPlayingRef.current;
         const playbackPosition = playerCurrentTimeRef.current;
         if (isActiveTrack) player.pause();
 
         try {
-          await OfflineMusicService.replaceTrackAudio(track, preparedMp3.uri);
+          await OfflineMusicService.replaceTrackAudio(sourceTrack, preparedMp3.uri);
           const updated = await updateTrackWithLyrics(
-            { ...track, lyricsSource: 'embedded_musiqapp' },
+            { ...sourceTrack, lyricsSource: 'embedded_musiqapp' },
             syncedLyrics,
             false,
             true,
           );
-          await OfflineMusicService.setLocalLyricsOverride(track.id);
+          await OfflineMusicService.setLocalLyricsOverride(sourceTrack.id);
           return updated;
         } finally {
-          if (isActiveTrack && track.localUri) {
+          if (isActiveTrack && sourceTrack.localUri) {
             try {
-              player.replace({ uri: track.localUri });
+              player.replace({ uri: sourceTrack.localUri });
               await player.seekTo(playbackPosition);
               if (wasPlaying) player.play();
             } catch {
@@ -1186,8 +1239,8 @@ export default function App() {
         }
       }
     }
-    const updated = await updateTrackWithLyrics({ ...track, lyricsSource }, syncedLyrics);
-    await OfflineMusicService.setLocalLyricsOverride(track.id);
+    const updated = await updateTrackWithLyrics({ ...sourceTrack, lyricsSource }, syncedLyrics);
+    await OfflineMusicService.setLocalLyricsOverride(sourceTrack.id);
     return updated;
   }, [player, updateTrackWithLyrics]);
 
