@@ -4,7 +4,7 @@
     "slug": "musiqapp",
     "scheme": "musiqapp",
     "version": "2.0.32",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {

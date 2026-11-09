@@ -8,7 +8,8 @@ import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'ex
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
-import ReanimatedAnimated, { cancelAnimation, Easing, interpolate, interpolateColor, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
+import ReanimatedAnimated, { cancelAnimation, Easing, interpolate, interpolateColor, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
 import { PlayerLyrics } from './PlayerLyrics';
 import { PlayerOutputRouteButton } from './PlayerOutputRouteButton';
@@ -28,6 +29,340 @@ const getArtworkSource = (track: Track) => track.artwork
       headers: track.provider === 'local' ? getMusicApiHeaders() : undefined,
     }
   : undefined;
+
+type LandscapePlayerLayoutProps = {
+  track: Track;
+  lyrics: NonNullable<Track['lyrics']>;
+  lyricsAttribution?: Track['lyricsAttribution'];
+  hasLyrics: boolean;
+  isLyricsLoading: boolean;
+  lineSyncedWordWaveEnabled: boolean;
+  isFavorite: boolean;
+  canFavoriteTrack: boolean;
+  isLiveRadio: boolean;
+  isPlaying: boolean;
+  durationSeconds: number;
+  volume: number;
+  lyricsExpanded: boolean;
+  queueExpanded: boolean;
+  tracks: Track[];
+  scrollGesture: unknown;
+  scrollOffset: SharedValue<number>;
+  pauseAutoScroll: SharedValue<boolean>;
+  shuffleEnabled: boolean;
+  repeatMode: 'off' | 'all' | 'one';
+  autoplayEnabled: boolean;
+  onToggleFavorite: () => void;
+  onTogglePlayback: () => void;
+  onSkipPrevious: () => void;
+  onSkipNext: () => void;
+  onHoldPreviousStart: () => void;
+  onHoldPreviousEnd: () => void;
+  onHoldNextStart: () => void;
+  onHoldNextEnd: () => void;
+  onSeek: (seconds: number) => void;
+  onVolumeChange: (volume: number) => void;
+  onToggleLyrics: () => void;
+  onToggleQueue: () => void;
+  onPlayQueueTrack: (track: Track) => void;
+  onToggleShuffle: () => void;
+  onToggleRepeat: () => void;
+  onToggleAutoplay: () => void;
+  onClearQueue: () => void;
+  onRemoveQueueTrack: (track: Track) => void;
+};
+
+const LandscapePlayerLayout = ({
+  track,
+  lyrics,
+  lyricsAttribution,
+  hasLyrics,
+  isLyricsLoading,
+  lineSyncedWordWaveEnabled,
+  isFavorite,
+  canFavoriteTrack,
+  isLiveRadio,
+  isPlaying,
+  durationSeconds,
+  volume,
+  lyricsExpanded,
+  queueExpanded,
+  tracks,
+  scrollGesture,
+  scrollOffset,
+  pauseAutoScroll,
+  shuffleEnabled,
+  repeatMode,
+  autoplayEnabled,
+  onToggleFavorite,
+  onTogglePlayback,
+  onSkipPrevious,
+  onSkipNext,
+  onHoldPreviousStart,
+  onHoldPreviousEnd,
+  onHoldNextStart,
+  onHoldNextEnd,
+  onSeek,
+  onVolumeChange,
+  onToggleLyrics,
+  onToggleQueue,
+  onPlayQueueTrack,
+  onToggleShuffle,
+  onToggleRepeat,
+  onToggleAutoplay,
+  onClearQueue,
+  onRemoveQueueTrack,
+}: LandscapePlayerLayoutProps) => {
+  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [detailsHeight, setDetailsHeight] = useState(0);
+  const entrance = useSharedValue(0);
+  const previousLongPressTriggered = useRef(false);
+  const nextLongPressTriggered = useRef(false);
+  const entranceStyle = useAnimatedStyle(() => ({
+    opacity: entrance.value,
+    transform: [{ translateY: interpolate(entrance.value, [0, 1], [8, 0]) }],
+  }));
+  const contentWidth = width - insets.left - insets.right - 48;
+  const artworkSize = Math.max(0, Math.min(
+    height - insets.top - insets.bottom - 48,
+    contentWidth * 0.45 - 12,
+    420,
+  ));
+  const detailsViewportHeight = Math.max(0, detailsHeight);
+
+  useEffect(() => {
+    entrance.value = withTiming(1, { duration: 260, easing: TRACK_DETAILS_FADE_EASING });
+    return () => cancelAnimation(entrance);
+  }, [entrance]);
+
+  return (
+    <ReanimatedAnimated.View
+      pointerEvents="box-none"
+      style={[StyleSheet.absoluteFill, { zIndex: 20 }, entranceStyle]}
+    >
+      <ExpoImage
+        source={getArtworkSource(track)}
+        contentFit="cover"
+        blurRadius={30}
+        style={StyleSheet.absoluteFill}
+      />
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,13,15,0.58)' }]} />
+      <View
+        style={{
+          flex: 1,
+          flexDirection: 'row',
+          paddingLeft: insets.left + 22,
+          paddingRight: insets.right + 26,
+          paddingTop: insets.top + 12,
+          paddingBottom: insets.bottom + 10,
+        }}
+      >
+        <View style={{ width: '45%', alignItems: 'center', justifyContent: 'center', paddingRight: 12 }}>
+          <TouchableOpacity
+            onPress={onToggleLyrics}
+            disabled={!hasLyrics && !isLyricsLoading}
+            activeOpacity={0.92}
+            accessibilityRole="button"
+            accessibilityLabel={lyricsExpanded ? 'Hide lyrics' : 'Show lyrics'}
+            accessibilityState={{ disabled: !hasLyrics && !isLyricsLoading, selected: lyricsExpanded }}
+            style={{
+              width: artworkSize,
+              height: artworkSize,
+              maxWidth: '100%',
+              maxHeight: '100%',
+              borderRadius: Math.min(24, artworkSize * 0.07),
+              overflow: 'hidden',
+              backgroundColor: 'rgba(255,255,255,0.08)',
+              opacity: hasLyrics || isLyricsLoading ? 1 : 0.94,
+            }}
+          >
+            <ExpoImage
+              source={getArtworkSource(track)}
+              contentFit="cover"
+              accessibilityLabel={`${track.album} album artwork`}
+              style={{ width: '100%', height: '100%' }}
+            />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flex: 1, minWidth: 0, paddingLeft: 22, justifyContent: 'space-between' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 54 }}>
+            <View style={{ flex: 1, minWidth: 0, paddingRight: 12 }}>
+              <Text numberOfLines={1} style={{ color: 'white', fontSize: 23, fontWeight: '800' }}>
+                {track.title}
+              </Text>
+              <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,0.68)', fontSize: 17, marginTop: 3 }}>
+                {track.artist}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={onToggleFavorite}
+              disabled={!canFavoriteTrack}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              accessibilityState={{ selected: isFavorite, disabled: !canFavoriteTrack }}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                opacity: canFavoriteTrack ? 1 : 0.4,
+              }}
+            >
+              <Ionicons name={isFavorite ? 'star' : 'star-outline'} size={24} color={isFavorite ? '#FA5265' : 'white'} />
+            </TouchableOpacity>
+          </View>
+
+          <View
+            onLayout={(event) => {
+              const nextHeight = event.nativeEvent.layout.height;
+              setDetailsHeight((currentHeight) => Math.abs(currentHeight - nextHeight) > 1 ? nextHeight : currentHeight);
+            }}
+            style={{ flex: 1, minHeight: 0, marginTop: 12, marginBottom: 10 }}
+          >
+            {lyricsExpanded && (hasLyrics || isLyricsLoading) ? (
+              hasLyrics ? (
+                <PlayerLyrics
+                  trackId={track.id}
+                  lyrics={lyrics}
+                  lyricsAttribution={lyricsAttribution}
+                  lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
+                  pauseAutoScroll={pauseAutoScroll}
+                  viewportHeight={detailsViewportHeight}
+                  scrollGesture={scrollGesture as React.ComponentProps<typeof PlayerLyrics>['scrollGesture']}
+                  scrollOffset={scrollOffset}
+                  onSeek={onSeek}
+                />
+              ) : (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: 'rgba(255,255,255,0.58)', fontSize: 15 }}>Checking for lyrics…</Text>
+                </View>
+              )
+            ) : queueExpanded ? (
+              <PlayerQueuePanel
+                tracks={tracks}
+                height={detailsViewportHeight}
+                scrollGesture={scrollGesture as React.ComponentProps<typeof PlayerQueuePanel>['scrollGesture']}
+                scrollOffset={scrollOffset}
+                shuffleEnabled={shuffleEnabled}
+                repeatMode={repeatMode}
+                autoplayEnabled={autoplayEnabled}
+                onPlayTrack={onPlayQueueTrack}
+                onToggleShuffle={onToggleShuffle}
+                onToggleRepeat={onToggleRepeat}
+                onToggleAutoplay={onToggleAutoplay}
+                onClearQueue={onClearQueue}
+                onRemoveTrack={onRemoveQueueTrack}
+              />
+            ) : (
+              <View style={{ flex: 1, justifyContent: 'center', gap: 20 }}>
+                <PlayerProgress
+                  isLiveRadio={isLiveRadio}
+                  fallbackDurationSeconds={durationSeconds}
+                  onSeek={onSeek}
+                />
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 6 }}>
+                  <Pressable
+                    onPress={() => {
+                      if (previousLongPressTriggered.current) {
+                        previousLongPressTriggered.current = false;
+                        return;
+                      }
+                      onSkipPrevious();
+                    }}
+                    onPressIn={() => { previousLongPressTriggered.current = false; }}
+                    onLongPress={() => {
+                      if (isLiveRadio) return;
+                      previousLongPressTriggered.current = true;
+                      onHoldPreviousStart();
+                    }}
+                    onPressOut={onHoldPreviousEnd}
+                    delayLongPress={350}
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous track. Hold to rewind at double speed."
+                    hitSlop={12}
+                  >
+                    <Ionicons name="play-skip-back" size={44} color="white" />
+                  </Pressable>
+                  <Pressable
+                    onPress={onTogglePlayback}
+                    accessibilityRole="button"
+                    accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+                    hitSlop={12}
+                  >
+                    <Ionicons name={isPlaying ? 'pause' : 'play'} size={52} color="white" />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      if (nextLongPressTriggered.current) {
+                        nextLongPressTriggered.current = false;
+                        return;
+                      }
+                      onSkipNext();
+                    }}
+                    onPressIn={() => { nextLongPressTriggered.current = false; }}
+                    onLongPress={() => {
+                      if (isLiveRadio) return;
+                      nextLongPressTriggered.current = true;
+                      onHoldNextStart();
+                    }}
+                    onPressOut={onHoldNextEnd}
+                    delayLongPress={350}
+                    accessibilityRole="button"
+                    accessibilityLabel="Next track. Hold to fast-forward at double speed."
+                    hitSlop={12}
+                  >
+                    <Ionicons name="play-skip-forward" size={44} color="white" />
+                  </Pressable>
+                </View>
+                <View style={{ height: 28, flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="volume-low" size={19} color="rgba(255,255,255,0.62)" />
+                  <View style={{ flex: 1, marginHorizontal: 10 }}>
+                    <PlayerSlider
+                      value={volume}
+                      accessibilityLabel="Playback volume"
+                      activeColor="rgba(255,255,255,0.78)"
+                      thumbAlwaysVisible
+                      onValueChange={onVolumeChange}
+                    />
+                  </View>
+                  <Ionicons name="volume-high" size={19} color="rgba(255,255,255,0.78)" />
+                </View>
+              </View>
+            )}
+          </View>
+
+          <View style={{ height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around' }}>
+            <TouchableOpacity
+              onPress={onToggleLyrics}
+              disabled={!hasLyrics && !isLyricsLoading}
+              accessibilityRole="button"
+              accessibilityLabel={lyricsExpanded ? 'Hide lyrics' : 'Show lyrics'}
+              accessibilityState={{ selected: lyricsExpanded, disabled: !hasLyrics && !isLyricsLoading }}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: lyricsExpanded ? 'rgba(255,255,255,0.18)' : 'transparent', opacity: hasLyrics || isLyricsLoading ? 1 : 0.38 }}
+            >
+              <Ionicons name="chatbox-ellipses-outline" size={25} color="rgba(255,255,255,0.86)" />
+            </TouchableOpacity>
+            <PlayerOutputRouteButton />
+            <TouchableOpacity
+              onPress={onToggleQueue}
+              accessibilityRole="button"
+              accessibilityLabel={queueExpanded ? 'Hide queue' : 'Show queue'}
+              accessibilityState={{ selected: queueExpanded }}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: queueExpanded ? 'rgba(255,255,255,0.18)' : 'transparent' }}
+            >
+              <Ionicons name="list" size={28} color="rgba(255,255,255,0.86)" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </ReanimatedAnimated.View>
+  );
+};
 
 const formatTime = (seconds: number) =>
   `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
@@ -142,6 +477,8 @@ const PlayerOverlayView = ({
   onRemoveQueueTrack: (track: Track) => void;
 }) => {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
+  const isLandscape = windowWidth > windowHeight;
   const progress = useSharedValue(0);
   const gestureStartProgress = useSharedValue(1);
   const gestureChanged = useSharedValue(false);
@@ -402,12 +739,13 @@ const PlayerOverlayView = ({
     if (!visible) return;
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isLandscape) return true;
       closeWithAnimation();
       return true;
     });
 
     return () => subscription.remove();
-  }, [closeWithAnimation, visible]);
+  }, [closeWithAnimation, isLandscape, visible]);
 
   const restoreExpandedPlayer = useCallback(
     (velocityY = 0) => {
@@ -469,15 +807,21 @@ const PlayerOverlayView = ({
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(!(visible && isLandscape))
         .activeOffsetY(8)
         .failOffsetX([-12, 12])
         .simultaneousWithExternalGesture(detailsScrollGesture)
         .onBegin((event) => {
           gestureStartedOnMiniPlaybackControl.value = !visible && event.y <= 60 &&
             event.x >= windowWidth - 152 && event.x <= windowWidth - 36;
-          const scrollRegionTop = queueExpanded ? lyricsTextTop + 112 : lyricsTextTop;
+          const scrollRegionTop = isLandscape
+            ? safeAreaInsets.top + 80
+            : queueExpanded ? lyricsTextTop + 112 : lyricsTextTop;
+          const scrollRegionBottom = isLandscape
+            ? windowHeight - safeAreaInsets.bottom - 54
+            : lyricsTextTop + lyricsViewportHeight;
           const startedInsideScrollableDetails = visible && detailsExpanded &&
-            event.y >= scrollRegionTop && event.y <= lyricsTextTop + lyricsViewportHeight;
+            event.y >= scrollRegionTop && event.y <= scrollRegionBottom;
           sheetPanAllowed.value = !startedInsideScrollableDetails || detailsScrollOffset.value <= 1;
         })
         .onStart(() => {
@@ -559,7 +903,11 @@ const PlayerOverlayView = ({
       restoreMiniPlayer,
       pauseLyricsAutoScroll,
       sheetPanAllowed,
+      safeAreaInsets.bottom,
+      safeAreaInsets.top,
+      isLandscape,
       visible,
+      windowHeight,
       windowWidth,
     ],
   );
@@ -809,6 +1157,56 @@ const PlayerOverlayView = ({
     setTrackedLyricsView({ trackId: renderedTrack.id, expanded: false });
     setTrackedQueueView({ trackId: renderedTrack.id, expanded: !queueExpanded });
   };
+
+  if (visible && isLandscape) {
+    return (
+      <GestureDetector gesture={panGesture}>
+        <ReanimatedAnimated.View pointerEvents="auto" style={StyleSheet.absoluteFill}>
+          <LandscapePlayerLayout
+            track={renderedTrack}
+            lyrics={lyrics}
+            lyricsAttribution={renderedTrack.lyricsAttribution}
+            hasLyrics={hasLyrics}
+            isLyricsLoading={isLyricsLoading}
+            lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
+            isFavorite={isFavorite}
+            canFavoriteTrack={canFavoriteTrack}
+            isLiveRadio={isLiveRadio}
+            isPlaying={isPlaying}
+            durationSeconds={durationSeconds}
+            volume={volume}
+            lyricsExpanded={lyricsExpanded}
+            queueExpanded={queueExpanded}
+            tracks={upcomingTracks}
+            scrollGesture={detailsScrollGesture}
+            scrollOffset={detailsScrollOffset}
+            pauseAutoScroll={pauseLyricsAutoScroll}
+            shuffleEnabled={shuffleEnabled}
+            repeatMode={repeatMode}
+            autoplayEnabled={autoplayEnabled}
+            onToggleFavorite={onToggleFavorite}
+            onTogglePlayback={onTogglePlayback}
+            onSkipPrevious={onSkipPrevious}
+            onSkipNext={onSkipNext}
+            onHoldPreviousStart={onHoldPreviousStart}
+            onHoldPreviousEnd={onHoldPreviousEnd}
+            onHoldNextStart={onHoldNextStart}
+            onHoldNextEnd={onHoldNextEnd}
+            onSeek={onSeek}
+            onVolumeChange={onVolumeChange}
+            onToggleLyrics={toggleLyrics}
+            onToggleQueue={toggleQueue}
+            onPlayQueueTrack={onPlayQueueTrack}
+            onToggleShuffle={onToggleShuffle}
+            onToggleRepeat={onToggleRepeat}
+            onToggleAutoplay={onToggleAutoplay}
+            onClearQueue={onClearQueue}
+            onRemoveQueueTrack={onRemoveQueueTrack}
+          />
+        </ReanimatedAnimated.View>
+      </GestureDetector>
+    );
+  }
 
   return (
     <ReanimatedAnimated.View
