@@ -1001,6 +1001,26 @@ export const OfflineMusicService = {
     return entry;
   },
 
+  async getSpicyLyricsCaches(tracks: { trackId: string; trackSignature: string }[]): Promise<{ trackId: string; entry: SpicyLyricsCacheEntry }[]> {
+    const cache = await readSpicyLyricsCache();
+    const now = Date.now();
+    let changed = false;
+    const entries = tracks.flatMap(({ trackId, trackSignature }) => {
+      const entry = cache[trackId];
+      if (!entry) return [];
+      const maxAge = entry.noLyrics ? SPICY_LYRICS_MISS_CACHE_MAX_AGE_MS : SPICY_LYRICS_CACHE_MAX_AGE_MS;
+      const age = now - entry.cachedAt;
+      if (!Number.isFinite(entry.cachedAt) || age < 0 || age >= maxAge || entry.trackSignature !== trackSignature) {
+        delete cache[trackId];
+        changed = true;
+        return [];
+      }
+      return [{ trackId, entry }];
+    });
+    if (changed) await writeSpicyLyricsCache(cache);
+    return entries;
+  },
+
   async setSpicyLyricsCache(trackId: string, entry: SpicyLyricsCacheEntry): Promise<void> {
     const cache = await readSpicyLyricsCache();
     cache[trackId] = entry;

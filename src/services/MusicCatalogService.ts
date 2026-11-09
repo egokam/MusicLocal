@@ -1851,8 +1851,13 @@ const requestSpicyLyrics = async (
       if (track.album.trim()) searchParams.set('album', track.album.trim());
       if (track.durationSeconds && track.durationSeconds > 0) searchParams.set('duration', String(track.durationSeconds));
       const search = await fetchSpicyJson(`/tracks/search?${searchParams.toString()}`);
+      if (search.status === 404) {
+        const miss = { cachedAt: Date.now(), trackSignature, noLyrics: true };
+        if (spicyLyricsEnabled) await OfflineMusicService.setSpicyLyricsCache(track.id, miss);
+        return legacyCachedEntry ?? miss;
+      }
       if (search.status !== 200) {
-        if (search.status !== 404) onLookupError?.(`Spicy Lyrics returned HTTP ${search.status}.`);
+        onLookupError?.(`Spicy Lyrics returned HTTP ${search.status}.`);
         return legacyCachedEntry;
       }
       const body = asRecord(search.data?.Body);
@@ -1882,7 +1887,10 @@ const requestSpicyLyrics = async (
       return legacyCachedEntry;
     }
     const body = asRecord(lyricsResponse.data?.Body);
-    if (!body) return legacyCachedEntry;
+    if (!body) {
+      onLookupError?.('Spicy Lyrics returned an invalid response.');
+      return legacyCachedEntry;
+    }
     const entry = cacheEntryFromResponse(body, trackSignature, spotifyTrackId);
     if (!entry) {
       if (legacyCachedEntry) return legacyCachedEntry;
@@ -2087,13 +2095,27 @@ export const MusicCatalogService = {
   },
 
   async getCachedSpicyLyricsEntries(tracks: Track[]): Promise<{ trackId: string; entry: SpicyLyricsCacheEntry }[]> {
-    const cachedEntries = await Promise.all(tracks.map(async (track) => {
-      const entry = await OfflineMusicService.getSpicyLyricsCache(track.id, trackLyricsSignature(track));
-      return entry && !entry.noLyrics && (entry.syncedLyrics || entry.plainLyrics || entry.lyrics?.length)
-        ? { trackId: track.id, entry }
-        : null;
-    }));
-    return cachedEntries.filter((entry): entry is { trackId: string; entry: SpicyLyricsCacheEntry } => entry !== null);
+    return OfflineMusicService.getSpicyLyricsCaches(
+      tracks.map((track) => ({ trackId: track.id, trackSignature: trackLyricsSignature(track) })),
+    );
+  },
+
+  async checkSpicyLyrics(track: Track): Promise<boolean> {
+    if (!spicyLyricsClientKey) throw new Error('Add a Spicy Lyrics client key in Profile first.');
+    if (!spicyLyricsEnabled) throw new Error('Turn on Spicy Lyrics in Profile to search online.');
+    if (!track.title.trim() || !track.artist.trim()) throw new Error('This track is missing a title or artist.');
+    if (spicyLyricsCooldownUntil === Number.POSITIVE_INFINITY) {
+      throw new Error('Spicy Lyrics rejected this API key. Check the key in Profile.');
+    }
+    if (Date.now() < spicyLyricsCooldownUntil) {
+      throw new Error('Spicy Lyrics is temporarily rate limited. Try checking again in a minute.');
+    }
+
+    let lookupError = '';
+    const entry = await requestSpicyLyrics(track, true, true, (message) => { lookupError = message; });
+    if (lookupError) throw new Error(lookupError);
+    if (!entry) throw new Error('Spicy Lyrics did not return a result. Check your connection and try again.');
+    return !entry.noLyrics && Boolean(entry.syncedLyrics || entry.plainLyrics || entry.lyrics?.length);
   },
 
   async renewSpicyLyrics(track: Track): Promise<boolean> {
