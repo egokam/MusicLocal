@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +12,8 @@ import { WebView } from 'react-native-webview';
 import { LibraryList } from '../components/library/LibraryList';
 import { TopBar } from '../components/library/TopBar';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
+import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
+import type { SongMenuAnchor } from '../components/songs/SongListItem';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import type { PlaylistSummary, Track } from '../types';
 import type { TrackEditChanges } from '../services/MusicCatalogService';
@@ -63,10 +66,100 @@ type AppIconNativeModule = {
 const getAppIconNativeModule = () =>
   requireOptionalNativeModule<AppIconNativeModule>('AwesomeAppIcon');
 
+const RecentlyAddedTrackCard = ({
+  track,
+  onPlay,
+  onOpenMenu,
+}: {
+  track: Track;
+  onPlay: () => void;
+  onOpenMenu: (anchor: SongMenuAnchor) => void;
+}) => {
+  const longPressedRef = useRef(false);
+  const [pressScale] = useState(() => new Animated.Value(1));
+
+  return (
+    <Pressable
+      onPress={() => {
+        if (longPressedRef.current) {
+          longPressedRef.current = false;
+          return;
+        }
+        onPlay();
+      }}
+      onPressIn={() => {
+        longPressedRef.current = false;
+        Animated.timing(pressScale, {
+          toValue: 0.95,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      }}
+      onPressOut={() => {
+        Animated.spring(pressScale, {
+          toValue: 1,
+          damping: 22,
+          stiffness: 155,
+          mass: 0.95,
+          useNativeDriver: true,
+        }).start();
+      }}
+      delayLongPress={450}
+      onLongPress={(event) => {
+        const { pageX, pageY, locationX, locationY } = event.nativeEvent;
+        longPressedRef.current = true;
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+        onOpenMenu({ x: pageX - locationX, y: pageY - locationY, width: 148, height: 148 });
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={`Play ${track.title} by ${track.artist}. Hold for track options.`}
+      accessibilityHint="Long press to edit, favorite, add to a playlist, play next, or delete this track."
+      style={({ pressed }) => ({ width: 148, opacity: pressed ? 0.84 : 1 })}
+    >
+      <Animated.View style={{ width: 148, transform: [{ scale: pressScale }] }}>
+        <View style={{ width: 148, height: 148, borderRadius: 15, overflow: 'hidden', backgroundColor: '#202024' }}>
+          {track.artwork ? (
+            <Image
+              source={{ uri: track.artwork, ...(track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
+              resizeMode="cover"
+              style={{ width: '100%', height: '100%' }}
+            />
+          ) : (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: '#FA243C', fontSize: 30 }}>♫</Text>
+            </View>
+          )}
+        </View>
+        <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '600', marginTop: 9 }}>
+          {track.title}
+        </Text>
+        <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 13, fontWeight: '500', marginTop: 3 }}>
+          {track.artist}
+        </Text>
+      </Animated.View>
+    </Pressable>
+  );
+};
+
 const LibraryHomeScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'LibraryHome'>) => {
-  const { recentlyAddedTracks, playTrack, isLoadingTracks, apiInitializing } = usePlaybackActions();
+  const {
+    recentlyAddedTracks,
+    playTrack,
+    isLoadingTracks,
+    apiInitializing,
+    playlists,
+    hasActiveTrack,
+    playNext,
+    toggleFavorite,
+    addTrackToPlaylist,
+    createPlaylist,
+    updateTrack,
+    deleteTrack,
+  } = usePlaybackActions();
+  const [selectedTrackMenu, setSelectedTrackMenu] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
 
   return (
     <SafeAreaView className="flex-1 bg-black" edges={['top']}>
@@ -91,33 +184,12 @@ const LibraryHomeScreen = ({
           {recentlyAddedTracks.length > 0 ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 14 }}>
               {recentlyAddedTracks.map((track) => (
-                <TouchableOpacity
+                <RecentlyAddedTrackCard
                   key={track.id}
-                  onPress={() => playTrack(track, recentlyAddedTracks)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Play ${track.title} by ${track.artist}`}
-                  style={{ width: 148 }}
-                >
-                  <View style={{ width: 148, height: 148, borderRadius: 15, overflow: 'hidden', backgroundColor: '#202024' }}>
-                    {track.artwork ? (
-                      <Image
-                        source={{ uri: track.artwork, ...(track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
-                        resizeMode="cover"
-                        style={{ width: '100%', height: '100%' }}
-                      />
-                    ) : (
-                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ color: '#FA243C', fontSize: 30 }}>♫</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '600', marginTop: 9 }}>
-                    {track.title}
-                  </Text>
-                  <Text numberOfLines={1} style={{ color: '#8E8E93', fontSize: 13, fontWeight: '500', marginTop: 3 }}>
-                    {track.artist}
-                  </Text>
-                </TouchableOpacity>
+                  track={track}
+                  onPlay={() => playTrack(track, recentlyAddedTracks)}
+                  onOpenMenu={(anchor) => setSelectedTrackMenu({ track, anchor })}
+                />
               ))}
             </ScrollView>
           ) : (
@@ -141,6 +213,23 @@ const LibraryHomeScreen = ({
           )}
         </View>
       </ScrollView>
+      {selectedTrackMenu ? (
+        <TrackActionsSheet
+          key={selectedTrackMenu.track.id}
+          track={selectedTrackMenu.track}
+          anchor={selectedTrackMenu.anchor}
+          visible
+          playlists={playlists}
+          hasActiveTrack={hasActiveTrack}
+          onClose={() => setSelectedTrackMenu(null)}
+          onPlayNext={playNext}
+          onToggleFavorite={toggleFavorite}
+          onAddToPlaylist={addTrackToPlaylist}
+          onCreatePlaylist={createPlaylist}
+          onSaveTrack={async (track, changes) => { await updateTrack(track, changes); }}
+          onDeleteTrack={deleteTrack}
+        />
+      ) : null}
     </SafeAreaView>
   );
 };

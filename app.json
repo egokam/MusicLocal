@@ -3,13 +3,13 @@
     "name": "Music",
     "slug": "musiqapp",
     "scheme": "musiqapp",
-    "version": "2.0.32",
-    "orientation": "default",
+    "version": "2.0.5",
+    "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "site.egokam.musiqapp",
-      "buildNumber": "13",
+      "buildNumber": "14",
       "supportsTablet": true,
       "infoPlist": {
         "UIBackgroundModes": [
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "site.egokam.musiqapp",
-      "versionCode": 13,
+      "versionCode": 14,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

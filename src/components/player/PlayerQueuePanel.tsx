@@ -101,6 +101,7 @@ const QueueOption = ({
   disabled,
   emphasized,
   muted,
+  repeatMode,
   accessibilityLabel,
   onPress,
 }: {
@@ -111,6 +112,7 @@ const QueueOption = ({
   disabled?: boolean;
   emphasized?: boolean;
   muted?: boolean;
+  repeatMode?: RepeatMode;
   accessibilityLabel?: string;
   onPress: () => void;
 }) => (
@@ -133,11 +135,28 @@ const QueueOption = ({
       opacity: disabled ? 0.42 : 1,
     }}
   >
-    <Ionicons
-      name={icon}
-      size={24}
-      color={selected || highlighted || emphasized ? '#303433' : muted ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.9)'}
-    />
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+      <Ionicons
+        name={icon}
+        size={24}
+        color={selected || highlighted || emphasized ? '#303433' : muted ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.9)'}
+      />
+      {repeatMode === 'one' ? (
+        <Text
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+          style={{
+            marginLeft: 2,
+            color: '#303433',
+            fontSize: 14,
+            lineHeight: 16,
+            fontWeight: '900',
+          }}
+        >
+          1
+        </Text>
+      ) : null}
+    </View>
   </TouchableOpacity>
 );
 
@@ -319,8 +338,11 @@ const PlayerQueuePanelView = ({
         />
         <QueueOption
           icon="repeat"
-          label={repeatMode === 'off' ? 'Repeat' : repeatMode === 'all' ? 'Repeat All' : 'Repeat 1'}
+          label={repeatMode === 'off' ? 'Repeat off' : repeatMode === 'all' ? 'Repeat queue' : 'Repeat current track'}
           selected={repeatMode !== 'off'}
+          muted={repeatMode === 'off'}
+          repeatMode={repeatMode}
+          accessibilityLabel={repeatMode === 'off' ? 'Repeat off' : repeatMode === 'all' ? 'Repeat all in queue' : 'Repeat current track'}
           onPress={onToggleRepeat}
         />
         <QueueOption
