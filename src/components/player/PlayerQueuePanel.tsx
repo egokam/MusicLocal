@@ -33,14 +33,20 @@ const QueueOption = ({
   icon,
   label,
   selected,
+  highlighted,
   disabled,
+  emphasized,
+  muted,
   accessibilityLabel,
   onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   selected?: boolean;
+  highlighted?: boolean;
   disabled?: boolean;
+  emphasized?: boolean;
+  muted?: boolean;
   accessibilityLabel?: string;
   onPress: () => void;
 }) => (
@@ -54,27 +60,20 @@ const QueueOption = ({
     style={{
       flex: 1,
       minWidth: 0,
-      height: 62,
+      height: 40,
       marginRight: 6,
-      borderRadius: 14,
-      backgroundColor: selected ? 'rgba(250, 55, 85, 0.18)' : 'rgba(255,255,255,0.09)',
+      borderRadius: 22,
+      backgroundColor: selected || highlighted || emphasized ? 'rgba(235,238,236,0.78)' : 'rgba(255,255,255,0.12)',
       alignItems: 'center',
       justifyContent: 'center',
       opacity: disabled ? 0.42 : 1,
     }}
   >
-    <Ionicons name={icon} size={18} color={selected ? '#FA5265' : 'rgba(255,255,255,0.78)'} />
-    <Text
-      numberOfLines={1}
-      style={{
-        marginTop: 4,
-        color: selected ? '#FA5265' : 'rgba(255,255,255,0.78)',
-        fontSize: 10,
-        fontWeight: '700',
-      }}
-    >
-      {label}
-    </Text>
+    <Ionicons
+      name={icon}
+      size={24}
+      color={selected || highlighted || emphasized ? '#303433' : muted ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.9)'}
+    />
   </TouchableOpacity>
 );
 
@@ -239,17 +238,30 @@ const PlayerQueuePanelView = ({
       </View>
 
       <View style={{ flexDirection: 'row', marginBottom: 14 }}>
-        <QueueOption icon="shuffle" label="Shuffle" selected={shuffleEnabled} onPress={onToggleShuffle} />
+        <QueueOption
+          icon="shuffle"
+          label="Shuffle"
+          selected={shuffleEnabled}
+          highlighted
+          onPress={onToggleShuffle}
+        />
         <QueueOption
           icon="repeat"
           label={repeatMode === 'off' ? 'Repeat' : repeatMode === 'all' ? 'Repeat All' : 'Repeat 1'}
           selected={repeatMode !== 'off'}
           onPress={onToggleRepeat}
         />
-        <QueueOption icon="infinite" label="Autoplay" selected={autoplayEnabled} onPress={onToggleAutoplay} />
         <QueueOption
-          icon="trash-outline"
+          icon="infinite"
+          label="Autoplay"
+          selected={autoplayEnabled}
+          muted={!autoplayEnabled}
+          onPress={onToggleAutoplay}
+        />
+        <QueueOption
+          icon="close"
           label="Clear"
+          emphasized
           accessibilityLabel="Clear queue"
           disabled={tracks.length === 0}
           onPress={onClearQueue}

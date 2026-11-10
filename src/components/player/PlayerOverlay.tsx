@@ -15,8 +15,11 @@ import { PlayerLyrics } from './PlayerLyrics';
 import { PlayerOutputRouteButton } from './PlayerOutputRouteButton';
 import { PlayerQueuePanel } from './PlayerQueuePanel';
 import { PlayerSlider } from './PlayerSlider';
+import { TrackActionsSheet } from '../songs/TrackActionsSheet';
+import type { SongMenuAnchor } from '../songs/SongListItem';
+import type { PlaylistSummary, Track } from '../../types';
+import type { TrackEditChanges } from '../../services/MusicCatalogService';
 import { usePlayerPlaybackStatus } from '../../services/PlayerStatusStore';
-import type { Track } from '../../types';
 
 const HAS_LIQUID_GLASS = isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
 const TRACK_DETAILS_FADE_DURATION = 290;
@@ -53,6 +56,7 @@ type LandscapePlayerLayoutProps = {
   repeatMode: 'off' | 'all' | 'one';
   autoplayEnabled: boolean;
   onToggleFavorite: () => void;
+  onOpenTrackActions: (anchor: SongMenuAnchor) => void;
   onTogglePlayback: () => void;
   onSkipPrevious: () => void;
   onSkipNext: () => void;
@@ -95,6 +99,7 @@ const LandscapePlayerLayout = ({
   repeatMode,
   autoplayEnabled,
   onToggleFavorite,
+  onOpenTrackActions,
   onTogglePlayback,
   onSkipPrevious,
   onSkipNext,
@@ -196,25 +201,46 @@ const LandscapePlayerLayout = ({
                 {track.artist}
               </Text>
             </View>
-            <TouchableOpacity
-              onPress={onToggleFavorite}
-              disabled={!canFavoriteTrack}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-              accessibilityState={{ selected: isFavorite, disabled: !canFavoriteTrack }}
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 22,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                opacity: canFavoriteTrack ? 1 : 0.4,
-              }}
-            >
-              <Ionicons name={isFavorite ? 'star' : 'star-outline'} size={24} color={isFavorite ? '#FA5265' : 'white'} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity
+                onPress={(event) => {
+                  const { pageX, pageY, locationX, locationY } = event.nativeEvent;
+                  onOpenTrackActions({ x: pageX - locationX, y: pageY - locationY, width: 44, height: 44 });
+                }}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="More track options"
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                }}
+              >
+                <Ionicons name="ellipsis-horizontal" size={24} color="white" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={onToggleFavorite}
+                disabled={!canFavoriteTrack}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                accessibilityState={{ selected: isFavorite, disabled: !canFavoriteTrack }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  opacity: canFavoriteTrack ? 1 : 0.4,
+                }}
+              >
+                <Ionicons name={isFavorite ? 'star' : 'star-outline'} size={24} color={isFavorite ? '#FA5265' : 'white'} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View
@@ -438,6 +464,14 @@ const PlayerOverlayView = ({
   onSeek,
   onVolumeChange,
   onToggleFavorite,
+  playlists,
+  hasActiveTrack,
+  onPlayNext,
+  onToggleTrackFavorite,
+  onAddToPlaylist,
+  onCreatePlaylist,
+  onSaveTrack,
+  onDeleteTrack,
   onPlayQueueTrack,
   onToggleShuffle,
   onToggleRepeat,
@@ -469,6 +503,14 @@ const PlayerOverlayView = ({
   onSeek: (seconds: number) => void;
   onVolumeChange: (volume: number) => void;
   onToggleFavorite: () => void;
+  playlists: PlaylistSummary[];
+  hasActiveTrack: boolean;
+  onPlayNext: (track: Track) => void;
+  onToggleTrackFavorite: (track: Track) => Promise<Track>;
+  onAddToPlaylist: (playlistId: string, track: Track) => Promise<void>;
+  onCreatePlaylist: (name: string) => Promise<PlaylistSummary>;
+  onSaveTrack: (track: Track, changes: TrackEditChanges) => Promise<void>;
+  onDeleteTrack: (track: Track) => Promise<void>;
   onPlayQueueTrack: (track: Track) => void;
   onToggleShuffle: () => void;
   onToggleRepeat: () => void;
@@ -497,6 +539,7 @@ const PlayerOverlayView = ({
   const onCloseRef = useRef(onClose);
   const skipNextOpenAnimation = useRef(false);
   const [displayTrack, setDisplayTrack] = useState(track);
+  const [trackActions, setTrackActions] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
   const [trackTransitionSettling, setTrackTransitionSettling] = useState(false);
   const trackTransitionSettlingRef = useRef(false);
   const updateTrackTransitionSettling = useCallback((settling: boolean) => {
@@ -518,6 +561,26 @@ const PlayerOverlayView = ({
     setQueueView(nextView);
   }, []);
   const queueExpanded = queueView.trackId === renderedTrack.id && queueView.expanded;
+  const openTrackActions = useCallback((anchor: SongMenuAnchor) => {
+    setTrackActions({ track: { ...renderedTrack, isFavorite }, anchor });
+  }, [isFavorite, renderedTrack]);
+  const trackActionsSheet = trackActions ? (
+    <TrackActionsSheet
+      key={trackActions.track.id}
+      track={trackActions.track}
+      anchor={trackActions.anchor}
+      visible
+      playlists={playlists}
+      hasActiveTrack={hasActiveTrack}
+      onClose={() => setTrackActions(null)}
+      onPlayNext={onPlayNext}
+      onToggleFavorite={onToggleTrackFavorite}
+      onAddToPlaylist={onAddToPlaylist}
+      onCreatePlaylist={onCreatePlaylist}
+      onSaveTrack={onSaveTrack}
+      onDeleteTrack={onDeleteTrack}
+    />
+  ) : null;
   const queuePageActiveRef = useRef(queueExpanded);
   const lyrics = useMemo(() => renderedTrack.lyrics ?? [], [renderedTrack.lyrics]);
   const hasLyrics = useMemo(() => lyrics.some((line) => line.text.trim().length > 0), [lyrics]);
@@ -578,7 +641,7 @@ const PlayerOverlayView = ({
   const artworkTop = 114 + Math.min(windowHeight * 0.03, 26);
   const titleTop = artworkTop + artworkSize + 106;
   const controlsCenter = titleTop + 172;
-  const lyricsArtworkTop = 154;
+  const lyricsArtworkTop = 110;
   const lyricsTitleTop = lyricsArtworkTop + 12;
   const lyricsTextTop = lyricsArtworkTop + 72 + 28;
   const lyricsProgressTop = Math.max(lyricsTextTop + 44 + 24, windowHeight - 260);
@@ -686,6 +749,7 @@ const PlayerOverlayView = ({
   }, [detailsScrollOffset, lyricsExpanded, queueExpanded, renderedTrack.id]);
 
   const closeOnJS = useCallback(() => {
+    setTrackActions(null);
     onCloseRef.current();
   }, []);
 
@@ -1185,6 +1249,7 @@ const PlayerOverlayView = ({
             repeatMode={repeatMode}
             autoplayEnabled={autoplayEnabled}
             onToggleFavorite={onToggleFavorite}
+            onOpenTrackActions={openTrackActions}
             onTogglePlayback={onTogglePlayback}
             onSkipPrevious={onSkipPrevious}
             onSkipNext={onSkipNext}
@@ -1203,6 +1268,7 @@ const PlayerOverlayView = ({
             onClearQueue={onClearQueue}
             onRemoveQueueTrack={onRemoveQueueTrack}
           />
+          {trackActionsSheet}
         </ReanimatedAnimated.View>
       </GestureDetector>
     );
@@ -1689,6 +1755,25 @@ const PlayerOverlayView = ({
           >
             <View style={{ position: 'absolute', right: 30, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TouchableOpacity
+                onPress={(event) => {
+                  const { pageX, pageY, locationX, locationY } = event.nativeEvent;
+                  openTrackActions({ x: pageX - locationX, y: pageY - locationY, width: 44, height: 44 });
+                }}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="More track options"
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: 'rgba(255, 255, 255, 0.13)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Ionicons name="ellipsis-horizontal" size={24} color="white" />
+              </TouchableOpacity>
+              <TouchableOpacity
                 onPress={onToggleFavorite}
                 disabled={!canFavoriteTrack}
                 hitSlop={8}
@@ -1883,6 +1968,7 @@ const PlayerOverlayView = ({
           ) : null}
         </ReanimatedAnimated.View>
       ) : null}
+      {trackActionsSheet}
     </ReanimatedAnimated.View>
   );
 };
@@ -1909,6 +1995,14 @@ const playerOverlayViewPropsAreEqual = (previous: PlayerOverlayViewProps, next: 
     previous.onSeek !== next.onSeek ||
     previous.onVolumeChange !== next.onVolumeChange ||
     previous.onToggleFavorite !== next.onToggleFavorite ||
+    previous.playlists !== next.playlists ||
+    previous.hasActiveTrack !== next.hasActiveTrack ||
+    previous.onPlayNext !== next.onPlayNext ||
+    previous.onToggleTrackFavorite !== next.onToggleTrackFavorite ||
+    previous.onAddToPlaylist !== next.onAddToPlaylist ||
+    previous.onCreatePlaylist !== next.onCreatePlaylist ||
+    previous.onSaveTrack !== next.onSaveTrack ||
+    previous.onDeleteTrack !== next.onDeleteTrack ||
     previous.onPlayQueueTrack !== next.onPlayQueueTrack ||
     previous.onToggleShuffle !== next.onToggleShuffle ||
     previous.onToggleRepeat !== next.onToggleRepeat ||
