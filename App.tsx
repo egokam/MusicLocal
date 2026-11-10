@@ -1267,6 +1267,10 @@ export default function App() {
     return saveTrackLyrics(lyricsTrack, editedLyrics);
   }, [saveTrackLyrics, updateTrackEverywhere]);
 
+  const savePlayerMenuTrack = useCallback(async (track: Track, changes: TrackEditChanges) => {
+    await updateTrack(track, changes);
+  }, [updateTrack]);
+
   const saveSynchronizedTrack = useCallback(async (
     track: Track,
     preparedMp3Uri: string,
@@ -1634,6 +1638,14 @@ export default function App() {
           onSeek={seekTo}
           onVolumeChange={setPlayerVolume}
           onToggleFavorite={toggleActiveTrackFavorite}
+          playlists={playlists}
+          hasActiveTrack={Boolean(activeTrack)}
+          onPlayNext={playNext}
+          onToggleTrackFavorite={toggleFavorite}
+          onAddToPlaylist={addTrackToPlaylist}
+          onCreatePlaylist={createPlaylist}
+          onSaveTrack={savePlayerMenuTrack}
+          onDeleteTrack={deleteTrack}
           onPlayQueueTrack={playQueueTrack}
           onToggleShuffle={toggleQueueShuffle}
           onToggleRepeat={toggleRepeatMode}
