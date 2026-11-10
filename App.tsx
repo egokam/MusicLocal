@@ -5,7 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
-import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus, type AudioLockScreenOptions, type AudioMetadata } from 'expo-audio';
+import { setAudioModeAsync, useAudioPlaylist, useAudioPlaylistStatus, type AudioLockScreenOptions, type AudioMetadata, type AudioPlaylist, type AudioSource } from 'expo-audio';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -79,16 +79,15 @@ const getWidgetLaunchTrackId = (url: string) => {
 };
 
 const PlayerStatusBridge = ({
-  player,
+  playlist,
   onStatus,
-  onPlaybackError,
+  onTrackIndexChange,
 }: {
-  player: ReturnType<typeof useAudioPlayer>;
+  playlist: AudioPlaylist;
   onStatus: (status: PlayerPlaybackStatus) => void;
-  onPlaybackError: (error: string) => void;
+  onTrackIndexChange: (index: number) => void;
 }) => {
-  const status = useAudioPlayerStatus(player);
-  const lastPlaybackError = useRef<string | null>(null);
+  const status = useAudioPlaylistStatus(playlist);
 
   useEffect(() => {
     const nextStatus = {
@@ -99,31 +98,27 @@ const PlayerStatusBridge = ({
     };
     publishPlayerPlaybackStatus(nextStatus);
     onStatus(nextStatus);
-    if (status.error && status.error !== lastPlaybackError.current) {
-      lastPlaybackError.current = status.error;
-      onPlaybackError(status.error);
-    } else if (!status.error) {
-      lastPlaybackError.current = null;
-    }
-  }, [onPlaybackError, onStatus, status]);
+    onTrackIndexChange(status.currentIndex);
+  }, [onStatus, onTrackIndexChange, status]);
 
   return null;
 };
 
 export default function App() {
-  const expoPlayer = useAudioPlayer(null, { updateInterval: 250 });
+  const expoPlaylist = useAudioPlaylist({ updateInterval: 250 });
   const player = useMemo(() => ({
-    replace: (source: Parameters<typeof expoPlayer.replace>[0]) => expoPlayer.replace(source),
-    play: () => expoPlayer.play(),
-    pause: () => expoPlayer.pause(),
-    seekTo: (seconds: number) => expoPlayer.seekTo(seconds),
+    play: () => expoPlaylist.play(),
+    pause: () => expoPlaylist.pause(),
+    seekTo: (seconds: number) => expoPlaylist.seekTo(seconds),
     setVolume: (volume: number) => {
-      expoPlayer.volume = volume;
+      expoPlaylist.volume = volume;
     },
-    setActiveForLockScreen: (active: boolean, metadata?: AudioMetadata, options?: AudioLockScreenOptions) => expoPlayer.setActiveForLockScreen(active, metadata, options),
-    updateLockScreenMetadata: (metadata: AudioMetadata) => expoPlayer.updateLockScreenMetadata(metadata),
-    setPlaybackRate: (rate: number, quality?: 'low' | 'medium' | 'high') => expoPlayer.setPlaybackRate(rate, quality),
-  }), [expoPlayer]);
+    setActiveForLockScreen: (active: boolean, metadata?: AudioMetadata, options?: AudioLockScreenOptions) => expoPlaylist.setActiveForLockScreen(active, metadata, options),
+    updateLockScreenMetadata: (metadata: AudioMetadata) => expoPlaylist.updateLockScreenMetadata(metadata),
+    setPlaybackRate: (rate: number, _quality?: 'low' | 'medium' | 'high') => {
+      expoPlaylist.playbackRate = rate;
+    },
+  }), [expoPlaylist]);
   const [playerVolume, setPlayerVolumeState] = useState(1);
   const [playerIsPlaying, setPlayerIsPlaying] = useState(false);
   const [playerDuration, setPlayerDuration] = useState(0);
@@ -180,6 +175,10 @@ export default function App() {
   const playerPlayingRef = useRef(false);
   const playerCurrentTimeRef = useRef(0);
   const playerDurationRef = useRef(0);
+  const playerVolumeRef = useRef(1);
+  const playerPlaybackRateRef = useRef(1);
+  const playlistTrackIdsRef = useRef<string[]>([]);
+  const pendingPlaylistTrackIdRef = useRef<string | null>(null);
   const rewindSeekIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchGeneration = useRef(0);
   const handledFinishedTrack = useRef<string | null>(null);
@@ -200,6 +199,66 @@ export default function App() {
     queueRef.current = nextQueue;
     setPlaybackQueue(nextQueue);
   }, []);
+
+  const rebuildNativeQueue = useCallback((nextQueue: Track[], startTrackId: string, preservePlayback: boolean) => {
+    const wasPlaying = preservePlayback && playerPlayingRef.current;
+    const previousTime = preservePlayback ? playerCurrentTimeRef.current : 0;
+    const sources = nextQueue.flatMap((track) => {
+      const playableTrack = downloadsRef.current.find((saved) => saved.id === track.id) ?? track;
+      const uri = playableTrack.localUri ?? playableTrack.streamUrl;
+      if (!uri) return [];
+      return [{
+        trackId: track.id,
+        source: {
+          uri,
+          name: playableTrack.title,
+          ...(!playableTrack.localUri && playableTrack.provider !== 'local'
+            ? { headers: getMusicApiHeaders() }
+            : {}),
+        } satisfies AudioSource,
+      }];
+    });
+
+    playlistTrackIdsRef.current = sources.map(({ trackId }) => trackId);
+    const startIndex = Math.max(0, playlistTrackIdsRef.current.indexOf(startTrackId));
+    pendingPlaylistTrackIdRef.current = playlistTrackIdsRef.current[startIndex] ?? null;
+
+    expoPlaylist.pause();
+    expoPlaylist.clear();
+    sources.forEach(({ source }) => expoPlaylist.add(source));
+    expoPlaylist.loop = activeTrackRef.current?.provider === 'radio' || activeTrackRef.current?.provider === 'audius'
+      ? 'all'
+      : repeatMode === 'all' ? 'all' : repeatMode === 'one' ? 'single' : 'none';
+    expoPlaylist.volume = playerVolumeRef.current;
+    expoPlaylist.playbackRate = playerPlaybackRateRef.current;
+
+    if (sources.length === 0) {
+      pendingPlaylistTrackIdRef.current = null;
+      expoPlaylist.setActiveForLockScreen(false);
+      return;
+    }
+
+    expoPlaylist.skipTo(startIndex);
+    if (preservePlayback) {
+      void expoPlaylist.seekTo(previousTime).finally(() => {
+        if (wasPlaying) expoPlaylist.play();
+      });
+    }
+  }, [expoPlaylist, repeatMode]);
+
+  const updateQueueAndNativePlaylist = useCallback((nextQueue: Track[]) => {
+    updatePlaybackQueue(nextQueue);
+    const active = activeTrackRef.current;
+    if (active && nextQueue.some((track) => track.id === active.id)) {
+      rebuildNativeQueue(nextQueue, active.id, true);
+    } else {
+      expoPlaylist.pause();
+      expoPlaylist.clear();
+      playlistTrackIdsRef.current = [];
+      pendingPlaylistTrackIdRef.current = null;
+      expoPlaylist.setActiveForLockScreen(false);
+    }
+  }, [expoPlaylist, rebuildNativeQueue, updatePlaybackQueue]);
 
   const incrementPlayCount = useCallback((trackId: string) => {
     const nextCounts = {
@@ -569,50 +628,20 @@ export default function App() {
     await searchTracks();
   }, [searchTracks]);
 
-  const playSelectedTrack = useCallback((track: Track, nextQueue: Track[]) => {
-    const offlineTrack = downloadsRef.current.find((saved) => saved.id === track.id);
-    const selectedTrack = offlineTrack ?? track;
-    const audioUri = selectedTrack.localUri ?? selectedTrack.streamUrl;
-    if (!audioUri) {
-      Alert.alert('Track unavailable', 'This file does not have a playable audio source.');
-      return;
-    }
-
-    updatePlaybackQueue(nextQueue);
+  const activateTrack = useCallback((selectedTrack: Track) => {
     activeTrackRef.current = selectedTrack;
     setActiveTrack(selectedTrack);
     handledFinishedTrack.current = null;
+
     const isRadioTrack = selectedTrack.provider === 'radio';
     const isQuranTrack = selectedTrack.provider === 'quran';
-    const selectedTrackHasLyrics = Boolean(selectedTrack.lyrics?.some((line) => line.text.trim()));
+    const hasLyrics = Boolean(selectedTrack.lyrics?.some((line) => line.text.trim()));
     const shouldResolveLyrics = !isRadioTrack && !isQuranTrack && (
       Boolean(selectedTrack.localUri)
-      || !selectedTrackHasLyrics
+      || !hasLyrics
       || spicyLyricsEnabled
     );
-    const shouldShowLyricsLoading = shouldResolveLyrics && !selectedTrackHasLyrics;
-    setLyricsLoadingTrackId(shouldShowLyricsLoading ? selectedTrack.id : null);
-    const musicApiHeaders = selectedTrack.provider === 'local' ? getMusicApiHeaders() : {};
-    player.replace(
-      selectedTrack.localUri
-        ? { uri: selectedTrack.localUri, name: selectedTrack.title }
-        : { uri: audioUri, headers: musicApiHeaders, name: selectedTrack.title },
-    );
-    try {
-      player.setActiveForLockScreen(true, {
-        title: selectedTrack.title,
-        artist: selectedTrack.artist,
-        albumTitle: isRadioTrack ? 'Live Radio' : selectedTrack.album,
-        ...(selectedTrack.artwork ? { artworkUrl: selectedTrack.artwork } : {}),
-      }, {
-        // replace() has not loaded remote media yet, so Expo may report an
-        // indefinite duration and infer "live" for ordinary songs.
-        isLiveStream: isRadioTrack,
-      });
-    } catch {
-      // Lock-screen metadata is optional; keep stream playback available if the OS rejects it.
-    }
-    player.play();
+    setLyricsLoadingTrackId(shouldResolveLyrics && !hasLyrics ? selectedTrack.id : null);
     if (!isRadioTrack && !isQuranTrack) incrementPlayCount(selectedTrack.id);
 
     if (shouldResolveLyrics) {
@@ -637,7 +666,40 @@ export default function App() {
           ));
         });
     }
-  }, [incrementPlayCount, player, spicyLyricsEnabled, updatePlaybackQueue]);
+  }, [incrementPlayCount, spicyLyricsEnabled]);
+
+  const playSelectedTrack = useCallback((track: Track, nextQueue: Track[]) => {
+    const offlineTrack = downloadsRef.current.find((saved) => saved.id === track.id);
+    const selectedTrack = offlineTrack ?? track;
+    const audioUri = selectedTrack.localUri ?? selectedTrack.streamUrl;
+    if (!audioUri) {
+      Alert.alert('Track unavailable', 'This file does not have a playable audio source.');
+      return;
+    }
+
+    const queueWithSelectedTrack = nextQueue.some((item) => item.id === selectedTrack.id)
+      ? nextQueue
+      : [selectedTrack, ...nextQueue];
+    activateTrack(selectedTrack);
+    updatePlaybackQueue(queueWithSelectedTrack);
+    rebuildNativeQueue(queueWithSelectedTrack, selectedTrack.id, false);
+    const isRadioTrack = selectedTrack.provider === 'radio';
+    try {
+      player.setActiveForLockScreen(true, {
+        title: selectedTrack.title,
+        artist: selectedTrack.artist,
+        albumTitle: isRadioTrack ? 'Live Radio' : selectedTrack.album,
+        ...(selectedTrack.artwork ? { artworkUrl: selectedTrack.artwork } : {}),
+      }, {
+        isLiveStream: isRadioTrack,
+        showNextTrack: true,
+        showPreviousTrack: true,
+      });
+    } catch {
+      // Lock-screen metadata is optional; keep stream playback available if the OS rejects it.
+    }
+    player.play();
+  }, [activateTrack, player, rebuildNativeQueue, updatePlaybackQueue]);
 
   const playTrack = useCallback((track: Track, queue = tracksRef.current) => {
     playSelectedTrack(track, queue);
@@ -673,13 +735,44 @@ export default function App() {
       const latestQueue = queueRef.current;
       const knownIds = new Set(latestQueue.map((track) => track.id));
       const additions = moreTracks.filter((track) => !knownIds.has(track.id));
-      if (additions.length > 0) updatePlaybackQueue([...latestQueue, ...additions]);
+      if (additions.length > 0) updateQueueAndNativePlaylist([...latestQueue, ...additions]);
     } catch {
       // Keep the current mix playing if the catalog is temporarily unavailable.
     } finally {
       loadingAudiusMixPages.current.delete(mixId);
     }
-  }, [updatePlaybackQueue]);
+  }, [updateQueueAndNativePlaylist]);
+
+  const handlePlaylistTrackIndexChange = useCallback((index: number) => {
+    const trackId = playlistTrackIdsRef.current[index];
+    if (!trackId) return;
+    if (pendingPlaylistTrackIdRef.current && pendingPlaylistTrackIdRef.current !== trackId) return;
+    pendingPlaylistTrackIdRef.current = null;
+
+    const queueTrack = queueRef.current.find((track) => track.id === trackId);
+    if (!queueTrack || activeTrackRef.current?.id === trackId) return;
+    const selectedTrack = downloadsRef.current.find((track) => track.id === trackId) ?? queueTrack;
+    activateTrack(selectedTrack);
+    try {
+      player.setActiveForLockScreen(true, {
+        title: selectedTrack.title,
+        artist: selectedTrack.artist,
+        albumTitle: selectedTrack.provider === 'radio' ? 'Live Radio' : selectedTrack.album,
+        ...(selectedTrack.artwork ? { artworkUrl: selectedTrack.artwork } : {}),
+      }, {
+        isLiveStream: selectedTrack.provider === 'radio',
+        showNextTrack: true,
+        showPreviousTrack: true,
+      });
+    } catch {
+      // Metadata can be unavailable for some remote sources; keep queue playback running.
+    }
+
+    if (selectedTrack.provider === 'audius' && selectedTrack.mixId) {
+      const queueIndex = queueRef.current.findIndex((track) => track.id === selectedTrack.id);
+      if (queueIndex >= queueRef.current.length - 5) void loadMoreAudiusMixTracks(selectedTrack.mixId);
+    }
+  }, [activateTrack, loadMoreAudiusMixTracks, player]);
 
   const togglePlayback = useCallback(() => {
     if (playerPlayingRef.current) player.pause();
@@ -722,10 +815,12 @@ export default function App() {
   }, []);
 
   const beginFastForward = useCallback(() => {
+    playerPlaybackRateRef.current = 2;
     player.setPlaybackRate(2, 'high');
   }, [player]);
 
   const endFastForward = useCallback(() => {
+    playerPlaybackRateRef.current = 1;
     player.setPlaybackRate(1, 'high');
   }, [player]);
 
@@ -753,8 +848,8 @@ export default function App() {
     const nextQueue = currentQueue.filter((item) => item.id !== track.id);
     const activeIndex = nextQueue.findIndex((item) => item.id === active.id);
     nextQueue.splice(activeIndex < 0 ? 0 : activeIndex + 1, 0, track);
-    updatePlaybackQueue(nextQueue);
-  }, [updatePlaybackQueue]);
+    updateQueueAndNativePlaylist(nextQueue);
+  }, [updateQueueAndNativePlaylist]);
 
   const advanceQueue = useCallback((trackFinished = false) => {
     const active = activeTrackRef.current;
@@ -839,14 +934,6 @@ export default function App() {
     }
   }, [advanceQueue]);
 
-  const handlePlaybackError = useCallback((error: string) => {
-    const track = activeTrackRef.current;
-    Alert.alert(
-      'Could not play track',
-      track ? `${track.title}\n\n${error}` : error,
-    );
-  }, []);
-
   const skipNext = useCallback(() => advanceQueue(false), [advanceQueue]);
 
   const toggleQueueShuffle = useCallback(() => {
@@ -859,26 +946,32 @@ export default function App() {
         const swapIndex = Math.floor(Math.random() * (index + 1));
         [upcoming[index], upcoming[swapIndex]] = [upcoming[swapIndex], upcoming[index]];
       }
-      updatePlaybackQueue([...currentAndPast, ...upcoming]);
+      updateQueueAndNativePlaylist([...currentAndPast, ...upcoming]);
     }
     setShuffleEnabled((enabled) => !enabled);
-  }, [shuffleEnabled, updatePlaybackQueue]);
+  }, [shuffleEnabled, updateQueueAndNativePlaylist]);
 
   const toggleRepeatMode = useCallback(() => {
     setRepeatMode((mode) => mode === 'off' ? 'all' : mode === 'all' ? 'one' : 'off');
   }, []);
 
+  useEffect(() => {
+    expoPlaylist.loop = activeTrack?.provider === 'radio' || activeTrack?.provider === 'audius'
+      ? 'all'
+      : repeatMode === 'all' ? 'all' : repeatMode === 'one' ? 'single' : 'none';
+  }, [activeTrack?.provider, expoPlaylist, repeatMode]);
+
   const clearUpcomingQueue = useCallback(() => {
-    updatePlaybackQueue(activeTrackRef.current ? [activeTrackRef.current] : []);
+    updateQueueAndNativePlaylist(activeTrackRef.current ? [activeTrackRef.current] : []);
     setShuffleEnabled(false);
-  }, [updatePlaybackQueue]);
+  }, [updateQueueAndNativePlaylist]);
 
   const removeQueuedTrack = useCallback((track: Track) => {
     const activeTrackId = activeTrackRef.current?.id;
-    updatePlaybackQueue(queueRef.current.filter((queuedTrack) => (
+    updateQueueAndNativePlaylist(queueRef.current.filter((queuedTrack) => (
       queuedTrack.id === activeTrackId || queuedTrack.id !== track.id
     )));
-  }, [updatePlaybackQueue]);
+  }, [updateQueueAndNativePlaylist]);
 
   const playQueueTrack = useCallback((track: Track) => {
     const currentQueue = queueRef.current.length > 0 ? queueRef.current : tracksRef.current;
@@ -957,6 +1050,7 @@ export default function App() {
   // eslint-disable-next-line react-hooks/immutability
   const setPlayerVolume = useCallback((volume: number) => {
     const nextVolume = Math.max(0, Math.min(1, volume));
+    playerVolumeRef.current = nextVolume;
     setPlayerVolumeState(nextVolume);
 
     const manager = systemVolumeManager.current;
@@ -1085,14 +1179,14 @@ export default function App() {
     setFavoriteTracks((current) => current.filter((item) => item.id !== track.id));
     favoriteIdsRef.current.delete(track.id);
     await PlaylistStorageService.deleteTrack(track.id);
-    updatePlaybackQueue(queueRef.current.filter((item) => item.id !== track.id));
+    updateQueueAndNativePlaylist(queueRef.current.filter((item) => item.id !== track.id));
     if (activeTrackRef.current?.id === track.id) {
       player.pause();
       activeTrackRef.current = null;
       setActiveTrack(null);
       setLyricsLoadingTrackId(null);
     }
-  }, [player, updatePlaybackQueue]);
+  }, [player, updateQueueAndNativePlaylist]);
 
   const createPlaylist = useCallback(async (name: string, cover?: PlaylistCoverSelection) => {
     const remotePlaylist = await MusicCatalogService.createPlaylist(name);
@@ -1238,7 +1332,7 @@ export default function App() {
         } finally {
           if (isActiveTrack && sourceTrack.localUri) {
             try {
-              player.replace({ uri: sourceTrack.localUri });
+              rebuildNativeQueue(queueRef.current, sourceTrack.id, false);
               await player.seekTo(playbackPosition);
               if (wasPlaying) player.play();
             } catch {
@@ -1252,7 +1346,7 @@ export default function App() {
     const updated = await updateTrackWithLyrics({ ...sourceTrack, lyricsSource }, syncedLyrics);
     await OfflineMusicService.setLocalLyricsOverride(sourceTrack.id);
     return updated;
-  }, [player, updateTrackWithLyrics]);
+  }, [player, rebuildNativeQueue, updateTrackWithLyrics]);
 
   const updateTrack = useCallback(async (track: Track, changes: TrackEditChanges) => {
     const { lyrics, ...metadataChanges } = changes;
@@ -1304,7 +1398,7 @@ export default function App() {
       } finally {
         if (isActiveTrack && track.localUri) {
           try {
-            player.replace({ uri: track.localUri });
+            rebuildNativeQueue(queueRef.current, track.id, false);
             await player.seekTo(playbackPosition);
             if (wasPlaying) player.play();
           } catch {
@@ -1338,7 +1432,7 @@ export default function App() {
     setTracks(nextTracks);
     void NowPlayingWidgetService.initialize(nextTracks).catch(() => undefined);
     return trackWithFavoriteState;
-  }, [player, updateTrackWithLyrics]);
+  }, [player, rebuildNativeQueue, updateTrackWithLyrics]);
 
   const checkTrackLyrics = useCallback(async (track: Track, forceOnline = false, excludedCandidateSignatures: string[] = []) => {
     void forceOnline;
@@ -1389,7 +1483,7 @@ export default function App() {
     tracksRef.current = nextTracks;
     setTracks(nextTracks);
     setFavoriteTracks((current) => current.map((track) => removedIds.has(track.id) ? clearOfflineSource(track) : track));
-    updatePlaybackQueue(queueRef.current.flatMap((track) => {
+    updateQueueAndNativePlaylist(queueRef.current.flatMap((track) => {
       if (!removedIds.has(track.id)) return [track];
       if (!track.streamUrl) return [];
       return [clearOfflineSource(track)];
@@ -1406,7 +1500,7 @@ export default function App() {
       setLyricsLoadingTrackId(null);
     }
     return result.freedBytes;
-  }, [player, updatePlaybackQueue]);
+  }, [player, updateQueueAndNativePlaylist]);
 
   const importAudioToLibrary = useCallback(async (
     url: string,
@@ -1590,9 +1684,9 @@ export default function App() {
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <GestureHandlerRootView style={{ flex: 1 }}>
       <PlayerStatusBridge
-        player={expoPlayer}
+        playlist={expoPlaylist}
         onStatus={handlePlayerStatus}
-        onPlaybackError={handlePlaybackError}
+        onTrackIndexChange={handlePlaylistTrackIndexChange}
       />
       <AndroidUpdatePrompt />
       <PlaybackContext.Provider value={playbackActions}>
