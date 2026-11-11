@@ -24,6 +24,7 @@ import { usePlayerPlaybackStatus } from '../../services/PlayerStatusStore';
 const HAS_LIQUID_GLASS = isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
 const TRACK_DETAILS_FADE_DURATION = 290;
 const TRACK_DETAILS_OVERLAP_GAP = 100;
+const TRACK_DETAILS_HANDOFF_FALLBACK = 1200;
 const TRACK_DETAILS_FADE_EASING = Easing.bezier(0.4, 0, 0.2, 1);
 const ReanimatedExpoImage = ReanimatedAnimated.createAnimatedComponent(ExpoImage);
 const getArtworkSource = (track: Track) => track.artwork
@@ -35,6 +36,10 @@ const getArtworkSource = (track: Track) => track.artwork
 
 type LandscapePlayerLayoutProps = {
   track: Track;
+  incomingTrack: Track;
+  trackTransitioning: boolean;
+  transitionProgress: SharedValue<number>;
+  onDisplayedArtworkLoaded: (trackId: string) => void;
   lyrics: NonNullable<Track['lyrics']>;
   lyricsAttribution?: Track['lyricsAttribution'];
   hasLyrics: boolean;
@@ -78,6 +83,10 @@ type LandscapePlayerLayoutProps = {
 
 const LandscapePlayerLayout = ({
   track,
+  incomingTrack,
+  trackTransitioning,
+  transitionProgress,
+  onDisplayedArtworkLoaded,
   lyrics,
   lyricsAttribution,
   hasLyrics,
@@ -135,6 +144,23 @@ const LandscapePlayerLayout = ({
     420,
   ));
   const detailsViewportHeight = Math.max(0, detailsHeight);
+  const incomingArtworkSource = useMemo(() => getArtworkSource(incomingTrack), [incomingTrack]);
+  const outgoingTrackStyle = useAnimatedStyle(() => ({
+    opacity: trackTransitioning ? 1 - transitionProgress.value : 1,
+  }));
+  const incomingTrackStyle = useAnimatedStyle(() => ({
+    opacity: trackTransitioning ? transitionProgress.value : 0,
+  }));
+  const outgoingArtworkBlurStyle = useAnimatedStyle(() => {
+    const value = transitionProgress.value;
+    const blurEnvelope = 4 * value * (1 - value);
+    return { opacity: trackTransitioning ? 0.72 * blurEnvelope * (1 - value) : 0 };
+  });
+  const incomingArtworkBlurStyle = useAnimatedStyle(() => {
+    const value = transitionProgress.value;
+    const blurEnvelope = 4 * value * (1 - value);
+    return { opacity: trackTransitioning ? 0.72 * blurEnvelope * value : 0 };
+  });
 
   useEffect(() => {
     entrance.value = withTiming(1, { duration: 260, easing: TRACK_DETAILS_FADE_EASING });
@@ -144,14 +170,28 @@ const LandscapePlayerLayout = ({
   return (
     <ReanimatedAnimated.View
       pointerEvents="box-none"
-      style={[StyleSheet.absoluteFill, { zIndex: 20 }, entranceStyle]}
+      style={[StyleSheet.absoluteFill, { zIndex: 20, backgroundColor: '#090A0C' }, entranceStyle]}
     >
-      <ExpoImage
-        source={getArtworkSource(track)}
-        contentFit="cover"
-        blurRadius={30}
-        style={StyleSheet.absoluteFill}
-      />
+      <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingTrackStyle]}>
+        <ExpoImage
+          source={getArtworkSource(track)}
+          contentFit="cover"
+          blurRadius={30}
+          onDisplay={() => onDisplayedArtworkLoaded(track.id)}
+          onError={() => onDisplayedArtworkLoaded(track.id)}
+          style={StyleSheet.absoluteFill}
+        />
+      </ReanimatedAnimated.View>
+      {trackTransitioning ? (
+        <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, incomingTrackStyle]}>
+          <ExpoImage
+            source={incomingArtworkSource}
+            contentFit="cover"
+            blurRadius={30}
+            style={StyleSheet.absoluteFill}
+          />
+        </ReanimatedAnimated.View>
+      ) : null}
       <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,13,15,0.58)' }]} />
       <View
         style={{
@@ -182,24 +222,68 @@ const LandscapePlayerLayout = ({
               opacity: hasLyrics || isLyricsLoading ? 1 : 0.94,
             }}
           >
-            <ExpoImage
-              source={getArtworkSource(track)}
-              contentFit="cover"
-              accessibilityLabel={`${track.album} album artwork`}
-              style={{ width: '100%', height: '100%' }}
-            />
+            <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingTrackStyle]}>
+              <ExpoImage
+                source={getArtworkSource(track)}
+                contentFit="cover"
+                accessibilityLabel={`${track.album} album artwork`}
+                style={{ width: '100%', height: '100%' }}
+              />
+            </ReanimatedAnimated.View>
+            {trackTransitioning ? (
+              <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, incomingTrackStyle]}>
+                <ExpoImage
+                  source={incomingArtworkSource}
+                  contentFit="cover"
+                  accessibilityLabel={`${incomingTrack.album} album artwork`}
+                  style={{ width: '100%', height: '100%' }}
+                />
+              </ReanimatedAnimated.View>
+            ) : null}
+            {trackTransitioning ? (
+              <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingArtworkBlurStyle]}>
+                <ExpoImage
+                  source={getArtworkSource(track)}
+                  contentFit="cover"
+                  blurRadius={18}
+                  style={{ width: '100%', height: '100%' }}
+                />
+              </ReanimatedAnimated.View>
+            ) : null}
+            {trackTransitioning ? (
+              <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, incomingArtworkBlurStyle]}>
+                <ExpoImage
+                  source={incomingArtworkSource}
+                  contentFit="cover"
+                  blurRadius={18}
+                  style={{ width: '100%', height: '100%' }}
+                />
+              </ReanimatedAnimated.View>
+            ) : null}
           </TouchableOpacity>
         </View>
 
         <View style={{ flex: 1, minWidth: 0, paddingLeft: 22, justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 54 }}>
-            <View style={{ flex: 1, minWidth: 0, paddingRight: 12 }}>
-              <Text numberOfLines={1} style={{ color: 'white', fontSize: 23, fontWeight: '800' }}>
-                {track.title}
-              </Text>
-              <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,0.68)', fontSize: 17, marginTop: 3 }}>
-                {track.artist}
-              </Text>
+            <View style={{ flex: 1, minWidth: 0, minHeight: 54, paddingRight: 12, justifyContent: 'center' }}>
+              <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, outgoingTrackStyle, { justifyContent: 'center' }]}>
+                <Text numberOfLines={1} style={{ color: 'white', fontSize: 23, fontWeight: '800' }}>
+                  {track.title}
+                </Text>
+                <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,0.68)', fontSize: 17, marginTop: 3 }}>
+                  {track.artist}
+                </Text>
+              </ReanimatedAnimated.View>
+              {trackTransitioning ? (
+                <ReanimatedAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, incomingTrackStyle, { justifyContent: 'center' }]}>
+                  <Text numberOfLines={1} style={{ color: 'white', fontSize: 23, fontWeight: '800' }}>
+                    {incomingTrack.title}
+                  </Text>
+                  <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,0.68)', fontSize: 17, marginTop: 3 }}>
+                    {incomingTrack.artist}
+                  </Text>
+                </ReanimatedAnimated.View>
+              ) : null}
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <TouchableOpacity
@@ -533,6 +617,7 @@ const PlayerOverlayView = ({
   const trackTransition = useSharedValue(1);
   const trackTransitionGeneration = useRef(0);
   const trackTransitionCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trackTransitionHandoffTrackId = useRef<string | null>(null);
   const previousLongPressTriggered = useRef(false);
   const nextLongPressTriggered = useRef(false);
   const onOpenRef = useRef(onOpen);
@@ -546,6 +631,18 @@ const PlayerOverlayView = ({
     trackTransitionSettlingRef.current = settling;
     setTrackTransitionSettling(settling);
   }, []);
+  const finishTrackTransitionHandoff = useCallback((trackId: string) => {
+    if (
+      !trackTransitionSettlingRef.current ||
+      trackTransitionHandoffTrackId.current !== trackId
+    ) return;
+    if (trackTransitionCommitTimer.current) {
+      clearTimeout(trackTransitionCommitTimer.current);
+      trackTransitionCommitTimer.current = null;
+    }
+    trackTransitionHandoffTrackId.current = null;
+    updateTrackTransitionSettling(false);
+  }, [updateTrackTransitionSettling]);
   const renderedTrack = displayTrack.id === track.id ? track : displayTrack;
   const isTrackTransitioning = displayTrack.id !== track.id || trackTransitionSettling;
   const [lyricsView, setLyricsView] = useState({ trackId: track.id, expanded: false });
@@ -656,7 +753,12 @@ const PlayerOverlayView = ({
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  const commitTrackChange = useCallback((nextTrack: Track, generation: number, previousTrackId: string) => {
+  const commitTrackChange = useCallback((
+    nextTrack: Track,
+    generation: number,
+    previousTrackId: string,
+    previousArtwork: string | undefined,
+  ) => {
     if (generation !== trackTransitionGeneration.current) return;
     const currentLyricsView = lyricsViewRef.current;
     if (
@@ -680,12 +782,15 @@ const PlayerOverlayView = ({
       setTrackedQueueView({ trackId: nextTrack.id, expanded: true });
     }
     setDisplayTrack(nextTrack);
+    trackTransitionHandoffTrackId.current = nextTrack.id;
     updateTrackTransitionSettling(true);
     trackTransitionCommitTimer.current = setTimeout(() => {
       trackTransitionCommitTimer.current = null;
-      updateTrackTransitionSettling(false);
-    }, TRACK_DETAILS_OVERLAP_GAP);
-  }, [setTrackedLyricsView, setTrackedQueueView, updateTrackTransitionSettling]);
+      finishTrackTransitionHandoff(nextTrack.id);
+    }, nextTrack.artwork && nextTrack.artwork !== previousArtwork
+      ? TRACK_DETAILS_HANDOFF_FALLBACK
+      : TRACK_DETAILS_OVERLAP_GAP);
+  }, [finishTrackTransitionHandoff, setTrackedLyricsView, setTrackedQueueView, updateTrackTransitionSettling]);
 
   useLayoutEffect(() => {
     if (displayTrack.id === track.id) {
@@ -701,15 +806,21 @@ const PlayerOverlayView = ({
     }
 
     const generation = ++trackTransitionGeneration.current;
+    if (trackTransitionCommitTimer.current) {
+      clearTimeout(trackTransitionCommitTimer.current);
+      trackTransitionCommitTimer.current = null;
+    }
+    trackTransitionHandoffTrackId.current = null;
+    if (trackTransitionSettlingRef.current) updateTrackTransitionSettling(false);
     cancelAnimation(trackTransition);
     trackTransition.value = 0;
     trackTransition.value = withDelay(
       TRACK_DETAILS_OVERLAP_GAP,
       withTiming(1, { duration: TRACK_DETAILS_FADE_DURATION * 2, easing: TRACK_DETAILS_FADE_EASING }, (finished) => {
-        if (finished) scheduleOnRN(commitTrackChange, track, generation, displayTrack.id);
+        if (finished) scheduleOnRN(commitTrackChange, track, generation, displayTrack.id, displayTrack.artwork);
       }),
     );
-  }, [commitTrackChange, displayTrack.id, track, trackTransition, updateTrackTransitionSettling]);
+  }, [commitTrackChange, displayTrack.artwork, displayTrack.id, track, trackTransition, updateTrackTransitionSettling]);
 
   useEffect(() => () => {
     if (trackTransitionCommitTimer.current) clearTimeout(trackTransitionCommitTimer.current);
@@ -1224,53 +1335,62 @@ const PlayerOverlayView = ({
 
   if (visible && isLandscape) {
     return (
-      <GestureDetector gesture={panGesture}>
-        <ReanimatedAnimated.View pointerEvents="auto" style={StyleSheet.absoluteFill}>
-          <LandscapePlayerLayout
-            track={renderedTrack}
-            lyrics={lyrics}
-            lyricsAttribution={renderedTrack.lyricsAttribution}
-            hasLyrics={hasLyrics}
-            isLyricsLoading={isLyricsLoading}
-            lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
-            isFavorite={isFavorite}
-            canFavoriteTrack={canFavoriteTrack}
-            isLiveRadio={isLiveRadio}
-            isPlaying={isPlaying}
-            durationSeconds={durationSeconds}
-            volume={volume}
-            lyricsExpanded={lyricsExpanded}
-            queueExpanded={queueExpanded}
-            tracks={upcomingTracks}
-            scrollGesture={detailsScrollGesture}
-            scrollOffset={detailsScrollOffset}
-            pauseAutoScroll={pauseLyricsAutoScroll}
-            shuffleEnabled={shuffleEnabled}
-            repeatMode={repeatMode}
-            autoplayEnabled={autoplayEnabled}
-            onToggleFavorite={onToggleFavorite}
-            onOpenTrackActions={openTrackActions}
-            onTogglePlayback={onTogglePlayback}
-            onSkipPrevious={onSkipPrevious}
-            onSkipNext={onSkipNext}
-            onHoldPreviousStart={onHoldPreviousStart}
-            onHoldPreviousEnd={onHoldPreviousEnd}
-            onHoldNextStart={onHoldNextStart}
-            onHoldNextEnd={onHoldNextEnd}
-            onSeek={onSeek}
-            onVolumeChange={onVolumeChange}
-            onToggleLyrics={toggleLyrics}
-            onToggleQueue={toggleQueue}
-            onPlayQueueTrack={onPlayQueueTrack}
-            onToggleShuffle={onToggleShuffle}
-            onToggleRepeat={onToggleRepeat}
-            onToggleAutoplay={onToggleAutoplay}
-            onClearQueue={onClearQueue}
-            onRemoveQueueTrack={onRemoveQueueTrack}
-          />
-          {trackActionsSheet}
-        </ReanimatedAnimated.View>
-      </GestureDetector>
+      <>
+        <GestureDetector gesture={panGesture}>
+          <ReanimatedAnimated.View
+            pointerEvents="auto"
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#090A0C' }]}
+          >
+            <LandscapePlayerLayout
+              track={renderedTrack}
+              incomingTrack={track}
+              trackTransitioning={isTrackTransitioning}
+              transitionProgress={trackTransition}
+              onDisplayedArtworkLoaded={finishTrackTransitionHandoff}
+              lyrics={lyrics}
+              lyricsAttribution={renderedTrack.lyricsAttribution}
+              hasLyrics={hasLyrics}
+              isLyricsLoading={isLyricsLoading}
+              lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
+              isFavorite={isFavorite}
+              canFavoriteTrack={canFavoriteTrack}
+              isLiveRadio={isLiveRadio}
+              isPlaying={isPlaying}
+              durationSeconds={durationSeconds}
+              volume={volume}
+              lyricsExpanded={lyricsExpanded}
+              queueExpanded={queueExpanded}
+              tracks={upcomingTracks}
+              scrollGesture={detailsScrollGesture}
+              scrollOffset={detailsScrollOffset}
+              pauseAutoScroll={pauseLyricsAutoScroll}
+              shuffleEnabled={shuffleEnabled}
+              repeatMode={repeatMode}
+              autoplayEnabled={autoplayEnabled}
+              onToggleFavorite={onToggleFavorite}
+              onOpenTrackActions={openTrackActions}
+              onTogglePlayback={onTogglePlayback}
+              onSkipPrevious={onSkipPrevious}
+              onSkipNext={onSkipNext}
+              onHoldPreviousStart={onHoldPreviousStart}
+              onHoldPreviousEnd={onHoldPreviousEnd}
+              onHoldNextStart={onHoldNextStart}
+              onHoldNextEnd={onHoldNextEnd}
+              onSeek={onSeek}
+              onVolumeChange={onVolumeChange}
+              onToggleLyrics={toggleLyrics}
+              onToggleQueue={toggleQueue}
+              onPlayQueueTrack={onPlayQueueTrack}
+              onToggleShuffle={onToggleShuffle}
+              onToggleRepeat={onToggleRepeat}
+              onToggleAutoplay={onToggleAutoplay}
+              onClearQueue={onClearQueue}
+              onRemoveQueueTrack={onRemoveQueueTrack}
+            />
+          </ReanimatedAnimated.View>
+        </GestureDetector>
+        {trackActionsSheet}
+      </>
     );
   }
 
@@ -1304,12 +1424,12 @@ const PlayerOverlayView = ({
               left: 0,
               width: windowWidth,
               height: windowHeight,
-              backgroundColor: 'transparent',
               shadowColor: '#000000',
               shadowOpacity: 0.28,
               shadowRadius: 18,
               shadowOffset: { width: 0, height: 8 },
               elevation: 12,
+              backgroundColor: '#090A0C',
             },
             frameStyle,
           ]}
@@ -1338,6 +1458,8 @@ const PlayerOverlayView = ({
             source={displayArtworkSource}
             contentFit="cover"
             blurRadius={20}
+            onDisplay={() => finishTrackTransitionHandoff(displayTrack.id)}
+            onError={() => finishTrackTransitionHandoff(displayTrack.id)}
             style={[
               { position: 'absolute', top: 0, left: 0, width: windowWidth, height: windowHeight },
               backgroundArtworkPositionStyle,

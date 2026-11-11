@@ -691,6 +691,48 @@ export default function App() {
     player.play();
   }, [activateTrack, player, rebuildNativeQueue, updatePlaybackQueue]);
 
+  // Reuse the native playlist so a skip does not discard its prepared queue items.
+  const navigateNativeQueueToTrack = useCallback((
+    track: Track,
+    direction: 'next' | 'previous',
+    wrapAtBoundary: boolean,
+  ) => {
+    const sourceTrackIds = playlistTrackIdsRef.current;
+    const currentTrackId = pendingPlaylistTrackIdRef.current ?? activeTrackRef.current?.id;
+    const currentSourceIndex = sourceTrackIds.indexOf(currentTrackId ?? '');
+    const targetSourceIndex = sourceTrackIds.indexOf(track.id);
+    if (currentSourceIndex < 0 || targetSourceIndex < 0 || sourceTrackIds.length === 0) return false;
+
+    const isBoundary = direction === 'next'
+      ? currentSourceIndex === sourceTrackIds.length - 1
+      : currentSourceIndex === 0;
+    if (isBoundary && !wrapAtBoundary) return false;
+
+    const expectedSourceIndex = direction === 'next'
+      ? (currentSourceIndex + 1) % sourceTrackIds.length
+      : (currentSourceIndex - 1 + sourceTrackIds.length) % sourceTrackIds.length;
+    if (targetSourceIndex !== expectedSourceIndex) return false;
+
+    pendingPlaylistTrackIdRef.current = track.id;
+    const nativeIndexIsStale = expoPlaylist.currentIndex !== currentSourceIndex;
+    const needsExplicitIndex = nativeIndexIsStale
+      || repeatMode === 'one'
+      || (isBoundary && expoPlaylist.loop !== 'all');
+
+    if (needsExplicitIndex) {
+      expoPlaylist.skipTo(targetSourceIndex);
+    } else if (direction === 'next') {
+      expoPlaylist.next();
+    } else {
+      expoPlaylist.previous();
+    }
+
+    // Preserve the existing skip behavior: choosing another track starts playback,
+    // even when the current track was paused.
+    expoPlaylist.play();
+    return true;
+  }, [expoPlaylist, repeatMode]);
+
   const playTrack = useCallback((track: Track, queue = tracksRef.current) => {
     playSelectedTrack(track, queue);
   }, [playSelectedTrack]);
@@ -845,22 +887,26 @@ export default function App() {
     const active = activeTrackRef.current;
     if (active?.provider === 'radio') {
       const currentQueue = queueRef.current;
-      const currentIndex = currentQueue.findIndex((track) => track.id === active.id);
+      const currentTrackId = pendingPlaylistTrackIdRef.current ?? active.id;
+      const currentIndex = currentQueue.findIndex((track) => track.id === currentTrackId);
       if (currentQueue.length > 0) {
-        playSelectedTrack(currentQueue[(currentIndex + 1 + currentQueue.length) % currentQueue.length], currentQueue);
+        const nextTrack = currentQueue[(currentIndex + 1 + currentQueue.length) % currentQueue.length];
+        if (!navigateNativeQueueToTrack(nextTrack, 'next', true)) playSelectedTrack(nextTrack, currentQueue);
       }
       return;
     }
 
     if (active?.provider === 'audius') {
       const currentQueue = queueRef.current;
-      const currentIndex = currentQueue.findIndex((track) => track.id === active.id);
+      const currentTrackId = pendingPlaylistTrackIdRef.current ?? active.id;
+      const currentIndex = currentQueue.findIndex((track) => track.id === currentTrackId);
       if (active.mixId && currentIndex >= currentQueue.length - 5) {
         void loadMoreAudiusMixTracks(active.mixId);
       }
       if (currentQueue.length > 0) {
         const nextIndex = (currentIndex + 1 + currentQueue.length) % currentQueue.length;
-        playSelectedTrack(currentQueue[nextIndex], currentQueue);
+        const nextTrack = currentQueue[nextIndex];
+        if (!navigateNativeQueueToTrack(nextTrack, 'next', true)) playSelectedTrack(nextTrack, currentQueue);
       }
       return;
     }
@@ -872,18 +918,21 @@ export default function App() {
     }
 
     const currentQueue = queueRef.current.length > 0 ? queueRef.current : tracksRef.current;
-    const currentIndex = currentQueue.findIndex((track) => track.id === activeTrackRef.current?.id);
+    const currentTrackId = pendingPlaylistTrackIdRef.current ?? activeTrackRef.current?.id;
+    const currentIndex = currentQueue.findIndex((track) => track.id === currentTrackId);
     const nextIndex = currentIndex + 1;
 
     if (nextIndex >= 0 && nextIndex < currentQueue.length) {
-      playSelectedTrack(currentQueue[nextIndex], currentQueue);
+      const nextTrack = currentQueue[nextIndex];
+      if (!navigateNativeQueueToTrack(nextTrack, 'next', false)) playSelectedTrack(nextTrack, currentQueue);
       return;
     }
 
     if (currentQueue.length === 0) return;
 
     if (repeatMode === 'all') {
-      playSelectedTrack(currentQueue[0], currentQueue);
+      const firstTrack = currentQueue[0];
+      if (!navigateNativeQueueToTrack(firstTrack, 'next', true)) playSelectedTrack(firstTrack, currentQueue);
       return;
     }
 
@@ -900,7 +949,7 @@ export default function App() {
         playSelectedTrack(nextTrack, [...currentQueue, nextTrack]);
       }
     }
-  }, [autoplayEnabled, loadMoreAudiusMixTracks, player, playSelectedTrack, repeatMode]);
+  }, [autoplayEnabled, loadMoreAudiusMixTracks, navigateNativeQueueToTrack, player, playSelectedTrack, repeatMode]);
 
   const handlePlayerStatus = useCallback((status: PlayerPlaybackStatus) => {
     playerCurrentTimeRef.current = status.currentTime;
@@ -972,24 +1021,28 @@ export default function App() {
     const activeTrack = activeTrackRef.current;
     if (activeTrack?.provider === 'radio') {
       const currentQueue = queueRef.current;
-      const currentIndex = currentQueue.findIndex((track) => track.id === activeTrack.id);
+      const currentTrackId = pendingPlaylistTrackIdRef.current ?? activeTrack.id;
+      const currentIndex = currentQueue.findIndex((track) => track.id === currentTrackId);
       if (currentQueue.length > 0) {
-        playSelectedTrack(currentQueue[(currentIndex - 1 + currentQueue.length) % currentQueue.length], currentQueue);
+        const previousTrack = currentQueue[(currentIndex - 1 + currentQueue.length) % currentQueue.length];
+        if (!navigateNativeQueueToTrack(previousTrack, 'previous', true)) playSelectedTrack(previousTrack, currentQueue);
       }
       return;
     }
 
-    if (playerCurrentTimeRef.current > 3) {
+    if (!pendingPlaylistTrackIdRef.current && playerCurrentTimeRef.current > 3) {
       void player.seekTo(0);
       return;
     }
     const currentQueue = queueRef.current.length > 0 ? queueRef.current : tracksRef.current;
-    const currentIndex = currentQueue.findIndex((track) => track.id === activeTrackRef.current?.id);
+    const currentTrackId = pendingPlaylistTrackIdRef.current ?? activeTrackRef.current?.id;
+    const currentIndex = currentQueue.findIndex((track) => track.id === currentTrackId);
     if (currentQueue.length > 0) {
       const previousIndex = (currentIndex - 1 + currentQueue.length) % currentQueue.length;
-      playSelectedTrack(currentQueue[previousIndex], currentQueue);
+      const previousTrack = currentQueue[previousIndex];
+      if (!navigateNativeQueueToTrack(previousTrack, 'previous', true)) playSelectedTrack(previousTrack, currentQueue);
     }
-  }, [playSelectedTrack, player]);
+  }, [navigateNativeQueueToTrack, playSelectedTrack, player]);
 
   useEffect(() => {
     const mediaControls = systemMediaControls;

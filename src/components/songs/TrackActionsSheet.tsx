@@ -151,19 +151,34 @@ export const TrackActionsSheet = ({
   const [backdropDimOpacity] = useState(() => Animated.multiply(backdropOpacity, 0.32));
   const [pageOpacity] = useState(() => new Animated.Value(1));
   const dismissing = useRef(false);
+  const safeAnchor = {
+    x: Number.isFinite(anchor.x) ? Math.max(0, Math.min(anchor.x, windowWidth)) : windowWidth / 2,
+    y: Number.isFinite(anchor.y) ? Math.max(0, Math.min(anchor.y, windowHeight)) : windowHeight / 2,
+    width: Number.isFinite(anchor.width) ? Math.max(0, Math.min(anchor.width, windowWidth)) : 44,
+    height: Number.isFinite(anchor.height) ? Math.max(0, Math.min(anchor.height, windowHeight)) : 44,
+  };
   const actionCardWidth = Math.min(windowWidth - 40, 190);
   const actionMenuHeight = playlistMode ? 188 : 246;
   const expandedMenuHeight = Math.round(windowHeight * 0.76);
   const expandedMenuTop = Math.max(54, (windowHeight - expandedMenuHeight) / 2);
-  const preferredTop = anchor.y + anchor.height + 8;
+  const preferredTop = safeAnchor.y + safeAnchor.height + 8;
   const actionMenuTop = Math.max(54, Math.min(
-    preferredTop + actionMenuHeight <= windowHeight - 24 ? preferredTop : anchor.y - actionMenuHeight - 8,
+    preferredTop + actionMenuHeight <= windowHeight - 24 ? preferredTop : safeAnchor.y - actionMenuHeight - 8,
     windowHeight - actionMenuHeight - 24,
   ));
-  const actionMenuLeft = Math.max(20, Math.min(anchor.x + anchor.width - actionCardWidth, windowWidth - actionCardWidth - 20));
+  const actionMenuLeft = Math.max(20, Math.min(safeAnchor.x + safeAnchor.width - actionCardWidth, windowWidth - actionCardWidth - 20));
+  const clampTransformOrigin = (value: number, extent: number) => Math.max(0, Math.min(value, Math.max(0, extent)));
   const cardTransformOrigin = page === 'actions'
-    ? [anchor.x + anchor.width / 2 - actionMenuLeft, anchor.y + anchor.height / 2 - actionMenuTop, 0]
-    : [anchor.x + anchor.width / 2 - 16, anchor.y + anchor.height / 2 - expandedMenuTop, 0];
+    ? [
+      clampTransformOrigin(safeAnchor.x + safeAnchor.width / 2 - actionMenuLeft, actionCardWidth),
+      clampTransformOrigin(safeAnchor.y + safeAnchor.height / 2 - actionMenuTop, actionMenuHeight),
+      0,
+    ]
+    : [
+      clampTransformOrigin(safeAnchor.x + safeAnchor.width / 2 - 16, windowWidth - 32),
+      clampTransformOrigin(safeAnchor.y + safeAnchor.height / 2 - expandedMenuTop, expandedMenuHeight),
+      0,
+    ];
   const [animatedTop] = useState(() => new Animated.Value(actionMenuTop));
   const [animatedLeft] = useState(() => new Animated.Value(actionMenuLeft));
   const [animatedWidth] = useState(() => new Animated.Value(actionCardWidth));
@@ -345,6 +360,7 @@ export const TrackActionsSheet = ({
       animationType="none"
       onRequestClose={dismiss}
       presentationStyle="overFullScreen"
+      supportedOrientations={['portrait', 'portrait-upside-down', 'landscape', 'landscape-left', 'landscape-right']}
       statusBarTranslucent
     >
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
