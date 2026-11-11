@@ -666,6 +666,7 @@ const PlayerOverlayView = ({
       key={trackActions.track.id}
       track={trackActions.track}
       anchor={trackActions.anchor}
+      playerMenu
       visible
       playlists={playlists}
       hasActiveTrack={hasActiveTrack}

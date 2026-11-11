@@ -28,6 +28,7 @@ type TrackActionsSheetProps = {
   track: Track | null;
   anchor: SongMenuAnchor;
   playlistMode?: boolean;
+  playerMenu?: boolean;
   visible: boolean;
   playlists: PlaylistSummary[];
   hasActiveTrack: boolean;
@@ -121,6 +122,7 @@ export const TrackActionsSheet = ({
   track,
   anchor,
   playlistMode = false,
+  playerMenu = false,
   visible,
   playlists,
   hasActiveTrack,
@@ -482,15 +484,17 @@ export const TrackActionsSheet = ({
                       >
                         <Ionicons name="create-outline" size={29} color="#F5F5F7" />
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={toggleFavorite}
-                        disabled={busy}
-                        accessibilityRole="button"
-                        accessibilityLabel={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                        style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}
-                      >
-                        <Ionicons name={track.isFavorite ? 'star' : 'star-outline'} size={29} color="#F5F5F7" />
-                      </TouchableOpacity>
+                      {playerMenu ? null : (
+                        <TouchableOpacity
+                          onPress={toggleFavorite}
+                          disabled={busy}
+                          accessibilityRole="button"
+                          accessibilityLabel={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                          style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}
+                        >
+                          <Ionicons name={track.isFavorite ? 'star' : 'star-outline'} size={29} color="#F5F5F7" />
+                        </TouchableOpacity>
+                      )}
                     </View>
                     <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
                     <ActionRow icon="list-outline" title="Add to playlist" onPress={() => transitionToPage('playlist')} showChevron />
