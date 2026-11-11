@@ -8,7 +8,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { requireOptionalNativeModule } from 'expo';
 import { Directory } from 'expo-file-system';
+import { LinearGradient } from 'expo-linear-gradient';
 import { WebView } from 'react-native-webview';
+import { GlassSurface } from '../../glass';
 import { LibraryList } from '../components/library/LibraryList';
 import { TopBar } from '../components/library/TopBar';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
@@ -160,10 +162,26 @@ const LibraryHomeScreen = ({
     deleteTrack,
   } = usePlaybackActions();
   const [selectedTrackMenu, setSelectedTrackMenu] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
+  const libraryScrollY = useMemo(() => new Animated.Value(0), []);
+  const libraryTopFadeOpacity = libraryScrollY.interpolate({
+    inputRange: [0, 10, 26],
+    outputRange: [0, 0.75, 1],
+    extrapolate: 'clamp',
+  });
+  const libraryScrollHandler = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: libraryScrollY } } }], { useNativeDriver: true }),
+    [libraryScrollY],
+  );
 
   return (
     <SafeAreaView className="flex-1 bg-black" edges={['top']}>
-      <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom: 190 }}>
+      <Animated.ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 190 }}
+        onScroll={libraryScrollHandler}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+      >
         <TopBar onProfilePress={() => navigation.navigate('DeveloperProfile')} />
         <LibraryList
           onSelectCategory={(title) => {
@@ -212,7 +230,28 @@ const LibraryHomeScreen = ({
             )
           )}
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: -24,
+          left: 0,
+          right: 0,
+          height: 170,
+          zIndex: 15,
+          elevation: 15,
+          opacity: libraryTopFadeOpacity,
+        }}
+      >
+        <LinearGradient
+          colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+          locations={[0, 0.32, 0.68, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
       {selectedTrackMenu ? (
         <TrackActionsSheet
           key={selectedTrackMenu.track.id}
@@ -260,6 +299,16 @@ const DeveloperProfileScreen = ({
   const [spicyLyricsKeyDraft, setSpicyLyricsKeyDraft] = useState('');
   const [isEditingSpicyLyricsKey, setIsEditingSpicyLyricsKey] = useState(false);
   const [isSavingSpicyLyricsKey, setIsSavingSpicyLyricsKey] = useState(false);
+  const profileScrollY = useMemo(() => new Animated.Value(0), []);
+  const profileTopFadeOpacity = profileScrollY.interpolate({
+    inputRange: [0, 10, 26],
+    outputRange: [0, 0.75, 1],
+    extrapolate: 'clamp',
+  });
+  const profileScrollHandler = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: profileScrollY } } }], { useNativeDriver: true }),
+    [profileScrollY],
+  );
   const links = [
     { title: 'GitHub', subtitle: 'github.com/egokam', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
     { title: 'Instagram', subtitle: '@kotmanii', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
@@ -413,21 +462,28 @@ const DeveloperProfileScreen = ({
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
-      <View style={{ height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' }}>
+      <View
+        pointerEvents="box-none"
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', zIndex: 20, elevation: 20 }}
+      >
         <TouchableOpacity
           onPress={navigation.goBack}
           accessibilityRole="button"
           accessibilityLabel="Back to Library"
-          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
+          style={{ position: 'relative', overflow: 'hidden', width: 42, height: 42, borderRadius: 21, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
         >
+          <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }} />
           <Ionicons name="chevron-back" size={23} color="white" />
         </TouchableOpacity>
-        <Text style={{ flex: 1, color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center', marginRight: 42 }}>
-          Developer
-        </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 160 }} showsVerticalScrollIndicator={false}>
+      <Animated.ScrollView
+        style={StyleSheet.absoluteFill}
+        contentContainerStyle={{ paddingTop: 56, paddingHorizontal: 20, paddingBottom: 160 }}
+        showsVerticalScrollIndicator={false}
+        onScroll={profileScrollHandler}
+        scrollEventThrottle={16}
+      >
         <View style={{ alignItems: 'center', marginTop: 30, marginBottom: 34 }}>
           <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#4A222A' }}>
             <Ionicons name="person" size={52} color="#FA5265" />
@@ -784,7 +840,28 @@ const DeveloperProfileScreen = ({
         <Text style={{ color: '#55555A', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
           Version {Constants.expoConfig?.version ?? '2.0.1'}
         </Text>
-      </ScrollView>
+      </Animated.ScrollView>
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: -24,
+          left: 0,
+          right: 0,
+          height: 170,
+          zIndex: 15,
+          elevation: 15,
+          opacity: profileTopFadeOpacity,
+        }}
+      >
+        <LinearGradient
+          colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+          locations={[0, 0.32, 0.68, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
     </SafeAreaView>
   );
 };
