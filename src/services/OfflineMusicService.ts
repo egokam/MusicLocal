@@ -1660,7 +1660,7 @@ export const OfflineMusicService = {
   },
 
   /** Remove competing local lyric files, optionally keeping the selected sidecar. */
-  async removeLyricsSidecars(track: Track, preserveUri?: string): Promise<Track> {
+  async removeLyricsSidecars(track: Track, preserveUri?: string, updateIndex = true): Promise<Track> {
     const current = await this.getDownloadedTracks();
     const savedTrack = current.find((item) => item.id === track.id);
     const baseTrack = savedTrack ? { ...savedTrack, ...track, localUri: savedTrack.localUri } : track;
@@ -1710,7 +1710,7 @@ export const OfflineMusicService = {
       lyricsSource: undefined,
     };
 
-    if (!savedTrack) return cleanedTrack;
+    if (!savedTrack || !updateIndex) return cleanedTrack;
     await saveIndexedTracks(current.map((item) => item.id === track.id ? cleanedTrack : item));
     return cleanedTrack;
   },
@@ -1718,25 +1718,19 @@ export const OfflineMusicService = {
   /** Keep the track index aligned with synchronized lyrics already embedded in its MP3. */
   async saveEmbeddedSyncedLyrics(track: Track, syncedLyrics: string): Promise<Track> {
     const replacementLyrics = deduplicateSyncedLyrics(syncedLyrics);
-    const cleanedTrack = await this.removeLyricsSidecars(track);
-    const current = await this.getDownloadedTracks();
-    const savedTrack = current.find((item) => item.id === track.id);
-    const updatedTrack: Track = {
-      ...cleanedTrack,
+    return this.saveEmbeddedLyrics({
+      ...track,
       syncedLyrics: replacementLyrics,
       plainLyrics: undefined,
       lyrics: parseLyrics(replacementLyrics),
+      lyricsTtml: undefined,
+      lyricsFormat: 'line',
       lyricsFileUri: undefined,
       lyricsAvailable: true,
       hasSyncedLyrics: true,
       hasPlainLyrics: false,
-      lyricsSource: 'embedded_lrc',
-    };
-    if (!savedTrack) return updatedTrack;
-
-    const persistedTrack = { ...savedTrack, ...updatedTrack, localUri: savedTrack.localUri };
-    await saveIndexedTracks(current.map((item) => item.id === track.id ? persistedTrack : item));
-    return persistedTrack;
+      lyricsSource: track.lyricsSource ?? 'embedded_lrc',
+    }, replacementLyrics);
   },
 
   /** Store TTML, timed LRC, or plain lyrics in the app's private track index. */
@@ -1744,39 +1738,39 @@ export const OfflineMusicService = {
     const replacementLyrics = lyricsText.trim();
     if (!replacementLyrics) throw new Error('Add lyrics before saving them with this track.');
 
-    const cleanedTrack = await this.removeLyricsSidecars(track);
+    const cleanedTrack = await this.removeLyricsSidecars(track, undefined, false);
     const current = await this.getDownloadedTracks();
     const savedTrack = current.find((item) => item.id === track.id);
-    const lyricsFormat = track.lyricsFormat === 'word' && track.lyricsTtml?.trim()
+    const hasTtmlMarkup = /<(?:[\w.-]+:)?tt\b/i.test(replacementLyrics);
+    const isTtml = track.lyricsFormat === 'ttml' || track.lyricsFormat === 'word' || (!track.lyricsFormat && hasTtmlMarkup);
+    const hasTimedRows = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/.test(replacementLyrics);
+    const lyricsFormat = isTtml
       ? 'ttml'
-      : track.lyricsFormat === 'ttml' && track.lyricsTtml?.trim()
-        ? 'ttml'
-        : track.lyricsFormat === 'plain'
-          ? 'plain'
-          : 'line';
-    const storedText = lyricsFormat === 'ttml'
-      ? track.lyricsTtml!.trim()
-      : lyricsFormat === 'plain'
-        ? (track.plainLyrics?.trim() || replacementLyrics)
-        : (track.syncedLyrics?.trim() || replacementLyrics);
+      : track.lyricsFormat === 'plain'
+        ? 'plain'
+        : track.lyricsFormat === 'line' || hasTimedRows
+          ? 'line'
+          : 'plain';
+    const storedText = lyricsFormat === 'line' ? deduplicateSyncedLyrics(replacementLyrics) : replacementLyrics;
+    const parsedLyrics = lyricsFormat === 'ttml'
+      ? track.lyricsTtml?.trim() === storedText ? track.lyrics ?? [] : []
+      : parseLyrics(lyricsFormat === 'line' ? storedText : undefined, lyricsFormat === 'plain' ? storedText : undefined);
     const updatedTrack: Track = {
       ...cleanedTrack,
       ...track,
-      syncedLyrics: lyricsFormat === 'line' ? storedText : lyricsFormat === 'ttml' ? track.syncedLyrics : undefined,
+      syncedLyrics: lyricsFormat === 'line' ? storedText : undefined,
       plainLyrics: lyricsFormat === 'plain' ? storedText : undefined,
-      lyricsTtml: lyricsFormat === 'ttml' ? track.lyricsTtml : undefined,
-      lyrics: track.lyrics?.length
-        ? track.lyrics
-        : parseLyrics(
-          lyricsFormat === 'line' ? storedText : lyricsFormat === 'ttml' ? track.syncedLyrics : undefined,
-          lyricsFormat === 'plain' ? storedText : undefined,
-        ),
+      lyricsTtml: lyricsFormat === 'ttml' ? storedText : undefined,
+      lyrics: parsedLyrics,
       lyricsFileUri: undefined,
       lyricsFormat: lyricsFormat === 'ttml' && track.lyricsFormat === 'word' ? 'word' : lyricsFormat,
       lyricsAvailable: true,
       hasSyncedLyrics: lyricsFormat !== 'plain',
       hasPlainLyrics: lyricsFormat === 'plain',
-      lyricsSource: 'embedded_musiqapp',
+      lyricsSource: track.lyricsSource ?? 'embedded_musiqapp',
+      lyricsLookupProviders: undefined,
+      lyricsLookupIssues: undefined,
+      lyricsQualityWarning: undefined,
     };
     if (!savedTrack) return updatedTrack;
 

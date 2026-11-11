@@ -23,7 +23,7 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { RadioScreen } from './src/screens/RadioScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
-import { MusicCatalogService, getMusicApiHeaders, parseLyrics, type TrackEditChanges } from './src/services/MusicCatalogService';
+import { MusicCatalogService, getMusicApiHeaders, parseLyrics, parseTtmlLyrics, type TrackEditChanges } from './src/services/MusicCatalogService';
 import { LrcCheckerService } from './src/services/LrcCheckerService';
 import { OfflineMusicService } from './src/services/OfflineMusicService';
 import { Id3SynchronizedLyricsService } from './src/services/Id3SynchronizedLyricsService';
@@ -1106,28 +1106,37 @@ export default function App() {
     player.setVolume(nextVolume);
   }, [player]);
 
-  const updateTrackWithLyrics = useCallback(async (track: Track, syncedLyrics: string, embeddedOnly = false, embeddedMp3 = false) => {
-    const lyricsFormat = track.lyricsFormat ?? (parseLyrics(syncedLyrics).some((line) => line.timeMs !== null) ? 'line' : 'plain');
-    const lyricsTrack = {
+  const updateTrackWithLyrics = useCallback(async (track: Track, lyricsText: string, embeddedOnly = false, embeddedMp3 = false) => {
+    const replacementText = lyricsText.trim();
+    const lyricsFormat: NonNullable<Track['lyricsFormat']> = embeddedOnly
+      ? 'line'
+      : track.lyricsFormat ?? (parseLyrics(replacementText).some((line) => line.timeMs !== null) ? 'line' : 'plain');
+    const normalizedFormat: NonNullable<Track['lyricsFormat']> = lyricsFormat;
+    const isTtml = normalizedFormat === 'ttml' || normalizedFormat === 'word';
+    const ttmlText = isTtml ? replacementText : undefined;
+    const lyricsTrack: Track = {
       ...track,
-      syncedLyrics: lyricsFormat === 'plain' ? undefined : syncedLyrics,
-      plainLyrics: lyricsFormat === 'plain' ? syncedLyrics : undefined,
-      lyrics: track.lyrics?.length ? track.lyrics : parseLyrics(lyricsFormat === 'plain' ? undefined : syncedLyrics, lyricsFormat === 'plain' ? syncedLyrics : undefined),
-      lyricsFormat,
+      syncedLyrics: normalizedFormat === 'line' ? replacementText : undefined,
+      plainLyrics: normalizedFormat === 'plain' ? replacementText : undefined,
+      lyricsTtml: ttmlText,
+      lyrics: isTtml
+        ? parseTtmlLyrics(replacementText)
+        : parseLyrics(normalizedFormat === 'line' ? replacementText : undefined, normalizedFormat === 'plain' ? replacementText : undefined),
+      lyricsFormat: normalizedFormat,
       lyricsAvailable: true,
-      hasSyncedLyrics: lyricsFormat !== 'plain',
-      hasPlainLyrics: lyricsFormat === 'plain',
+      hasSyncedLyrics: normalizedFormat !== 'plain',
+      hasPlainLyrics: normalizedFormat === 'plain',
       lyricsSource: embeddedOnly ? 'embedded_lrc' : embeddedMp3 ? 'embedded_musiqapp' : track.lyricsSource,
     };
     const updated = embeddedOnly
-      ? await OfflineMusicService.saveEmbeddedSyncedLyrics(lyricsTrack, syncedLyrics)
+      ? await OfflineMusicService.saveEmbeddedSyncedLyrics(lyricsTrack, replacementText)
       : embeddedMp3
-        ? await OfflineMusicService.saveEmbeddedLyrics(lyricsTrack, syncedLyrics)
-      : (lyricsFormat === 'ttml' || lyricsFormat === 'word') && lyricsTrack.lyricsTtml
+        ? await OfflineMusicService.saveEmbeddedLyrics(lyricsTrack, replacementText)
+      : (normalizedFormat === 'ttml' || normalizedFormat === 'word') && lyricsTrack.lyricsTtml
         ? await OfflineMusicService.saveTtmlLyrics(lyricsTrack, lyricsTrack.lyricsTtml)
-        : lyricsFormat === 'plain'
-          ? await OfflineMusicService.savePlainLyrics(lyricsTrack, syncedLyrics)
-          : await OfflineMusicService.saveSyncedLyrics(lyricsTrack, syncedLyrics);
+        : normalizedFormat === 'plain'
+          ? await OfflineMusicService.savePlainLyrics(lyricsTrack, replacementText)
+          : await OfflineMusicService.saveSyncedLyrics(lyricsTrack, replacementText);
     const trackWithFavoriteState = {
       ...updated,
       isFavorite: favoriteIdsRef.current.has(updated.id),
@@ -1328,24 +1337,27 @@ export default function App() {
       }
     }
     const sourceTrack = libraryTrack
-      ? { ...track, id: libraryTrack.id, localUri: libraryTrack.localUri }
+      ? { ...libraryTrack, ...track, id: libraryTrack.id, localUri: libraryTrack.localUri }
       : track;
     const lyricsSource = track.lyricsSource ?? (track.lyricsFormat === 'plain' ? 'saved_text' : 'saved_lrc');
     if (sourceTrack.localUri) {
       const audioFile = new File(sourceTrack.localUri);
       if (audioFile.extension.toLowerCase() === '.mp3') {
-        const format = (sourceTrack.lyricsFormat === 'ttml' || sourceTrack.lyricsFormat === 'word') && sourceTrack.lyricsTtml?.trim()
+        const replacementText = syncedLyrics.trim();
+        const isTtml = sourceTrack.lyricsFormat === 'ttml' || sourceTrack.lyricsFormat === 'word';
+        const format = isTtml
           ? 'ttml'
           : sourceTrack.lyricsFormat === 'plain'
             ? 'plain'
-            : sourceTrack.lyricsFormat === 'line' || parseLyrics(syncedLyrics).some((line) => line.timeMs !== null)
+            : sourceTrack.lyricsFormat === 'line' || parseLyrics(replacementText).some((line) => line.timeMs !== null)
               ? 'line'
               : 'plain';
-        const text = format === 'ttml'
-          ? sourceTrack.lyricsTtml!.trim()
+        const text = replacementText;
+        const lyricsTrack = format === 'ttml'
+          ? { ...sourceTrack, lyricsFormat: sourceTrack.lyricsFormat, lyricsTtml: text, lyrics: parseTtmlLyrics(text) }
           : format === 'plain'
-            ? (sourceTrack.plainLyrics?.trim() || syncedLyrics.trim())
-            : (sourceTrack.syncedLyrics?.trim() || syncedLyrics.trim());
+            ? { ...sourceTrack, lyricsFormat: 'plain' as const, plainLyrics: text, syncedLyrics: undefined, lyricsTtml: undefined, lyrics: parseLyrics(undefined, text) }
+            : { ...sourceTrack, lyricsFormat: 'line' as const, syncedLyrics: text, plainLyrics: undefined, lyricsTtml: undefined, lyrics: parseLyrics(text) };
         const preparedMp3 = await Id3SynchronizedLyricsService.createVerifiedMp3WithLyrics(
           sourceTrack.localUri,
           audioFile.name,
@@ -1365,8 +1377,8 @@ export default function App() {
         try {
           await OfflineMusicService.replaceTrackAudio(sourceTrack, preparedMp3.uri);
           const updated = await updateTrackWithLyrics(
-            { ...sourceTrack, lyricsSource: 'embedded_musiqapp' },
-            syncedLyrics,
+            { ...lyricsTrack, lyricsSource: 'embedded_musiqapp' },
+            text,
             false,
             true,
           );
@@ -1397,18 +1409,24 @@ export default function App() {
     if (lyrics === undefined) return updateTrackEverywhere(updatedMetadata);
 
     const editedLyrics = lyrics.trim();
-    const timed = parseLyrics(editedLyrics).some((line) => line.timeMs !== null && line.text.trim());
+    if (!editedLyrics) {
+      const clearedTrack = await OfflineMusicService.clearEmbeddedLyrics(updatedMetadata);
+      return updateTrackEverywhere(clearedTrack);
+    }
+    const ttml = /<(?:[\w.-]+:)?tt\b/i.test(editedLyrics);
+    const ttmlLines = ttml ? parseTtmlLyrics(editedLyrics) : [];
+    const timed = ttmlLines.length > 0 || parseLyrics(editedLyrics).some((line) => line.timeMs !== null && line.text.trim());
     const lyricsTrack: Track = {
       ...updatedMetadata,
-      syncedLyrics: timed ? editedLyrics : undefined,
-      plainLyrics: editedLyrics && !timed ? editedLyrics : undefined,
-      lyrics: parseLyrics(timed ? editedLyrics : undefined, timed ? undefined : editedLyrics),
-      lyricsFormat: timed ? 'line' : 'plain',
-      lyricsTtml: undefined,
+      syncedLyrics: ttml ? undefined : timed ? editedLyrics : undefined,
+      plainLyrics: !ttml && !timed ? editedLyrics : undefined,
+      lyrics: ttml ? ttmlLines : parseLyrics(timed ? editedLyrics : undefined, timed ? undefined : editedLyrics),
+      lyricsFormat: ttml ? 'ttml' : timed ? 'line' : 'plain',
+      lyricsTtml: ttml ? editedLyrics : undefined,
       lyricsAvailable: Boolean(editedLyrics),
-      hasSyncedLyrics: timed,
-      hasPlainLyrics: Boolean(editedLyrics && !timed),
-      lyricsSource: timed ? 'saved_lrc' : undefined,
+      hasSyncedLyrics: ttml || timed,
+      hasPlainLyrics: Boolean(!ttml && !timed),
+      lyricsSource: ttml ? 'saved_ttml' : timed ? 'saved_lrc' : undefined,
       lyricsAttribution: undefined,
     };
     return saveTrackLyrics(lyricsTrack, editedLyrics);

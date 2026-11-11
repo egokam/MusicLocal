@@ -254,7 +254,7 @@ const lrcFromLyricLines = (lyrics: LyricLine[]) => lyrics
   .map((line) => `${lrcTimestampFromMs(line.timeMs!)}${line.text.trim()}`)
   .join('\n');
 
-const parseTtmlLyrics = (ttml: string): LyricLine[] => {
+export const parseTtmlLyrics = (ttml: string): LyricLine[] => {
   const paragraphs = [...ttml.matchAll(/<(?:[\w.-]+:)?p\b([^>]*)>([\s\S]*?)<\/(?:[\w.-]+:)?p\s*>/gi)];
   const lines: LyricLine[] = [];
   for (const paragraph of paragraphs) {
@@ -838,18 +838,45 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
   const isIndexedEmbeddedLyrics = localTrack.lyricsSource === 'embedded_lrc'
     || localTrack.lyricsSource === 'embedded_text'
     || localTrack.lyricsSource === 'embedded_musiqapp';
-  if (isIndexedEmbeddedLyrics && localTrack.lyricsFormat === 'ttml' && localTrack.lyricsTtml?.trim()) {
+  if (isIndexedEmbeddedLyrics && (localTrack.lyricsFormat === 'ttml' || localTrack.lyricsFormat === 'word') && localTrack.lyricsTtml?.trim()) {
     const lyrics = parseTtmlLyrics(localTrack.lyricsTtml);
-    const syncedLyrics = lrcFromLyricLines(lyrics);
-    if (lyrics.length) return {
+    return {
       ...localTrack,
       lyrics,
-      syncedLyrics: syncedLyrics || localTrack.syncedLyrics,
+      syncedLyrics: undefined,
+      plainLyrics: undefined,
       lyricsAvailable: true,
-      hasSyncedLyrics: Boolean(syncedLyrics),
+      hasSyncedLyrics: true,
+      hasPlainLyrics: false,
     };
   }
-  if (isIndexedEmbeddedLyrics && hasRenderableLyrics(localTrack)) return localTrack;
+  if (isIndexedEmbeddedLyrics && hasRenderableLyrics(localTrack)) {
+    const indexedSynced = localTrack.syncedLyrics?.trim();
+    const indexedPlain = localTrack.plainLyrics?.trim();
+    if (localTrack.lyricsFormat === 'word' || localTrack.lyricsFormat === 'ttml') return localTrack;
+
+    const useSynced = Boolean(indexedSynced) && (
+      localTrack.lyricsFormat !== 'plain'
+      && (
+        localTrack.lyricsFormat === 'line'
+        || localTrack.hasSyncedLyrics
+        || hasTimedText(indexedSynced ?? '')
+      )
+    );
+    const syncedLyrics = useSynced ? deduplicateSyncedLyrics(indexedSynced ?? '') : undefined;
+    const plainLyrics = useSynced ? undefined : indexedPlain ?? indexedSynced;
+    if (syncedLyrics || plainLyrics) return {
+      ...localTrack,
+      syncedLyrics,
+      plainLyrics,
+      lyrics: parseLyrics(syncedLyrics, plainLyrics),
+      lyricsFormat: syncedLyrics ? 'line' : 'plain',
+      lyricsAvailable: true,
+      hasSyncedLyrics: Boolean(syncedLyrics),
+      hasPlainLyrics: Boolean(plainLyrics),
+    };
+    return localTrack;
+  }
   if (!track.localUri) return localTrack;
   try {
     const audioFile = new File(track.localUri);
@@ -888,16 +915,15 @@ const readEmbeddedLyrics = async (track: Track, localTrack: Track): Promise<Trac
     if (embedded.format === 'ttml') {
       const lyrics = parseTtmlLyrics(embedded.text);
       if (!lyrics.length) return localTrack;
-      const syncedLyrics = lrcFromLyricLines(lyrics);
       return {
         ...localTrack,
-        syncedLyrics: syncedLyrics || undefined,
+        syncedLyrics: undefined,
         plainLyrics: undefined,
         lyrics,
         lyricsTtml: embedded.text,
         lyricsFormat: 'ttml',
         lyricsAvailable: true,
-        hasSyncedLyrics: Boolean(syncedLyrics),
+        hasSyncedLyrics: true,
         hasPlainLyrics: false,
         lyricsSource: embedded.source,
         lyricsAttribution: embedded.attribution,

@@ -35,6 +35,9 @@ const hasTimedLyrics = (track: Track) => Boolean(
 );
 
 const lyricsTextForTrack = (track: Track) => {
+  if ((track.lyricsFormat === 'ttml' || track.lyricsFormat === 'word') && track.lyricsTtml?.trim()) {
+    return track.lyricsTtml;
+  }
   if (track.syncedLyrics?.trim()) return track.syncedLyrics;
   if (track.plainLyrics?.trim()) return track.plainLyrics;
   return track.lyrics?.map((line) => line.text).filter(Boolean).join('\n') ?? '';
@@ -402,11 +405,21 @@ export const LrcCheckerScreen = ({
   const discardReview = () => {
     if (!reviewTrack) return;
     const trackId = reviewTrack.id;
-    if (reviewTrack.lyricsSource !== 'spicy_lyrics_api') {
-      void LrcCheckerService.updateRecord(trackId, {
-        state: reviewTrack.plainLyrics?.trim() ? 'plain' : 'missing',
-      });
-    }
+    const savedTrack = tracks.find((track) => track.id === trackId);
+    const savedLyrics = savedTrack
+      ? lyricsTextForTrack(savedTrack).trim()
+      : '';
+    const savedState: LrcCheckState = !savedTrack || !savedLyrics
+      ? 'missing'
+      : savedTrack.lyricsFormat === 'plain' || (!hasTimedLyrics(savedTrack) && !savedTrack.hasSyncedLyrics)
+        ? 'plain'
+        : 'synced';
+    void LrcCheckerService.updateRecord(trackId, {
+      state: savedState,
+      result: savedLyrics && savedTrack ? savedTrack : undefined,
+      pendingReview: false,
+      error: undefined,
+    });
     setReviewTrack(null);
   };
 
