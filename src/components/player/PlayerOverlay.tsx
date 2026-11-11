@@ -1091,6 +1091,11 @@ const PlayerOverlayView = ({
   const frameStyle = useAnimatedStyle(() => ({
     width: interpolate(progress.value, [0, 1], [windowWidth - 32, windowWidth]),
     height: interpolate(progress.value, [0, 1], [windowHeight - miniTop - miniBottom, windowHeight]),
+    backgroundColor: interpolateColor(
+      progress.value,
+      [0, 0.06, 1],
+      ['rgba(9,10,12,0)', 'rgba(9,10,12,1)', 'rgba(9,10,12,1)'],
+    ),
     borderWidth: interpolate(progress.value, [0, 1], [1, 0]),
     borderColor: interpolateColor(
       progress.value,
@@ -1430,7 +1435,7 @@ const PlayerOverlayView = ({
               shadowRadius: 18,
               shadowOffset: { width: 0, height: 8 },
               elevation: 12,
-              backgroundColor: '#090A0C',
+              backgroundColor: 'transparent',
             },
             frameStyle,
           ]}
