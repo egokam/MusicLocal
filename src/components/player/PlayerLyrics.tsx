@@ -57,6 +57,7 @@ type LyricLineItemProps = {
 const LYRIC_FONT_SIZE = 22;
 const LYRIC_ACTIVE_COLOR = '#FA5265';
 const LYRIC_WAVE_LEAD_MS = 70;
+const LYRIC_GAP_ELLIPSIS_THRESHOLD_MS = 2_000;
 const isRightToLeftText = (text: string) => {
   const firstStrongCharacter = text.match(/[\u0590-\u08FF]|[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]/)?.[0];
   return Boolean(firstStrongCharacter && /[\u0590-\u08FF]/.test(firstStrongCharacter));
@@ -64,6 +65,63 @@ const isRightToLeftText = (text: string) => {
 
 const wordEndTime = (words: LyricWord[], index: number, fallbackEndTimeMs: number | null) =>
   words[index].endTimeMs ?? words[index + 1]?.startTimeMs ?? fallbackEndTimeMs;
+
+const explicitLyricEndTime = (line: LyricLine) => {
+  const endTimes = [line.endTimeMs];
+  const addWordEndTimes = (words?: LyricWord[]) => words?.forEach((word) => {
+    endTimes.push(word.endTimeMs);
+    word.syllables?.forEach((syllable) => endTimes.push(syllable.endTimeMs));
+  });
+  addWordEndTimes(line.words);
+  line.background?.forEach((voice) => addWordEndTimes(voice.words));
+
+  const validEndTimes = endTimes.filter((time): time is number => typeof time === 'number' && Number.isFinite(time));
+  return validEndTimes.length ? Math.max(...validEndTimes) : null;
+};
+
+const createEllipsisLine = (startTimeMs: number, endTimeMs: number): LyricLine => ({
+  timeMs: startTimeMs,
+  endTimeMs,
+  text: '. . .',
+});
+
+const createDisplayLyrics = (lyrics: LyricLine[], durationMs: number) => {
+  const timedLines = lyrics
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => line.text.trim().length > 0 && line.timeMs !== null)
+    .sort((first, second) => first.line.timeMs! - second.line.timeMs! || first.index - second.index);
+  const ellipsesAfterIndex = new Map<number, LyricLine>();
+  const firstTimedLine = timedLines[0]?.line;
+  const leadingEllipsis = firstTimedLine?.timeMs !== null && firstTimedLine?.timeMs !== undefined
+    && firstTimedLine.timeMs > 1_000
+    ? createEllipsisLine(0, firstTimedLine.timeMs)
+    : null;
+
+  for (let index = 0; index < timedLines.length - 1; index += 1) {
+    const current = timedLines[index];
+    const next = timedLines[index + 1];
+    const explicitEndTimeMs = explicitLyricEndTime(current.line);
+    if (explicitEndTimeMs === null || current.line.timeMs === null || next.line.timeMs === null) continue;
+
+    const gapStartTimeMs = Math.max(current.line.timeMs, explicitEndTimeMs);
+    if (next.line.timeMs - gapStartTimeMs <= LYRIC_GAP_ELLIPSIS_THRESHOLD_MS) continue;
+    ellipsesAfterIndex.set(current.index, createEllipsisLine(gapStartTimeMs, next.line.timeMs));
+  }
+
+  const lastTimedLine = timedLines[timedLines.length - 1]?.line;
+  const lastLineEndTimeMs = lastTimedLine ? explicitLyricEndTime(lastTimedLine) : null;
+  const trailingEllipsis = lastTimedLine?.timeMs !== null && lastTimedLine?.timeMs !== undefined
+    && lastLineEndTimeMs !== null
+    && durationMs - Math.max(lastTimedLine.timeMs, lastLineEndTimeMs) > LYRIC_GAP_ELLIPSIS_THRESHOLD_MS
+    ? createEllipsisLine(Math.max(lastTimedLine.timeMs, lastLineEndTimeMs), durationMs)
+    : null;
+
+  return [
+    ...(leadingEllipsis ? [leadingEllipsis] : []),
+    ...lyrics.flatMap((line, index) => [line, ...(ellipsesAfterIndex.has(index) ? [ellipsesAfterIndex.get(index)!] : [])]),
+    ...(trailingEllipsis ? [trailingEllipsis] : []),
+  ];
+};
 
 type LyricWordSpan = { start: number; end: number };
 
@@ -940,21 +998,10 @@ const PlayerLyricsList = React.memo(PlayerLyricsView, areLyricsListPropsEqual);
 
 const PlayerLyricsStatusView = (props: PlayerLyricsProps) => {
   const { currentTime, duration } = usePlayerPlaybackStatus();
-  const displayLyrics = useMemo(() => {
-    const firstTimedLine = props.lyrics.find((line) => line.text.trim().length > 0 && line.timeMs !== null);
-    if (!firstTimedLine || firstTimedLine.timeMs === null || firstTimedLine.timeMs <= 1_000) {
-      return props.lyrics;
-    }
-
-    return [
-      {
-        timeMs: 0,
-        endTimeMs: firstTimedLine.timeMs,
-        text: '. . .',
-      },
-      ...props.lyrics,
-    ];
-  }, [props.lyrics]);
+  const displayLyrics = useMemo(
+    () => createDisplayLyrics(props.lyrics, duration * 1000),
+    [duration, props.lyrics],
+  );
   const currentTimeMs = currentTime * 1000;
   const activeLineIndex = displayLyrics.reduce((activeIndex, line, index) =>
     line.text.trim().length > 0 && line.timeMs !== null && line.timeMs <= currentTimeMs

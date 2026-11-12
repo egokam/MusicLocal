@@ -67,6 +67,53 @@ const mergeOfflineTrack = (remoteTrack: Track, offlineTrack?: Track): Track => {
   };
 };
 
+type NativePlaylistEntry = {
+  trackId: string;
+  sourceKey: string;
+  source: AudioSource;
+};
+
+type RepeatMode = 'off' | 'all' | 'one';
+
+const getNativePlaylistEntries = (queue: Track[], downloadedTracks: Track[]): NativePlaylistEntry[] => {
+  const downloadsById = new Map(downloadedTracks.map((track) => [track.id, track]));
+  return queue.flatMap((track) => {
+    const playableTrack = downloadsById.get(track.id) ?? track;
+    const uri = playableTrack.localUri ?? playableTrack.streamUrl;
+    if (!uri) return [];
+
+    const headers = !playableTrack.localUri && playableTrack.provider !== 'local'
+      ? getMusicApiHeaders()
+      : undefined;
+    const headerKey = headers ? Object.entries(headers).sort(([first], [second]) => first.localeCompare(second)) : [];
+    return [{
+      trackId: track.id,
+      sourceKey: JSON.stringify([track.id, uri, playableTrack.title, headerKey]),
+      source: {
+        uri,
+        name: playableTrack.title,
+        ...(headers ? { headers } : {}),
+      },
+    }];
+  });
+};
+
+const getNativePlaylistLoopMode = (
+  activeTrack: Track | null,
+  repeatMode: RepeatMode,
+  nativeTrackIds: string[],
+  requestedTrackIds: string[],
+) => {
+  const nativeQueueMatches = nativeTrackIds.length === requestedTrackIds.length
+    && nativeTrackIds.every((trackId, index) => trackId === requestedTrackIds[index]);
+
+  if (activeTrack?.provider === 'radio' || activeTrack?.provider === 'audius') {
+    return nativeQueueMatches ? 'all' : 'none';
+  }
+  if (repeatMode === 'one') return 'single';
+  return repeatMode === 'all' && nativeQueueMatches ? 'all' : 'none';
+};
+
 const getWidgetLaunchTrackId = (url: string) => {
   const prefix = 'musiqapp://widget/play?trackId=';
   if (!url.startsWith(prefix)) return null;
@@ -178,6 +225,7 @@ export default function App() {
   const playerVolumeRef = useRef(1);
   const playerPlaybackRateRef = useRef(1);
   const playlistTrackIdsRef = useRef<string[]>([]);
+  const playlistTrackSourceKeysRef = useRef<string[]>([]);
   const pendingPlaylistTrackIdRef = useRef<string | null>(null);
   const rewindSeekIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchGeneration = useRef(0);
@@ -203,23 +251,10 @@ export default function App() {
   const rebuildNativeQueue = useCallback((nextQueue: Track[], startTrackId: string, preservePlayback: boolean) => {
     const wasPlaying = preservePlayback && playerPlayingRef.current;
     const previousTime = preservePlayback ? playerCurrentTimeRef.current : 0;
-    const sources = nextQueue.flatMap((track) => {
-      const playableTrack = downloadsRef.current.find((saved) => saved.id === track.id) ?? track;
-      const uri = playableTrack.localUri ?? playableTrack.streamUrl;
-      if (!uri) return [];
-      return [{
-        trackId: track.id,
-        source: {
-          uri,
-          name: playableTrack.title,
-          ...(!playableTrack.localUri && playableTrack.provider !== 'local'
-            ? { headers: getMusicApiHeaders() }
-            : {}),
-        } satisfies AudioSource,
-      }];
-    });
+    const sources = getNativePlaylistEntries(nextQueue, downloadsRef.current);
 
     playlistTrackIdsRef.current = sources.map(({ trackId }) => trackId);
+    playlistTrackSourceKeysRef.current = sources.map(({ sourceKey }) => sourceKey);
     const startIndex = Math.max(0, playlistTrackIdsRef.current.indexOf(startTrackId));
     pendingPlaylistTrackIdRef.current = playlistTrackIdsRef.current[startIndex] ?? null;
 
@@ -250,15 +285,74 @@ export default function App() {
     updatePlaybackQueue(nextQueue);
     const active = activeTrackRef.current;
     if (active && nextQueue.some((track) => track.id === active.id)) {
-      rebuildNativeQueue(nextQueue, active.id, true);
+      const requestedSources = getNativePlaylistEntries(nextQueue, downloadsRef.current);
+      const currentSourceIds = playlistTrackIdsRef.current;
+      const currentSourceKeys = playlistTrackSourceKeysRef.current;
+      const pendingTrackId = pendingPlaylistTrackIdRef.current;
+      const statusIndex = expoPlaylist.currentIndex;
+      const statusTrackId = currentSourceIds[statusIndex];
+      const playingTrackId = pendingTrackId && requestedSources.some(({ trackId }) => trackId === pendingTrackId)
+        ? pendingTrackId
+        : statusTrackId && requestedSources.some(({ trackId }) => trackId === statusTrackId)
+          ? statusTrackId
+          : active.id;
+      const playingQueueIndex = requestedSources.findIndex(({ trackId }) => trackId === playingTrackId);
+      let playingNativeIndex = currentSourceIds[statusIndex] === playingTrackId
+        ? statusIndex
+        : currentSourceIds.indexOf(playingTrackId);
+
+      if (playingQueueIndex < 0 || playingNativeIndex < 0) {
+        // If the current native item is missing from either representation, recover
+        // through the established rebuild path rather than mutating the wrong item.
+        rebuildNativeQueue(nextQueue, active.id, true);
+        return;
+      }
+
+      // iOS rebuilds its AVQueuePlayer when inserting an item. Keep everything up
+      // to the current item fixed, then only replace the future tail using remove()
+      // on items after current and append() for the new upcoming order.
+      const nativeTailStartIndex = playingNativeIndex + 1;
+      const requestedTail = requestedSources.slice(playingQueueIndex + 1);
+      let sharedTailLength = 0;
+      while (
+        nativeTailStartIndex + sharedTailLength < currentSourceIds.length
+        && sharedTailLength < requestedTail.length
+        && currentSourceIds[nativeTailStartIndex + sharedTailLength] === requestedTail[sharedTailLength].trackId
+        && currentSourceKeys[nativeTailStartIndex + sharedTailLength] === requestedTail[sharedTailLength].sourceKey
+      ) {
+        sharedTailLength += 1;
+      }
+
+      for (let index = currentSourceIds.length - 1; index >= nativeTailStartIndex + sharedTailLength; index -= 1) {
+        expoPlaylist.remove(index);
+      }
+      for (let index = sharedTailLength; index < requestedTail.length; index += 1) {
+        expoPlaylist.add(requestedTail[index].source);
+      }
+
+      playlistTrackIdsRef.current = [
+        ...currentSourceIds.slice(0, nativeTailStartIndex),
+        ...requestedTail.map(({ trackId }) => trackId),
+      ];
+      playlistTrackSourceKeysRef.current = [
+        ...currentSourceKeys.slice(0, nativeTailStartIndex),
+        ...requestedTail.map(({ sourceKey }) => sourceKey),
+      ];
+      expoPlaylist.loop = getNativePlaylistLoopMode(
+        active,
+        repeatMode,
+        playlistTrackIdsRef.current,
+        requestedSources.map(({ trackId }) => trackId),
+      );
     } else {
       expoPlaylist.pause();
       expoPlaylist.clear();
       playlistTrackIdsRef.current = [];
+      playlistTrackSourceKeysRef.current = [];
       pendingPlaylistTrackIdRef.current = null;
       expoPlaylist.setActiveForLockScreen(false);
     }
-  }, [expoPlaylist, rebuildNativeQueue, updatePlaybackQueue]);
+  }, [expoPlaylist, rebuildNativeQueue, repeatMode, updatePlaybackQueue]);
 
   const incrementPlayCount = useCallback((trackId: string) => {
     const nextCounts = {
@@ -995,9 +1089,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    expoPlaylist.loop = activeTrack?.provider === 'radio' || activeTrack?.provider === 'audius'
-      ? 'all'
-      : repeatMode === 'all' ? 'all' : repeatMode === 'one' ? 'single' : 'none';
+    const requestedTrackIds = getNativePlaylistEntries(queueRef.current, downloadsRef.current)
+      .map(({ trackId }) => trackId);
+    expoPlaylist.loop = getNativePlaylistLoopMode(
+      activeTrack,
+      repeatMode,
+      playlistTrackIdsRef.current,
+      requestedTrackIds,
+    );
   }, [activeTrack?.provider, expoPlaylist, repeatMode]);
 
   const clearUpcomingQueue = useCallback(() => {
