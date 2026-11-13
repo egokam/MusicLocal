@@ -258,9 +258,9 @@ const DeveloperProfileScreen = ({
   const [isEditingSpicyLyricsKey, setIsEditingSpicyLyricsKey] = useState(false);
   const [isSavingSpicyLyricsKey, setIsSavingSpicyLyricsKey] = useState(false);
   const links = [
-    { title: 'GitHub', subtitle: 'github.com/egokam', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
-    { title: 'Instagram', subtitle: '@kotmanii', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
-    { title: 'Portfolio', subtitle: 'portfolio.egokam.site', icon: 'globe-outline' as const, url: 'https://portfolio.egokam.site' },
+    { title: 'GitHub', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
+    { title: 'Instagram', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
+    { title: 'Portfolio', icon: 'briefcase-outline' as const, url: 'https://portfolio.egokam.site' },
   ];
 
   useFocusEffect(useCallback(() => {
@@ -425,12 +425,27 @@ const DeveloperProfileScreen = ({
       </View>
 
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 160 }} showsVerticalScrollIndicator={false}>
-        <View style={{ alignItems: 'center', marginTop: 30, marginBottom: 34 }}>
+        <View style={{ alignItems: 'center', marginTop: 30, marginBottom: 18 }}>
           <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#4A222A' }}>
             <Ionicons name="person" size={52} color="#FA5265" />
           </View>
           <Text style={{ color: 'white', fontSize: 34, fontWeight: '800', marginTop: 18 }}>Kamal</Text>
           <Text style={{ color: '#A1A1A6', fontSize: 16, marginTop: 5 }}>Developer</Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22, marginBottom: 34 }}>
+          {links.map((link) => (
+            <TouchableOpacity
+              key={link.title}
+              onPress={() => navigation.navigate('ProfileWeb', { title: link.title, url: link.url })}
+              accessibilityRole="link"
+              accessibilityLabel={`Open Kamal’s ${link.title} profile`}
+              activeOpacity={0.72}
+              style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name={link.icon} size={25} color="white" />
+            </TouchableOpacity>
+          ))}
         </View>
 
         <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginBottom: 12 }}>
@@ -489,29 +504,6 @@ const DeveloperProfileScreen = ({
           </View>
           {isChangingAppIcon ? <ActivityIndicator color="#FA5265" size="small" style={{ marginTop: 13 }} /> : null}
         </View>
-
-        <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginBottom: 12 }}>
-          FIND ME ONLINE
-        </Text>
-        {links.map((link) => (
-          <TouchableOpacity
-            key={link.title}
-            onPress={() => navigation.navigate('ProfileWeb', { title: link.title, url: link.url })}
-            accessibilityRole="link"
-            accessibilityLabel={`Open Kamal’s ${link.title} profile`}
-            activeOpacity={0.78}
-            style={{ minHeight: 76, borderRadius: 18, backgroundColor: '#1C1C1E', paddingHorizontal: 16, marginBottom: 11, flexDirection: 'row', alignItems: 'center' }}
-          >
-            <View style={{ width: 42, height: 42, borderRadius: 15, backgroundColor: '#2B2B2F', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name={link.icon} size={21} color={link.title === 'Portfolio' ? '#FA5265' : 'white'} />
-            </View>
-            <View style={{ flex: 1, marginLeft: 13 }}>
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: '600' }}>{link.title}</Text>
-              <Text style={{ color: '#8E8E93', fontSize: 13, marginTop: 3 }}>{link.subtitle}</Text>
-            </View>
-            <Ionicons name="open-outline" size={18} color="#8E8E93" />
-          </TouchableOpacity>
-        ))}
 
         <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginTop: 18, marginBottom: 12 }}>
           LYRICS
@@ -666,7 +658,7 @@ const DeveloperProfileScreen = ({
           accessibilityRole="button"
           accessibilityLabel="Manage downloaded API lyrics"
           activeOpacity={0.78}
-          style={{ minHeight: 76, borderRadius: 18, backgroundColor: '#1C1C1E', paddingHorizontal: 16, marginTop: 8, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
+          style={{ minHeight: 76, borderRadius: 18, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, marginTop: 8, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
         >
           <View style={{ width: 42, height: 42, borderRadius: 15, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
             <Ionicons name="cloud-download-outline" size={21} color="#FA5265" />
