@@ -855,12 +855,11 @@ const PlayerOverlayView = ({
         (finished) => {
           if (finished) {
             pauseLyricsAutoScroll.value = false;
-            scheduleOnRN(openAfterGesture);
           }
         },
       );
     },
-    [collapseDistance, openAfterGesture, pauseLyricsAutoScroll, progress],
+    [collapseDistance, pauseLyricsAutoScroll, progress],
   );
 
   const detailsScrollGesture = useMemo(
@@ -872,7 +871,7 @@ const PlayerOverlayView = ({
     () =>
       Gesture.Pan()
         .enabled(!(visible && isLandscape))
-        .activeOffsetY(8)
+        .activeOffsetY([-8, 8])
         .failOffsetX([-12, 12])
         .simultaneousWithExternalGesture(detailsScrollGesture)
         .onBegin((event) => {
@@ -905,28 +904,38 @@ const PlayerOverlayView = ({
             );
           }
         })
-        .onEnd((event) => {
+        .onEnd((event, success) => {
           if (gestureStartedOnMiniPlaybackControl.value || !sheetPanAllowed.value) return;
+          // RNGH also calls onEnd when an active gesture is cancelled. Let
+          // onFinalize settle those gestures instead of starting an animation
+          // that onFinalize will immediately replace.
+          if (!success) return;
           const translationY = event.translationY;
           const startProgress = gestureStartProgress.value;
 
           if (translationY > 0) {
             if (translationY > 110 || (translationY > 40 && event.velocityY > 950)) {
               closeWithAnimation(event.velocityY);
-            } else if (startProgress >= 0.5) {
+            } else if (visible || startProgress >= 0.5) {
+              if (!visible) scheduleOnRN(openAfterGesture);
               restoreExpandedPlayer(event.velocityY);
             } else {
               restoreMiniPlayer(event.velocityY);
             }
           } else if (translationY < 0) {
             if (translationY < -110 || (translationY < -40 && event.velocityY < -950)) {
+              // The expanded content is gated by `visible`, so commit that
+              // state when the swipe is accepted instead of after its spring.
+              if (!visible) scheduleOnRN(openAfterGesture);
               openWithAnimation(event.velocityY);
-            } else if (startProgress >= 0.5) {
+            } else if (visible || startProgress >= 0.5) {
+              if (!visible) scheduleOnRN(openAfterGesture);
               restoreExpandedPlayer(event.velocityY);
             } else {
               restoreMiniPlayer(event.velocityY);
             }
-          } else if (startProgress >= 0.5) {
+          } else if (visible || startProgress >= 0.5) {
+            if (!visible) scheduleOnRN(openAfterGesture);
             restoreExpandedPlayer();
           } else {
             restoreMiniPlayer();
@@ -938,8 +947,11 @@ const PlayerOverlayView = ({
             sheetPanAllowed.value = true;
             return;
           }
-          if (sheetPanAllowed.value && !success && gestureChanged.value) {
+          if (sheetPanAllowed.value && !success && visible) {
+            restoreExpandedPlayer();
+          } else if (sheetPanAllowed.value && !success && gestureChanged.value) {
             if (gestureStartProgress.value >= 0.5) {
+              if (!visible) scheduleOnRN(openAfterGesture);
               restoreExpandedPlayer();
             } else {
               restoreMiniPlayer();
@@ -961,6 +973,7 @@ const PlayerOverlayView = ({
       lyricsTextTop,
       lyricsViewportHeight,
       openWithAnimation,
+      openAfterGesture,
       progress,
       queueExpanded,
       restoreExpandedPlayer,
@@ -1016,7 +1029,7 @@ const PlayerOverlayView = ({
     opacity: progress.value,
   }));
   const expandedContentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0, 1]),
+    opacity: interpolate(progress.value, [0, 0.16, 0.82, 1], [0, 0, 1, 1]),
   }));
   const artworkStyle = useAnimatedStyle(() => {
     const expandedLeft = interpolate(
@@ -1163,7 +1176,7 @@ const PlayerOverlayView = ({
       [0, 1],
       [0, lyricsViewportHeight],
     ),
-    opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0, 1]) *
+    opacity: interpolate(progress.value, [0, 0.16, 0.82, 1], [0, 0, 1, 1]) *
       lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
         ? 1 - interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
         : 0),
@@ -1178,7 +1191,7 @@ const PlayerOverlayView = ({
       [0, 1],
       [0, lyricsViewportHeight],
     ),
-    opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0, 1]) *
+    opacity: interpolate(progress.value, [0, 0.16, 0.82, 1], [0, 0, 1, 1]) *
       lyricsProgress.value * (1 - queueContentProgress.value) * (isTrackTransitioning
         ? interpolate(trackTransition.value, [0, 0.8, 1], [0, 0, 1])
         : 1),
@@ -1455,13 +1468,11 @@ const PlayerOverlayView = ({
                 expandedProgressStyle,
               ]}
             >
-              {visible ? (
-                <PlayerProgress
-                  isLiveRadio={isLiveRadio}
-                  fallbackDurationSeconds={durationSeconds}
-                  onSeek={onSeek}
-                />
-              ) : null}
+              <PlayerProgress
+                isLiveRadio={isLiveRadio}
+                fallbackDurationSeconds={durationSeconds}
+                onSeek={onSeek}
+              />
             </ReanimatedAnimated.View>
 
             <ReanimatedAnimated.View
