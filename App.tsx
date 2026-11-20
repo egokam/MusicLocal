@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Linking, NativeModules } from 'react-native';
+import { Alert, Animated, Easing, Linking, NativeModules } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -105,6 +105,8 @@ const PlayerStatusBridge = ({
 };
 
 export default function App() {
+  const startupFadeOpacity = useRef(new Animated.Value(0)).current;
+  const startupFadeStarted = useRef(false);
   const expoPlaylist = useAudioPlaylist({ updateInterval: 250 });
   const player = useMemo(() => ({
     play: () => expoPlaylist.play(),
@@ -157,6 +159,17 @@ export default function App() {
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
   const canRotatePlayer = playerVisible && Boolean(activeTrack) && !isLrcSynchronizerActive;
+
+  const startStartupFade = useCallback(() => {
+    if (startupFadeStarted.current) return;
+    startupFadeStarted.current = true;
+    Animated.timing(startupFadeOpacity, {
+      toValue: 1,
+      duration: 550,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [startupFadeOpacity]);
 
   useEffect(() => {
     const orientationRequest = canRotatePlayer
@@ -1681,83 +1694,88 @@ export default function App() {
   ]);
 
   return (
-    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-      <PlayerStatusBridge
-        playlist={expoPlaylist}
-        onStatus={handlePlayerStatus}
-        onTrackIndexChange={handlePlaylistTrackIndexChange}
-      />
-      <AndroidUpdatePrompt />
-      <PlaybackContext.Provider value={playbackActions}>
-        <LibrarySelectionBarContext.Provider value={librarySelectionBarContextValue}>
-          <RadioPlaybackStatusContext.Provider value={playerIsPlaying}>
-            <NavigationContainer
-              onStateChange={(navigationState) => {
-                const libraryRoute = navigationState?.routes.find((route) => route.name === 'Library');
-                const libraryState = libraryRoute?.state;
-                const libraryScreen = libraryState?.routes?.[libraryState.index ?? 0];
-                const active = libraryScreen?.name === 'LrcSynchronizer';
-                setIsLrcSynchronizerActive(active);
-                if (active) setPlayerVisible(false);
-              }}
-            >
-              <Tab.Navigator
-                tabBar={(props) => <CustomTabBar {...props} />}
-                screenOptions={{ headerShown: false }}
-                initialRouteName="Library"
-              >
-                <Tab.Screen name="Home" component={HomeScreen} />
-                <Tab.Screen name="Radio" component={RadioScreen} />
-                <Tab.Screen name="Library" component={LibraryScreen} />
-                <Tab.Screen name="Search" component={SearchScreen} />
-              </Tab.Navigator>
-            </NavigationContainer>
-          </RadioPlaybackStatusContext.Provider>
-        </LibrarySelectionBarContext.Provider>
-      </PlaybackContext.Provider>
-      {activeTrack && !isLrcSynchronizerActive && (librarySelectionBar === null || playerVisible) ? (
-        <PlayerOverlay
-          visible={playerVisible}
-          track={activeTrack}
-          lyricsLoadingTrackId={lyricsLoadingTrackId}
-          lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
-          isFavorite={Boolean(activeTrack.isFavorite)}
-          isPlaying={playerIsPlaying}
-          durationSeconds={playerDuration || activeTrack.durationSeconds || 0}
-          volume={playerVolume}
-          queue={playbackQueue}
-          shuffleEnabled={shuffleEnabled}
-          repeatMode={repeatMode}
-          autoplayEnabled={autoplayEnabled}
-          onOpen={openPlayer}
-          onClose={closePlayer}
-          onTogglePlayback={togglePlayback}
-          onSkipPrevious={skipPrevious}
-          onSkipNext={skipNext}
-          onHoldPreviousStart={beginRewind}
-          onHoldPreviousEnd={endRewind}
-          onHoldNextStart={beginFastForward}
-          onHoldNextEnd={endFastForward}
-          onSeek={seekTo}
-          onVolumeChange={setPlayerVolume}
-          onToggleFavorite={toggleActiveTrackFavorite}
-          playlists={playlists}
-          hasActiveTrack={Boolean(activeTrack)}
-          onPlayNext={playNext}
-          onToggleTrackFavorite={toggleFavorite}
-          onAddToPlaylist={addTrackToPlaylist}
-          onCreatePlaylist={createPlaylist}
-          onSaveTrack={savePlayerMenuTrack}
-          onDeleteTrack={deleteTrack}
-          onPlayQueueTrack={playQueueTrack}
-          onToggleShuffle={toggleQueueShuffle}
-          onToggleRepeat={toggleRepeatMode}
-          onToggleAutoplay={toggleQueueAutoplay}
-          onClearQueue={clearUpcomingQueue}
-          onRemoveQueueTrack={removeQueuedTrack}
-        />
-      ) : null}
+    <SafeAreaProvider initialMetrics={initialWindowMetrics} style={{ flex: 1, backgroundColor: '#000' }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000' }}>
+        <Animated.View
+          onLayout={startStartupFade}
+          style={{ flex: 1, opacity: startupFadeOpacity }}
+        >
+          <PlayerStatusBridge
+            playlist={expoPlaylist}
+            onStatus={handlePlayerStatus}
+            onTrackIndexChange={handlePlaylistTrackIndexChange}
+          />
+          <AndroidUpdatePrompt />
+          <PlaybackContext.Provider value={playbackActions}>
+            <LibrarySelectionBarContext.Provider value={librarySelectionBarContextValue}>
+              <RadioPlaybackStatusContext.Provider value={playerIsPlaying}>
+                <NavigationContainer
+                  onStateChange={(navigationState) => {
+                    const libraryRoute = navigationState?.routes.find((route) => route.name === 'Library');
+                    const libraryState = libraryRoute?.state;
+                    const libraryScreen = libraryState?.routes?.[libraryState.index ?? 0];
+                    const active = libraryScreen?.name === 'LrcSynchronizer';
+                    setIsLrcSynchronizerActive(active);
+                    if (active) setPlayerVisible(false);
+                  }}
+                >
+                  <Tab.Navigator
+                    tabBar={(props) => <CustomTabBar {...props} />}
+                    screenOptions={{ headerShown: false }}
+                    initialRouteName="Library"
+                  >
+                    <Tab.Screen name="Home" component={HomeScreen} />
+                    <Tab.Screen name="Radio" component={RadioScreen} />
+                    <Tab.Screen name="Library" component={LibraryScreen} />
+                    <Tab.Screen name="Search" component={SearchScreen} />
+                  </Tab.Navigator>
+                </NavigationContainer>
+              </RadioPlaybackStatusContext.Provider>
+            </LibrarySelectionBarContext.Provider>
+          </PlaybackContext.Provider>
+          {activeTrack && !isLrcSynchronizerActive && (librarySelectionBar === null || playerVisible) ? (
+            <PlayerOverlay
+              visible={playerVisible}
+              track={activeTrack}
+              lyricsLoadingTrackId={lyricsLoadingTrackId}
+              lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
+              isFavorite={Boolean(activeTrack.isFavorite)}
+              isPlaying={playerIsPlaying}
+              durationSeconds={playerDuration || activeTrack.durationSeconds || 0}
+              volume={playerVolume}
+              queue={playbackQueue}
+              shuffleEnabled={shuffleEnabled}
+              repeatMode={repeatMode}
+              autoplayEnabled={autoplayEnabled}
+              onOpen={openPlayer}
+              onClose={closePlayer}
+              onTogglePlayback={togglePlayback}
+              onSkipPrevious={skipPrevious}
+              onSkipNext={skipNext}
+              onHoldPreviousStart={beginRewind}
+              onHoldPreviousEnd={endRewind}
+              onHoldNextStart={beginFastForward}
+              onHoldNextEnd={endFastForward}
+              onSeek={seekTo}
+              onVolumeChange={setPlayerVolume}
+              onToggleFavorite={toggleActiveTrackFavorite}
+              playlists={playlists}
+              hasActiveTrack={Boolean(activeTrack)}
+              onPlayNext={playNext}
+              onToggleTrackFavorite={toggleFavorite}
+              onAddToPlaylist={addTrackToPlaylist}
+              onCreatePlaylist={createPlaylist}
+              onSaveTrack={savePlayerMenuTrack}
+              onDeleteTrack={deleteTrack}
+              onPlayQueueTrack={playQueueTrack}
+              onToggleShuffle={toggleQueueShuffle}
+              onToggleRepeat={toggleRepeatMode}
+              onToggleAutoplay={toggleQueueAutoplay}
+              onClearQueue={clearUpcomingQueue}
+              onRemoveQueueTrack={removeQueuedTrack}
+            />
+          ) : null}
+        </Animated.View>
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );
