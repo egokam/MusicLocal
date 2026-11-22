@@ -1,22 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
+import { ThemedSafeAreaView as SafeAreaView, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedView as View, useAppearanceTheme } from '../contexts/AppearanceThemeContext';
 import {
-  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
-  Text,
-  TouchableOpacity,
-  View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { WebView } from 'react-native-webview';
 import type { Track } from '../types';
 import type { ImportProgress } from '../services/MusicCatalogService';
@@ -82,23 +77,23 @@ const TRACK_PAGE_HTML = `
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <meta name="color-scheme" content="dark" />
+      <meta name="color-scheme" content="__NATIVE_COLOR_SCHEME__" />
       <link rel="stylesheet" href="https://spotimate.app/css/style.min.css?v=1.5" />
       <style>
-        :root { color-scheme: dark; background: #000; }
+        :root { color-scheme: __NATIVE_COLOR_SCHEME__; --native-page-background: __NATIVE_PAGE_BACKGROUND__; --native-primary-text: __NATIVE_PRIMARY_TEXT__; --native-white: __NATIVE_WHITE__; --native-input-background: __NATIVE_INPUT_BACKGROUND__; --native-input-border: __NATIVE_INPUT_BORDER__; --native-input-focus-border: __NATIVE_INPUT_FOCUS_BORDER__; background: var(--native-page-background); }
         * { box-sizing: border-box; }
-        html, body { width: 100%; min-height: 100%; margin: 0; background: #000 !important; color: #F5F5F7 !important; }
+        html, body { width: 100%; min-height: 100%; margin: 0; background: var(--native-page-background) !important; color: var(--native-primary-text) !important; }
         body { padding: 0 18px 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; font-size: 16px; line-height: 1.45; }
         .track-page { width: 100%; max-width: 620px; height: auto !important; min-height: 0 !important; margin: 0 auto; }
         .input-url-box { margin: 0 !important; padding: 0 !important; background: transparent !important; border: 0 !important; }
         .input-url-box .field.has-addons { display: flex !important; flex-direction: column !important; align-items: stretch !important; gap: 12px !important; margin: 0 !important; }
         .input-url-box .field.has-addons > .control:first-child { width: 100% !important; min-width: 0 !important; }
-        .input-url-box .input-url { display: block !important; width: 100% !important; min-width: 0 !important; height: 64px !important; padding: 0 18px !important; border: 1px solid #38383D !important; border-radius: 22px !important; background: #1C1C1E !important; color: #F5F5F7 !important; font: inherit !important; font-size: 17px !important; box-shadow: none !important; outline: none; }
+        .input-url-box .input-url { display: block !important; width: 100% !important; min-width: 0 !important; height: 64px !important; padding: 0 18px !important; border: 1px solid var(--native-input-border) !important; border-radius: 22px !important; background: var(--native-input-background) !important; color: var(--native-primary-text) !important; font: inherit !important; font-size: 17px !important; box-shadow: none !important; outline: none; }
         .input-url-box .input-url::placeholder { color: #8E8E93 !important; opacity: 1; }
-        .input-url-box .input-url:focus { border-color: #68686D !important; }
+        .input-url-box .input-url:focus { border-color: var(--native-input-focus-border) !important; }
         .input-url-box .control-btn { display: flex !important; flex-direction: column !important; width: 100% !important; gap: 10px !important; }
         .input-url-box #paste, .input-url-box #clear { display: none !important; }
-        .input-url-box .button.is-download { display: flex !important; align-items: center; justify-content: center; gap: 10px; width: 100% !important; min-height: 62px !important; padding: 0 20px !important; border: 0 !important; border-radius: 999px !important; background: #F62442 !important; color: #FFF !important; font: inherit !important; font-size: 18px !important; font-weight: 750 !important; box-shadow: none !important; }
+        .input-url-box .button.is-download { display: flex !important; align-items: center; justify-content: center; gap: 10px; width: 100% !important; min-height: 62px !important; padding: 0 20px !important; border: 0 !important; border-radius: 999px !important; background: #F62442 !important; color: var(--native-white) !important; font: inherit !important; font-size: 18px !important; font-weight: 750 !important; box-shadow: none !important; }
         .download-mark { display: inline-flex; width: 24px; height: 24px; flex: 0 0 auto; }
         .input-url-box .button.is-download:disabled { opacity: .62; }
         .progress-url { position: static !important; display: none !important; width: 100% !important; height: auto !important; min-height: 22px; inset: auto !important; z-index: auto !important; visibility: visible !important; justify-content: flex-start !important; align-items: center !important; gap: 10px; padding: 8px 2px !important; background: transparent !important; color: #A1A1A6 !important; }
@@ -109,16 +104,17 @@ const TRACK_PAGE_HTML = `
         .alert-box { display: none !important; margin-top: 12px !important; }
         .alert-box.active { display: block !important; }
         .alert-box .notification { margin: 0 !important; padding: 13px 15px !important; border: 1px solid #56343A !important; border-radius: 15px !important; background: #241518 !important; color: #FF9AA5 !important; font: inherit !important; font-size: 14px !important; }
-        #download-info { display: flow-root; width: 100%; height: auto !important; min-height: 0 !important; max-height: none !important; margin: 20px 0 0 !important; padding: 0 !important; background: transparent !important; color: #F5F5F7 !important; overflow-wrap: anywhere; }
+        #download-info { display: flow-root; width: 100%; height: auto !important; min-height: 0 !important; max-height: none !important; margin: 20px 0 0 !important; padding: 0 !important; background: transparent !important; color: var(--native-primary-text) !important; overflow-wrap: anywhere; }
         #download-info:empty { display: none !important; }
-        #download-info h1, #download-info h2, #download-info h3, #download-info h4, #download-info p, #download-info label { color: #F5F5F7 !important; }
+        #download-info h1, #download-info h2, #download-info h3, #download-info h4, #download-info p, #download-info label { color: var(--native-primary-text) !important; }
         #download-info .card, #download-info .box, #download-info .notification, #download-info [class*="result"], #download-info [class*="download"] { border-color: #2C2C2E !important; border-radius: 20px !important; }
-        #download-info .button, #download-info button, #download-info input[type="submit"] { min-height: 48px; border: 0 !important; border-radius: 15px !important; background: #F62442 !important; color: #FFF !important; font: inherit !important; font-weight: 700 !important; }
+        #download-info .button, #download-info button, #download-info input[type="submit"] { min-height: 48px; border: 0 !important; border-radius: 15px !important; background: #F62442 !important; color: var(--native-white) !important; font: inherit !important; font-weight: 700 !important; }
+        #download-info .native-track-result .button, #download-info .native-track-result button, #download-info .native-track-result input[type="submit"] { color: #FFFFFF !important; }
         #download-info a:not(.button) { color: #FF5268 !important; }
-        #download-info input:not([type="submit"]), #download-info textarea, #download-info select { max-width: 100%; border: 1px solid #38383D !important; border-radius: 14px !important; background: #1C1C1E !important; color: #F5F5F7 !important; font: inherit !important; }
+        #download-info input:not([type="submit"]), #download-info textarea, #download-info select { max-width: 100%; border: 1px solid #38383D !important; border-radius: 14px !important; background: #1C1C1E !important; color: var(--native-primary-text) !important; font: inherit !important; }
         #download-info img, #download-info video { max-width: 100%; height: auto; border-radius: 16px; }
         #download-info table { display: block; max-width: 100%; overflow-x: auto; }
-        #download-info .native-track-result { position: relative; isolation: isolate; display: block !important; width: 100%; height: auto !important; min-height: 0 !important; max-height: none !important; margin: 0 auto !important; padding: 16px !important; background: #1C1C1E !important; color: #F5F5F7 !important; border: 1px solid rgba(255,255,255,.12) !important; border-radius: 32px !important; box-shadow: 0 14px 36px rgba(0,0,0,.32) !important; overflow: hidden; }
+        #download-info .native-track-result { position: relative; isolation: isolate; display: block !important; width: 100%; height: auto !important; min-height: 0 !important; max-height: none !important; margin: 0 auto !important; padding: 16px !important; background: #1C1C1E !important; color: var(--native-primary-text) !important; border: 1px solid rgba(255,255,255,.12) !important; border-radius: 32px !important; box-shadow: 0 14px 36px rgba(0,0,0,.32) !important; overflow: hidden; }
         #download-info .native-track-transparent { display: block !important; width: auto !important; height: auto !important; min-height: 0 !important; max-height: none !important; margin: 0 !important; padding: 0 !important; background: transparent !important; background-color: transparent !important; background-image: none !important; border-color: transparent !important; box-shadow: none !important; }
         #download-info .native-track-transparent::before, #download-info .native-track-transparent::after { display: none !important; content: none !important; }
         #download-info .native-track-result > div, #download-info .native-track-result div div, #download-info .native-track-result section, #download-info .native-track-result article, #download-info .native-track-result figure, #download-info .native-track-result header, #download-info .native-track-result footer { height: auto !important; min-height: 0 !important; max-height: none !important; background: transparent !important; background-color: transparent !important; background-image: none !important; box-shadow: none !important; }
@@ -127,7 +123,7 @@ const TRACK_PAGE_HTML = `
         #download-info .native-track-result > .native-track-backdrop { position: absolute !important; z-index: 0 !important; inset: 0 !important; display: block !important; width: 100% !important; max-width: none !important; height: 100% !important; margin: 0 !important; border: 0 !important; border-radius: inherit !important; object-fit: cover !important; filter: blur(22px) saturate(1.25) !important; transform: scale(1.12); opacity: .82; pointer-events: none; }
         #download-info .native-track-result::after { content: ""; position: absolute; z-index: 1; inset: 0; border-radius: inherit; background: linear-gradient(180deg, rgba(14,12,11,.52), rgba(14,12,11,.68)); pointer-events: none; }
         #download-info .native-track-result > :not(.native-track-backdrop) { position: relative; z-index: 2; }
-        #download-info .native-track-result h1, #download-info .native-track-result h2, #download-info .native-track-result h3, #download-info .native-track-result h4 { margin: 16px 0 !important; color: #F5F5F7 !important; font-size: 23px !important; font-weight: 700 !important; line-height: 1.2 !important; text-align: center !important; }
+        #download-info .native-track-result h1, #download-info .native-track-result h2, #download-info .native-track-result h3, #download-info .native-track-result h4 { margin: 16px 0 !important; color: #FFFFFF !important; font-size: 23px !important; font-weight: 700 !important; line-height: 1.2 !important; text-align: center !important; }
         #download-info .native-track-result .native-audio-status, #download-info .native-audio-status { display: flex !important; align-items: center; justify-content: center; gap: 9px; margin: 12px 0 2px !important; padding: 10px 14px !important; border: 1px solid rgba(255,255,255,.1) !important; border-radius: 999px !important; background: rgba(20,20,22,.66) !important; color: #D1D1D6 !important; font-size: 14px !important; font-weight: 600 !important; line-height: 1.3 !important; text-align: center !important; }
         #download-info .native-audio-status-icon { display: inline-flex; width: 18px; height: 18px; flex: 0 0 18px; align-items: center; justify-content: center; border: 2px solid rgba(255,255,255,.28); border-top-color: #F62442; border-radius: 50%; color: transparent; animation: spin .8s linear infinite; }
         #download-info .native-audio-status[data-state="success"] .native-audio-status-icon { border: 0; color: #30D158; font-size: 18px; font-weight: 800; animation: none; }
@@ -137,18 +133,18 @@ const TRACK_PAGE_HTML = `
         #download-info .sm-single-track [data-track-name], #download-info .sm-single-track [data-track-artist], #download-info .sm-single-track .sm-track-info strong, #download-info .sm-single-track .sm-track-info > span { display: none !important; }
         #download-info .sm-single-track.grid-container > .grid-item { min-width: 0; }
         #download-info .sm-single-track .grid-text, #download-info .sm-track-info { min-width: 0; overflow-wrap: anywhere; text-align: left !important; }
-        #download-info .sm-single-track [data-track-name], #download-info .sm-track-info strong { color: #F5F5F7 !important; font-size: 16px !important; font-weight: 650 !important; line-height: 1.35 !important; }
+        #download-info .sm-single-track [data-track-name], #download-info .sm-track-info strong { color: #FFFFFF !important; font-size: 16px !important; font-weight: 650 !important; line-height: 1.35 !important; }
         #download-info .sm-single-track [data-track-artist], #download-info .sm-track-info > span { display: block; margin-top: 3px; color: #A1A1A6 !important; font-size: 14px !important; line-height: 1.35 !important; }
-        #download-info .sm-single-track .grid-item:last-child .button, #download-info .sm-single-track .grid-item:last-child button { display: flex !important; align-items: center; justify-content: center; width: 100% !important; min-width: 0 !important; min-height: 50px !important; padding: 8px 10px !important; border-radius: 999px !important; background: #F62442 !important; color: #FFF !important; font-size: 14px !important; font-weight: 700 !important; line-height: 1.2 !important; white-space: normal !important; }
+        #download-info .sm-single-track .grid-item:last-child .button, #download-info .sm-single-track .grid-item:last-child button { display: flex !important; align-items: center; justify-content: center; width: 100% !important; min-width: 0 !important; min-height: 50px !important; padding: 8px 10px !important; border-radius: 999px !important; background: #F62442 !important; color: #FFFFFF !important; font-size: 14px !important; font-weight: 700 !important; line-height: 1.2 !important; white-space: normal !important; }
         #download-info .sm-preview { position: relative !important; display: flex !important; flex: 0 0 58px !important; width: 58px !important; min-width: 58px !important; max-width: 58px !important; height: 58px !important; min-height: 58px !important; max-height: 58px !important; aspect-ratio: 1 / 1; padding: 0 !important; border: 1px solid rgba(255,255,255,.18) !important; border-radius: 50% !important; background: #2C2C2E !important; box-shadow: 0 4px 14px rgba(0,0,0,.35) !important; overflow: hidden !important; }
         #download-info .sm-preview > img { position: absolute !important; inset: 0 !important; z-index: 0 !important; width: 100% !important; height: 100% !important; border-radius: 50% !important; object-fit: cover !important; }
         #download-info .sm-preview > [data-preview-icon] { position: relative; z-index: 1; width: 36px !important; height: 36px !important; border: 1px solid rgba(255,255,255,.2); border-radius: 50% !important; background: rgba(28,28,30,.78) !important; backdrop-filter: blur(14px); box-shadow: 0 2px 10px rgba(0,0,0,.32) !important; }
-        #download-info .sm-preview svg { width: 17px !important; height: 17px !important; color: #FFF !important; }
+        #download-info .sm-preview svg { width: 17px !important; height: 17px !important; color: var(--native-white) !important; }
         #download-info .sm-preview[data-native-downloading="true"] > [data-preview-icon] { opacity: 0 !important; }
-        #download-info .sm-preview[data-native-downloading="true"]::after { content: ""; position: absolute; z-index: 2; width: 34px; height: 34px; border: 3px solid rgba(255,255,255,.3); border-top-color: #FFF; border-right-color: #FFF; border-radius: 50%; background: rgba(28,28,30,.72); animation: spin .75s linear infinite; }
+        #download-info .sm-preview[data-native-downloading="true"]::after { content: ""; position: absolute; z-index: 2; width: 34px; height: 34px; border: 3px solid rgba(255,255,255,.3); border-top-color: var(--native-white); border-right-color: var(--native-white); border-radius: 50%; background: rgba(28,28,30,.72); animation: spin .75s linear infinite; }
         #download-info [data-native-hidden-progress] { display: none !important; }
         .cf-turnstile { margin-top: 8px; }
-        ::selection { background: #F62442; color: #FFF; }
+        ::selection { background: #F62442; color: var(--native-white); }
       </style>
       <script>
         window.handleTurnstileSuccess = function () {};
@@ -182,7 +178,50 @@ const TRACK_PAGE_HTML = `
     </body>
   </html>
 `;
-const TRACK_WEBVIEW_SOURCE = { html: TRACK_PAGE_HTML, baseUrl: TRACK_WEBSITE_URL };
+const getTrackWebViewSource = (isDark: boolean) => {
+  const replacements: Record<string, string> = {
+    __NATIVE_COLOR_SCHEME__: isDark ? 'dark' : 'light',
+    __NATIVE_PAGE_BACKGROUND__: isDark ? '#000000' : '#FFFFFF',
+    __NATIVE_PRIMARY_TEXT__: isDark ? '#F5F5F7' : '#000000',
+    __NATIVE_WHITE__: isDark ? '#FFFFFF' : '#000000',
+    __NATIVE_INPUT_BACKGROUND__: isDark ? '#1C1C1E' : '#F2F2F7',
+    __NATIVE_INPUT_BORDER__: isDark ? '#38383D' : 'rgba(60,60,67,0.18)',
+    __NATIVE_INPUT_FOCUS_BORDER__: isDark ? '#68686D' : '#C7C7CC',
+  };
+  const html = Object.entries(replacements).reduce(
+    (currentHtml, [token, value]) => currentHtml.split(token).join(value),
+    TRACK_PAGE_HTML,
+  );
+  return { html, baseUrl: TRACK_WEBSITE_URL };
+};
+
+const getTrackAppearanceJavaScript = (isDark: boolean) => {
+  const pageBackground = isDark ? '#000000' : '#FFFFFF';
+  const primaryText = isDark ? '#F5F5F7' : '#000000';
+  const white = isDark ? '#FFFFFF' : '#000000';
+  const inputBackground = isDark ? '#1C1C1E' : '#F2F2F7';
+  const inputBorder = isDark ? '#38383D' : 'rgba(60,60,67,0.18)';
+  const inputFocusBorder = isDark ? '#68686D' : '#C7C7CC';
+  const colorScheme = isDark ? 'dark' : 'light';
+
+  return `
+    (function () {
+      var root = document.documentElement;
+      if (!root) return;
+      root.style.setProperty('--native-page-background', '${pageBackground}');
+      root.style.setProperty('--native-primary-text', '${primaryText}');
+      root.style.setProperty('--native-white', '${white}');
+      root.style.setProperty('--native-input-background', '${inputBackground}');
+      root.style.setProperty('--native-input-border', '${inputBorder}');
+      root.style.setProperty('--native-input-focus-border', '${inputFocusBorder}');
+      root.style.colorScheme = '${colorScheme}';
+      var colorSchemeMeta = document.querySelector('meta[name="color-scheme"]');
+      if (colorSchemeMeta) colorSchemeMeta.setAttribute('content', '${colorScheme}');
+    })();
+    true;
+  `;
+};
+
 const webAudioLinkBridge = `
   (function () {
     var audioExtensions = /\\.(mp3|m4a|aac|wav|flac|ogg|opus)$/i;
@@ -477,6 +516,7 @@ export const DownloaderScreen = ({
   onImportAudioToLibrary,
   onImportLocalAudioFile,
 }: DownloaderScreenProps) => {
+  const { colors, isDark } = useAppearanceTheme();
   const [mode, setMode] = useState<DownloaderMode>('track');
   const [tabsWidth, setTabsWidth] = useState(0);
   const [selectedAudio, setSelectedAudio] = useState<LocalAudioSelection | null>(null);
@@ -484,7 +524,10 @@ export const DownloaderScreen = ({
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [trackContentHeight, setTrackContentHeight] = useState(320);
+  const [trackWebViewSource, setTrackWebViewSource] = useState(() => getTrackWebViewSource(isDark));
   const trackWebViewRef = useRef<WebView | null>(null);
+  const trackWebViewLoadedRef = useRef(false);
+  const trackAppearanceJavaScript = getTrackAppearanceJavaScript(isDark);
   const previewPlayer = useAudioPlayer(null);
   const previewStatus = useAudioPlayerStatus(previewPlayer);
   const activeWebDownloads = useRef(new Set<string>());
@@ -492,6 +535,16 @@ export const DownloaderScreen = ({
   const dragOrigin = useSharedValue(0);
   const bubbleScale = useSharedValue(1);
   const tabWidth = Math.max((tabsWidth - 8) / 2, 1);
+
+  useEffect(() => {
+    if (mode === 'track' && trackWebViewLoadedRef.current) {
+      trackWebViewRef.current?.injectJavaScript(trackAppearanceJavaScript);
+    } else {
+      if (mode !== 'track') trackWebViewLoadedRef.current = false;
+      const nextSource = getTrackWebViewSource(isDark);
+      setTrackWebViewSource((currentSource) => currentSource.html === nextSource.html ? currentSource : nextSource);
+    }
+  }, [isDark, mode, trackAppearanceJavaScript]);
 
   const highlightStyle = useAnimatedStyle(() => ({
     transform: [
@@ -707,7 +760,7 @@ export const DownloaderScreen = ({
             accessibilityLabel="Back to Library"
             style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }}
           >
-            <Ionicons name="chevron-back" size={26} color="white" />
+            <ThemedIonicons name="chevron-back" size={26} color="white" />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => Alert.alert('Downloader', 'Track accepts Spotify links and shows the available download options. File imports MP3, M4A, AAC, WAV, FLAC, OGG, and OPUS audio from your device.')}
@@ -715,7 +768,7 @@ export const DownloaderScreen = ({
             accessibilityLabel="About downloader"
             style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }}
           >
-            <Ionicons name="information-circle-outline" size={23} color="#A1A1A6" />
+            <ThemedIonicons name="information-circle-outline" size={23} color="#A1A1A6" />
           </TouchableOpacity>
         </View>
 
@@ -741,7 +794,7 @@ export const DownloaderScreen = ({
               >
                 <Animated.View
                   pointerEvents="none"
-                  style={[{ position: 'absolute', left: 4, top: 4, bottom: 4, width: '50%', borderRadius: 22, backgroundColor: '#39393D' }, highlightStyle]}
+                  style={[{ position: 'absolute', left: 4, top: 4, bottom: 4, width: '50%', borderRadius: 22, backgroundColor: isDark ? '#39393D' : '#FFFFFF' }, highlightStyle]}
                 />
                 {(['track', 'custom'] as const).map((item) => {
                   const selected = mode === item;
@@ -753,7 +806,7 @@ export const DownloaderScreen = ({
                       accessibilityState={{ selected }}
                       style={{ flex: 1, borderRadius: 22, backgroundColor: 'transparent', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
                     >
-                      <Ionicons name={item === 'track' ? 'musical-note' : 'folder-open-outline'} size={17} color={selected ? '#FA5265' : '#A1A1A6'} />
+                      <ThemedIonicons name={item === 'track' ? 'musical-note' : 'folder-open-outline'} size={17} color={selected ? '#FA5265' : '#A1A1A6'} />
                       <Text style={{ color: selected ? 'white' : '#A1A1A6', fontSize: 14, fontWeight: '700' }}>
                         {item === 'track' ? 'Track' : 'File'}
                       </Text>
@@ -764,20 +817,25 @@ export const DownloaderScreen = ({
             </GestureDetector>
 
             {mode === 'track' ? (
-              <View style={{ marginBottom: 16, overflow: 'hidden', borderRadius: 20, backgroundColor: '#000000' }}>
+              <View style={{ marginBottom: 16, overflow: 'hidden', borderRadius: 20, backgroundColor: colors.background }}>
                 <WebView
                   ref={trackWebViewRef}
-                  source={TRACK_WEBVIEW_SOURCE}
+                  source={trackWebViewSource}
                   originWhitelist={['*']}
-                  style={{ height: trackContentHeight, backgroundColor: '#000000' }}
+                  style={{ height: trackContentHeight, backgroundColor: colors.background }}
                   scrollEnabled={false}
                   showsVerticalScrollIndicator={false}
                   bounces={false}
                   injectedJavaScript={webAudioLinkBridge}
+                  onLoadStart={() => { trackWebViewLoadedRef.current = false; }}
+                  onLoadEnd={() => {
+                    trackWebViewLoadedRef.current = true;
+                    trackWebViewRef.current?.injectJavaScript(trackAppearanceJavaScript);
+                  }}
                   onMessage={(event) => handleWebViewMessage(event.nativeEvent.data)}
                   startInLoadingState
                   renderLoading={() => (
-                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#121212' }}>
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
                       <ActivityIndicator color="#FA5265" />
                     </View>
                   )}
@@ -792,7 +850,7 @@ export const DownloaderScreen = ({
                   accessibilityLabel={selectedAudio ? 'Choose another audio file' : 'Import an audio file'}
                   style={{ minHeight: 58, borderRadius: 999, borderWidth: 1, borderColor: '#38383D', backgroundColor: '#1C1C1E', flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.65 : 1 }}
                 >
-                  {busy === 'inspecting-file' ? <ActivityIndicator color="#FA5265" /> : <Ionicons name="folder-open-outline" size={20} color="#FA5265" />}
+                  {busy === 'inspecting-file' ? <ActivityIndicator color="#FA5265" /> : <ThemedIonicons name="folder-open-outline" size={20} color="#FA5265" />}
                   <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
                     {busy === 'inspecting-file' ? 'Reading audio details…' : selectedAudio ? 'Choose another file' : 'Import audio file'}
                   </Text>
@@ -817,7 +875,7 @@ export const DownloaderScreen = ({
                             <Image source={{ uri: selectedAudio.artworkUri }} resizeMode="cover" style={{ width: '100%', height: '100%' }} accessibilityLabel="Embedded audio artwork" />
                           ) : (
                             <View style={{ alignItems: 'center', gap: 8 }}>
-                              <Ionicons name="musical-notes-outline" size={48} color="#8E8E93" />
+                              <ThemedIonicons name="musical-notes-outline" size={48} color="#8E8E93" />
                               <Text style={{ color: '#A1A1A6', fontSize: 13 }}>Unknown artwork</Text>
                             </View>
                           )}
@@ -836,7 +894,7 @@ export const DownloaderScreen = ({
                           accessibilityLabel={previewStatus.playing ? 'Pause audio preview' : 'Play audio preview'}
                           style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: '#F62442', alignItems: 'center', justifyContent: 'center' }}
                         >
-                          <Ionicons name={previewStatus.playing ? 'pause' : 'play'} size={23} color="white" style={previewStatus.playing ? undefined : { marginLeft: 3 }} />
+                          <ThemedIonicons name={previewStatus.playing ? 'pause' : 'play'} size={23} color="white" style={previewStatus.playing ? undefined : { marginLeft: 3 }} />
                         </TouchableOpacity>
                         <View style={{ flex: 1 }}>
                           <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Audio preview</Text>
@@ -859,7 +917,7 @@ export const DownloaderScreen = ({
                       >
                         {busy === 'adding-local-file'
                           ? <ActivityIndicator color="white" />
-                          : <Ionicons name={selectedAudio.added ? 'checkmark-circle' : 'add-circle-outline'} size={21} color="white" />}
+                          : <ThemedIonicons name={selectedAudio.added ? 'checkmark-circle' : 'add-circle-outline'} size={21} color="white" />}
                         <Text style={{ color: 'white', fontSize: 16, fontWeight: '800' }}>
                           {busy === 'adding-local-file' ? 'Adding to Library…' : selectedAudio.added ? 'Added to Library' : 'Add to Library'}
                         </Text>
