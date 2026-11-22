@@ -8,8 +8,10 @@ import {
   Modal,
   Platform,
   StyleSheet,
+  Text as NativeText,
   useWindowDimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassSurface } from '../../glass';
@@ -99,7 +101,7 @@ export const LrcCheckerScreen = ({
   onCheckTrack: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>;
   onSaveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
 }) => {
-  const { colors } = useAppearanceTheme();
+  const { colors, isDark } = useAppearanceTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const topInsetCompensation = Math.max(0, insets.top - 24);
@@ -520,10 +522,10 @@ export const LrcCheckerScreen = ({
                   disabled={isLoadingTracks || isApplyingAll}
                   accessibilityRole="button"
                   accessibilityLabel={isScanning ? 'Stop library scan' : scanSnapshot.hasSavedScan ? 'Resume saved scan or start a new scan' : 'Scan all tracks for synced lyrics'}
-                  style={{ height: 48, borderRadius: 24, backgroundColor: isScanning ? '#303033' : '#28282B', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, opacity: isLoadingTracks ? 0.6 : 1 }}
+                  style={{ height: 48, borderRadius: 24, backgroundColor: colors.raisedSurface, borderColor: isDark ? 'transparent' : colors.separator, borderWidth: isDark ? 0 : StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, opacity: isLoadingTracks ? 0.6 : 1 }}
                 >
-                  {isBusy ? <ActivityIndicator size="small" color="white" /> : <ThemedIonicons name="scan-outline" size={19} color="#FA5265" />}
-                  <Text style={{ color: 'white', fontSize: 15, fontWeight: '700', marginLeft: 9 }}>
+                  {isBusy ? <ActivityIndicator size="small" color={colors.text} /> : <ThemedIonicons name="scan-outline" size={19} color="#FA5265" />}
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: '700', marginLeft: 9 }}>
                     {isLoadingCatalog ? (isStopping ? 'Stopping…' : 'Loading your full library…') : isScanning ? (isStopping ? 'Finishing current track…' : 'Stop scan') : scanSnapshot.hasSavedScan ? 'Continue saved lyrics scan' : 'Scan lyrics across all sources'}
                   </Text>
                 </TouchableOpacity>
@@ -544,14 +546,14 @@ export const LrcCheckerScreen = ({
                     opacity: isBusy || isApplyingAll || pendingLyricMatches.length === 0 ? 0.6 : 1,
                   }}
                 >
-                  {isApplyingAll ? <ActivityIndicator size="small" color="white" /> : <ThemedIonicons name="checkmark-done" size={19} color="white" />}
-                  <Text style={{ color: 'white', fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
+                  {isApplyingAll ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="checkmark-done" size={19} color="white" />}
+                  <NativeText style={{ color: pendingLyricMatches.length > 0 ? 'white' : colors.text, fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
                     {isApplyingAll
                       ? `Applying ${applyAllProgress.completed}/${applyAllProgress.total}…`
                     : pendingLyricMatches.length
                       ? `Apply all without review (${pendingLyricMatches.length})`
                       : 'No complete matches to apply'}
-                  </Text>
+                  </NativeText>
                 </TouchableOpacity>
                 <Text style={{ color: '#8E8E93', fontSize: 11, lineHeight: 15, textAlign: 'center', marginTop: 8 }}>
                   {partialLyricMatchCount
@@ -769,14 +771,14 @@ export const LrcCheckerScreen = ({
                     setCustomLrcError(null);
                   }}
                   placeholder={'[00:12.34]First lyric line\n[00:16.80]Next lyric line'}
-                  placeholderTextColor="#747479"
+                  placeholderTextColor={colors.mutedText}
                   multiline
                   scrollEnabled
                   autoCorrect={false}
                   autoCapitalize="none"
                   textAlignVertical="top"
                   selectionColor="#FA5265"
-                  style={{ minHeight: 190, maxHeight: 310, borderRadius: 13, backgroundColor: '#111113', color: 'white', fontSize: 14, lineHeight: 21, padding: 12 }}
+                  style={{ minHeight: 190, maxHeight: 310, borderRadius: 13, backgroundColor: isDark ? '#111113' : '#FFFFFF', borderColor: colors.separator, borderWidth: isDark ? 0 : StyleSheet.hairlineWidth, color: colors.text, fontSize: 14, lineHeight: 21, padding: 12 }}
                 />
               )}
 

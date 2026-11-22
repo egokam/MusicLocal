@@ -260,7 +260,12 @@ const parseLyrics = (lyrics: string): TimedLyricLine[] => splitLyricText(lyrics)
   .map((text, index) => ({ id: `${index}-${text}`, text, timeMs: null }));
 
 export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
-  const { colors } = useAppearanceTheme();
+  const { colors, isDark } = useAppearanceTheme();
+  const primaryButtonBackground = isDark ? '#FA243C' : '#FCE9EC';
+  const primaryButtonForeground = isDark ? '#FFFFFF' : colors.accent;
+  const secondaryButtonBackground = isDark ? '#2A2024' : '#FCE9EC';
+  const transportButtonBackground = isDark ? '#303034' : '#E5E5EA';
+  const transportButtonForeground = isDark ? '#FFFFFF' : colors.text;
   const { downloadedTracks, isLoadingTracks, apiInitializing, saveSynchronizedTrack, updateTrack } = usePlaybackActions();
   const scrollY = useMemo(() => new Animated.Value(0), []);
   const player = useAudioPlayer(null, { updateInterval: 200 });
@@ -318,7 +323,6 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
     uri: string;
   } | null>(null);
   const isDismissingTrackPicker = useRef(false);
-  const trackPickerListScrollOffset = useRef(0);
   const availableMp3Tracks = useMemo(() => downloadedTracks.filter((track) => {
     if (!track.localUri) return false;
     const path = track.localUri.toLowerCase().split(/[?#]/, 1)[0];
@@ -346,51 +350,11 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
       isDismissingTrackPicker.current = false;
     });
   }, [trackPickerTranslateY]);
-  // The responder is created once per callback set; its ref access runs only after a gesture begins.
+  // Gesture callbacks access the animation ref only after the responder receives a touch.
   // eslint-disable-next-line react-hooks/refs
-  const trackPickerPanResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponderCapture: (_event, gesture) => (
-      trackPickerListScrollOffset.current <= 0.5
-      && gesture.dy > 5
-      && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2
-    ),
-    onMoveShouldSetPanResponder: (_event, gesture) => (
-      trackPickerListScrollOffset.current <= 0.5
-      && gesture.dy > 5
-      && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2
-    ),
-    onPanResponderMove: (_event, gesture) => {
-      if (gesture.dy > 0) trackPickerTranslateY.setValue(gesture.dy);
-    },
-    onPanResponderRelease: (_event, gesture) => {
-      if (gesture.dy > 110 || (gesture.dy > 45 && gesture.vy > 0.85)) {
-        dismissTrackPicker();
-      } else {
-        Animated.spring(trackPickerTranslateY, {
-          toValue: 0,
-          damping: 28,
-          stiffness: 260,
-          mass: 0.8,
-          useNativeDriver: true,
-        }).start();
-      }
-    },
-    onPanResponderTerminate: () => {
-      Animated.spring(trackPickerTranslateY, {
-        toValue: 0,
-        damping: 28,
-        stiffness: 260,
-        mass: 0.8,
-        useNativeDriver: true,
-      }).start();
-    },
-  }), [dismissTrackPicker, trackPickerTranslateY]);
-  // The responder callbacks read refs only after a gesture starts.
-  // eslint-disable-next-line react-hooks/refs
-  const trackPickerHeaderPanResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => (
-      gesture.dy > 5 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2
-    ),
+  const trackPickerHandlePanResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => trackPickerTranslateY.stopAnimation(),
     onPanResponderMove: (_event, gesture) => {
       if (gesture.dy > 0) trackPickerTranslateY.setValue(gesture.dy);
     },
@@ -1214,7 +1178,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 minHeight: 58,
                 paddingHorizontal: 18,
                 borderRadius: 18,
-                backgroundColor: '#FA243C',
+                backgroundColor: primaryButtonBackground,
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1223,11 +1187,11 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               }}
             >
               {isImporting ? (
-                <ActivityIndicator color="white" />
+                <ActivityIndicator color={primaryButtonForeground} />
               ) : (
-                <ThemedIonicons name="musical-notes-outline" size={21} color="white" />
+                <ThemedIonicons name="musical-notes-outline" size={21} color={primaryButtonForeground} />
               )}
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
+              <Text style={{ color: primaryButtonForeground, fontSize: 16, fontWeight: '700' }}>
                 {isImporting ? 'Reading track…' : selectedMp3 ? 'Choose another track' : 'Browse your library'}
               </Text>
             </TouchableOpacity>
@@ -1300,8 +1264,8 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                   <View style={{ marginTop: 27 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                       <View>
-                        <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Lyrics</Text>
-                        <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 3 }}>
+                        <Text style={{ color: colors.text, fontSize: 20, fontWeight: '700' }}>Lyrics</Text>
+                        <Text style={{ color: colors.secondaryText, fontSize: 12, marginTop: 3 }}>
                           {selectedMp3.hadSyncedLyrics
                             ? `From ${selectedMp3.lyricsSource === 'sidecar' ? 'LRC file' : 'MP3'} · previous timings cleared · `
                             : selectedMp3.lyricsSource === 'embedded'
@@ -1320,7 +1284,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                           minHeight: 38,
                           paddingHorizontal: 12,
                           borderRadius: 19,
-                          backgroundColor: '#2A2024',
+                          backgroundColor: isDark ? '#2A2024' : '#FCE9EC',
                           flexDirection: 'row',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -1334,7 +1298,14 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                     </View>
                     <View
                       ref={lyricLinesContainerRef}
-                      style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, backgroundColor: '#111113' }}
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 8,
+                        borderRadius: 18,
+                        backgroundColor: isDark ? '#111113' : colors.surface,
+                        borderWidth: isDark ? 0 : 1,
+                        borderColor: colors.separator,
+                      }}
                     >
                       {lyricLines.map((line, index) => {
                         const dragResponder = lyricDragResponders.get(line.id);
@@ -1350,7 +1321,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                             minHeight: line.text.trim() ? 48 : 20,
                             paddingVertical: line.text.trim() ? 10 : 3,
                             borderBottomWidth: index < lyricLines.length - 1 && line.text.trim() ? 1 : 0,
-                            borderBottomColor: '#29292B',
+                            borderBottomColor: colors.separator,
                             borderLeftWidth: selectedLineId === line.id ? 2 : 0,
                             borderLeftColor: '#FA5265',
                             paddingLeft: selectedLineId === line.id ? 9 : 0,
@@ -1359,7 +1330,9 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                             justifyContent: 'space-between',
                             backgroundColor: selectedLineId === line.id
                               ? 'rgba(250,82,101,0.08)'
-                              : playingLineId === line.id ? 'rgba(255,255,255,0.04)' : 'transparent',
+                              : playingLineId === line.id
+                                ? isDark ? 'rgba(255,255,255,0.05)' : 'rgba(28,28,30,0.05)'
+                                : 'transparent',
                             transform: [{
                               translateY: draggingLineId === line.id ? lyricDragTranslationY : 0,
                             }],
@@ -1375,10 +1348,10 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               accessibilityState={{ selected: selectedLineId === line.id }}
                               style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}
                             >
-                              <Text style={{ width: 30, color: '#68686F', fontSize: 12, fontVariant: ['tabular-nums'] }}>
+                              <Text style={{ width: 30, color: colors.secondaryText, fontSize: 12, fontVariant: ['tabular-nums'] }}>
                                 {String(index + 1).padStart(2, '0')}
                               </Text>
-                              <Text style={{ flex: 1, color: selectedLineId === line.id ? 'white' : '#E5E5E7', fontSize: 15, lineHeight: 22 }}>
+                              <Text style={{ flex: 1, color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: selectedLineId === line.id ? '700' : '500' }}>
                                 {line.text}
                               </Text>
                               {line.timeMs !== null ? (
@@ -1411,7 +1384,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               <ThemedIonicons
                                 name="reorder-three-outline"
                                 size={21}
-                                color={draggingLineId === line.id ? '#FA5265' : '#77777F'}
+                                color={draggingLineId === line.id ? '#FA5265' : colors.secondaryText}
                               />
                             </View>
                           ) : null}
@@ -1423,7 +1396,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               hitSlop={8}
                               style={{ width: 32, height: 34, marginLeft: 5, alignItems: 'center', justifyContent: 'center' }}
                             >
-                              <ThemedIonicons name="create-outline" size={16} color="#8E8E93" />
+                              <ThemedIonicons name="create-outline" size={16} color={colors.secondaryText} />
                             </TouchableOpacity>
                           ) : null}
                           {line.text.trim() ? (
@@ -1434,7 +1407,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               hitSlop={8}
                               style={{ width: 32, height: 34, marginLeft: 2, alignItems: 'center', justifyContent: 'center' }}
                             >
-                              <ThemedIonicons name="trash-outline" size={15} color="#8E8E93" />
+                              <ThemedIonicons name="trash-outline" size={15} color={colors.secondaryText} />
                             </TouchableOpacity>
                           ) : null}
                         </Animated.View>
@@ -1449,9 +1422,9 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                       paddingVertical: 30,
                       alignItems: 'center',
                       borderRadius: 20,
-                      backgroundColor: '#111113',
+                      backgroundColor: colors.surface,
                       borderWidth: 1,
-                      borderColor: '#29292B',
+                      borderColor: colors.separator,
                     }}
                   >
                     <View
@@ -1566,7 +1539,9 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             paddingTop: 14,
             paddingBottom: persistentPanelBottom,
             borderRadius: 25,
-            backgroundColor: 'transparent',
+            backgroundColor: colors.surface,
+            borderWidth: 1,
+            borderColor: colors.separator,
             shadowColor: '#000000',
             shadowOpacity: 0.35,
             shadowRadius: 18,
@@ -1579,13 +1554,25 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 25 }}
             fallbackColor="rgba(32,32,36,0.92)"
           />
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              borderRadius: 25,
+              backgroundColor: isDark ? 'rgba(28,28,30,0.94)' : 'rgba(242,242,247,0.96)',
+            }}
+          />
           <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 42 }}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: selectedMp3 ? 'white' : '#8E8E93', fontSize: 14, fontWeight: '700' }}>
+              <Text numberOfLines={1} style={{ color: selectedMp3 ? colors.text : colors.secondaryText, fontSize: 14, fontWeight: '700' }}>
                 {selectedMp3?.title ?? 'Choose an MP3 to begin'}
               </Text>
               {selectedMp3 ? (
-                <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 12, marginTop: 3 }}>
+                <Text numberOfLines={1} style={{ color: colors.secondaryText, fontSize: 12, marginTop: 3 }}>
                   {selectedMp3.artist}
                 </Text>
               ) : null}
@@ -1597,13 +1584,13 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 accessibilityLabel="Restart synchronization"
                 style={{ minWidth: 40, height: 40, marginLeft: 8, alignItems: 'center', justifyContent: 'center' }}
               >
-                <ThemedIonicons name="refresh" size={19} color="#A1A1A6" />
+                <ThemedIonicons name="refresh" size={19} color={colors.secondaryText} />
               </TouchableOpacity>
             ) : null}
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 8 }}>
-            <Text style={{ width: 34, color: '#A1A1A6', fontSize: 11, fontVariant: ['tabular-nums'] }}>
+            <Text style={{ width: 34, color: colors.secondaryText, fontSize: 11, fontVariant: ['tabular-nums'] }}>
               {formatTime(seekPosition)}
             </Text>
             <View
@@ -1646,7 +1633,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               onResponderTerminate={() => setSeekPreview(null)}
               style={{ flex: 1, height: 28, justifyContent: 'center' }}
             >
-              <View style={{ height: 4, borderRadius: 2, backgroundColor: '#45454B', overflow: 'hidden' }}>
+              <View style={{ height: 4, borderRadius: 2, backgroundColor: isDark ? '#45454B' : colors.separator, overflow: 'hidden' }}>
                 <View
                   style={{
                     width: `${Math.min(100, ((seekPosition / (trackDuration || 1)) * 100))}%`,
@@ -1656,7 +1643,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 />
               </View>
             </View>
-            <Text style={{ width: 34, color: '#A1A1A6', fontSize: 11, textAlign: 'right', fontVariant: ['tabular-nums'] }}>
+            <Text style={{ width: 34, color: colors.secondaryText, fontSize: 11, textAlign: 'right', fontVariant: ['tabular-nums'] }}>
               {formatTime(trackDuration)}
             </Text>
           </View>
@@ -1669,7 +1656,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               accessibilityLabel="Seek backward three seconds"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', opacity: selectedMp3 ? 1 : 0.4 }}
             >
-              <ThemedIonicons name="play-back" size={20} color="#D1D1D6" />
+              <ThemedIonicons name="play-back" size={20} color={isDark ? '#D1D1D6' : colors.secondaryText} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
@@ -1684,13 +1671,13 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 width: 42,
                 height: 42,
                 borderRadius: 21,
-                backgroundColor: '#303034',
+                backgroundColor: transportButtonBackground,
                 alignItems: 'center',
                 justifyContent: 'center',
                 opacity: selectedMp3 ? 1 : 0.4,
               }}
             >
-              <ThemedIonicons name={playerStatus.playing ? 'pause' : 'play'} size={21} color="white" />
+              <ThemedIonicons name={playerStatus.playing ? 'pause' : 'play'} size={21} color={transportButtonForeground} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => void seekTo(playerStatus.currentTime + 3)}
@@ -1699,7 +1686,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               accessibilityLabel="Seek forward three seconds"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', opacity: selectedMp3 ? 1 : 0.4 }}
             >
-              <ThemedIonicons name="play-forward" size={20} color="#D1D1D6" />
+              <ThemedIonicons name="play-forward" size={20} color={isDark ? '#D1D1D6' : colors.secondaryText} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={assignTimestampToSelectedLine}
@@ -1713,7 +1700,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 marginLeft: 2,
                 paddingHorizontal: 4,
                 borderRadius: 14,
-                backgroundColor: '#FA243C',
+                backgroundColor: primaryButtonBackground,
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1721,8 +1708,8 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 opacity: !selectedLineId || !playerStatus.playing ? 0.48 : 1,
               }}
             >
-              <ThemedIonicons name="sync" size={16} color="white" />
-              <Text numberOfLines={1} style={{ color: 'white', fontSize: 12, fontWeight: '700', flexShrink: 1 }}>
+              <ThemedIonicons name="sync" size={16} color={primaryButtonForeground} />
+              <Text numberOfLines={1} style={{ color: primaryButtonForeground, fontSize: 12, fontWeight: '700', flexShrink: 1 }}>
                 {selectedLineId ? 'Sync' : 'Done'}
               </Text>
             </TouchableOpacity>
@@ -1737,7 +1724,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 minHeight: 44,
                 paddingHorizontal: 4,
                 borderRadius: 14,
-                backgroundColor: '#2A2024',
+                backgroundColor: secondaryButtonBackground,
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1765,7 +1752,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               minHeight: 44,
               marginTop: 10,
               borderRadius: 14,
-              backgroundColor: '#2A2024',
+              backgroundColor: secondaryButtonBackground,
               borderWidth: 1,
               borderColor: 'rgba(250,36,60,0.5)',
               flexDirection: 'row',
@@ -1843,8 +1830,6 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
           style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)' }}
         >
           <Animated.View
-            {...trackPickerPanResponder.panHandlers}
-            accessibilityHint="Swipe down to close the track library"
             style={{
               height: '88%',
               paddingHorizontal: 20,
@@ -1852,33 +1837,39 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               paddingBottom: Math.max(insets.bottom, 20),
               borderTopLeftRadius: 24,
               borderTopRightRadius: 24,
-              backgroundColor: '#1C1C1E',
+              backgroundColor: colors.surface,
+              borderTopWidth: isDark ? 0 : 1,
+              borderTopColor: colors.separator,
               transform: [{ translateY: trackPickerTranslateY }],
             }}
           >
-            <View {...trackPickerHeaderPanResponder.panHandlers}>
+            <View>
               <View
-                style={{
-                  alignSelf: 'center',
-                  width: 38,
-                  height: 5,
-                  marginBottom: 17,
-                  borderRadius: 3,
-                  backgroundColor: '#636366',
-                }}
-              />
+                {...trackPickerHandlePanResponder.panHandlers}
+                accessibilityHint="Drag down to close the track library"
+                style={{ height: 44, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <View
+                  style={{
+                    width: 38,
+                    height: 5,
+                    borderRadius: 3,
+                    backgroundColor: isDark ? '#636366' : '#C7C7CC',
+                  }}
+                />
+              </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <View>
-                  <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Choose a track</Text>
-                  <Text style={{ color: '#8E8E93', fontSize: 12, marginTop: 4 }}>Local MP3s in your library</Text>
+                  <Text style={{ color: colors.text, fontSize: 20, fontWeight: '700' }}>Choose a track</Text>
+                  <Text style={{ color: colors.secondaryText, fontSize: 12, marginTop: 4 }}>Local MP3s in your library</Text>
                 </View>
                 <TouchableOpacity
                   onPress={dismissTrackPicker}
                   accessibilityRole="button"
                   accessibilityLabel="Close track library"
-                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center' }}
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.raisedSurface, borderWidth: isDark ? 0 : 1, borderColor: colors.separator, alignItems: 'center', justifyContent: 'center' }}
                 >
-                  <ThemedIonicons name="close" size={21} color="white" />
+                  <ThemedIonicons name="close" size={21} color={colors.text} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -1889,22 +1880,24 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 marginBottom: 12,
                 paddingHorizontal: 14,
                 borderRadius: 15,
-                backgroundColor: '#111113',
+                backgroundColor: colors.raisedSurface,
+                borderWidth: isDark ? 0 : 1,
+                borderColor: colors.separator,
                 flexDirection: 'row',
                 alignItems: 'center',
               }}
             >
-              <ThemedIonicons name="search" size={19} color="#8E8E93" />
+              <ThemedIonicons name="search" size={19} color={colors.secondaryText} />
               <TextInput
                 value={librarySearch}
                 onChangeText={setLibrarySearch}
                 placeholder="Search songs, artists, albums"
-                placeholderTextColor="#8E8E93"
+                placeholderTextColor={colors.secondaryText}
                 accessibilityLabel="Search library tracks"
                 returnKeyType="search"
                 autoCorrect={false}
                 autoCapitalize="none"
-                style={{ flex: 1, marginLeft: 10, paddingVertical: 12, color: 'white', fontSize: 15 }}
+                style={{ flex: 1, marginLeft: 10, paddingVertical: 12, color: colors.text, fontSize: 15 }}
               />
               {librarySearch.length > 0 ? (
                 <TouchableOpacity
@@ -1913,7 +1906,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                   accessibilityLabel="Clear track search"
                   style={{ padding: 5 }}
                 >
-                  <ThemedIonicons name="close-circle" size={19} color="#8E8E93" />
+                  <ThemedIonicons name="close-circle" size={19} color={colors.secondaryText} />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -1931,48 +1924,44 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
             ) : availableMp3Tracks.length === 0 ? (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 }}>
                 <ThemedIonicons name="musical-notes-outline" size={34} color="#FA5265" />
-                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>No local MP3 tracks</Text>
-                <Text style={{ color: '#8E8E93', fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 6 }}>
+                <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', marginTop: 12 }}>No local MP3 tracks</Text>
+                <Text style={{ color: colors.secondaryText, fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 6 }}>
                   Add or download an MP3 to your library before synchronizing its lyrics.
                 </Text>
               </View>
             ) : filteredMp3Tracks.length === 0 ? (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#A1A1A6', fontSize: 14 }}>No tracks match “{librarySearch.trim()}”.</Text>
+                <Text style={{ color: colors.secondaryText, fontSize: 14 }}>No tracks match “{librarySearch.trim()}”.</Text>
               </View>
             ) : (
               <FlatList
                 data={filteredMp3Tracks}
                 style={{ flex: 1 }}
-                onScroll={(event) => {
-                  trackPickerListScrollOffset.current = Math.max(0, event.nativeEvent.contentOffset.y);
-                }}
-                scrollEventThrottle={16}
                 keyExtractor={(track) => track.id}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
                 initialNumToRender={12}
                 maxToRenderPerBatch={12}
                 windowSize={7}
-                ItemSeparatorComponent={() => <View style={{ height: 1, marginLeft: 62, backgroundColor: '#303034' }} />}
+                ItemSeparatorComponent={() => <View style={{ height: 1, marginLeft: 68, backgroundColor: colors.separator }} />}
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     onPress={() => void chooseLibraryTrack(item)}
                     disabled={isImporting}
                     accessibilityRole="button"
                     accessibilityLabel={`Select ${item.title} by ${item.artist}`}
-                    style={{ minHeight: 72, flexDirection: 'row', alignItems: 'center', opacity: isImporting ? 0.55 : 1 }}
+                    style={{ minHeight: 78, flexDirection: 'row', alignItems: 'center', opacity: isImporting ? 0.55 : 1 }}
                   >
                     {item.artwork ? (
-                      <Image source={{ uri: item.artwork }} style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#303034' }} />
+                      <Image source={{ uri: item.artwork }} style={{ width: 54, height: 54, borderRadius: 9, backgroundColor: colors.separator }} />
                     ) : (
-                      <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#382027', alignItems: 'center', justifyContent: 'center' }}>
+                      <View style={{ width: 54, height: 54, borderRadius: 9, backgroundColor: isDark ? '#382027' : '#FCE9EC', alignItems: 'center', justifyContent: 'center' }}>
                         <ThemedIonicons name="musical-note" size={21} color="#FA5265" />
                       </View>
                     )}
                     <View style={{ flex: 1, minWidth: 0, marginLeft: 13 }}>
-                      <Text numberOfLines={1} style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>{item.title}</Text>
-                      <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 12, marginTop: 4 }}>
+                      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>{item.title}</Text>
+                      <Text numberOfLines={1} style={{ color: colors.secondaryText, fontSize: 13, marginTop: 4 }}>
                         {item.artist}{item.album ? ` · ${item.album}` : ''}
                       </Text>
                     </View>
