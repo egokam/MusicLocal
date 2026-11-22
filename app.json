@@ -140,6 +140,14 @@
                 "foregroundImage": "./assets/icons/midnight.png",
                 "backgroundColor": "#1D4CC4"
               }
+            },
+            "ios27": {
+              "ios": { "light": "./assets/icons/ios27.png" },
+              "android": {
+                "image": "./assets/icons/ios27.png",
+                "foregroundImage": "./assets/icons/ios27.png",
+                "backgroundColor": "#FFFFFF"
+              }
             }
           }
         }

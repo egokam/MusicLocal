@@ -2082,6 +2082,47 @@ const runSpicyLyricsPrefetch = async (generation: number) => {
 export { parseLyrics };
 
 export const MusicCatalogService = {
+  async validateSpicyLyricsClientKey(key: string): Promise<void> {
+    const normalizedKey = key.trim();
+    if (!normalizedKey.startsWith('sl_pk_') || normalizedKey.length <= 'sl_pk_'.length) {
+      throw new Error('Enter a publishable key beginning with sl_pk_.');
+    }
+
+    const query = new URLSearchParams({ title: 'Never Gonna Give You Up', artist: 'Rick Astley' });
+    const operation = spicyApiRequestQueue.then(async () => {
+      const waitForSlot = SPICY_API_MIN_REQUEST_INTERVAL_MS - (Date.now() - lastSpicyApiRequestAt);
+      if (waitForSlot > 0) await sleep(waitForSlot);
+      lastSpicyApiRequestAt = Date.now();
+
+      let response: Response;
+      try {
+        response = await fetch(`${SPICY_LYRICS_API_BASE}/tracks/search?${query.toString()}`, {
+          headers: { Authorization: `Bearer ${normalizedKey}`, Accept: 'application/json' },
+        });
+      } catch {
+        throw new Error('Could not reach Spicy Lyrics to verify the key. Check your connection and Client access settings, then try again.');
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Spicy Lyrics rejected this key. Check the key and its Client access settings, then try again.');
+      }
+      if (response.status === 429 || response.status === 503) {
+        throw new Error('Spicy Lyrics is temporarily unavailable or rate limited. Try again shortly.');
+      }
+      if (!response.ok) {
+        throw new Error(`Spicy Lyrics could not verify the key (HTTP ${response.status}). Try again.`);
+      }
+
+      const payload = asRecord(await response.json());
+      const body = asRecord(payload?.Body);
+      if (!body || !Array.isArray(body.results)) {
+        throw new Error('Spicy Lyrics returned an unexpected response. Try again.');
+      }
+    });
+    spicyApiRequestQueue = operation.then(() => undefined, () => undefined);
+    await operation;
+  },
+
   setSpicyLyricsClientKey(key: string): boolean {
     const normalizedKey = key.trim();
     spicyLyricsClientKey = normalizedKey.startsWith('sl_pk_') ? normalizedKey : '';
