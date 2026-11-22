@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, FlatList, Image, Platform, StyleSheet, Switch, type ImageSourcePropType } from 'react-native';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, Easing, Image, Keyboard, Platform, StyleSheet, Switch, type ImageSourcePropType } from 'react-native';
 import { ThemedSafeAreaView as SafeAreaView, ThemedPressable as Pressable, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, useAppearanceTheme, type AppearanceMode } from '../contexts/AppearanceThemeContext';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from '@react-navigation/native';
@@ -31,6 +31,8 @@ import { ArtistsScreen } from './ArtistsScreen';
 type LibraryStackParamList = {
   LibraryHome: undefined;
   DeveloperProfile: undefined;
+  ProfileSettings: undefined;
+  AppIconPicker: undefined;
   ApiLyrics: undefined;
   ProfileWeb: { title: string; url: string };
   Songs: undefined;
@@ -49,13 +51,19 @@ type LibraryStackParamList = {
 
 const Stack = createNativeStackNavigator<LibraryStackParamList>();
 
-const APP_ICON_CHOICES: { key: string | null; title: string; image: ImageSourcePropType; accent: string }[] = [
-  { key: null, title: 'Original', image: require('../../assets/icon.png'), accent: '#FA5265' },
-  { key: 'ocean', title: 'Ocean', image: require('../../assets/icons/ocean.png'), accent: '#159FDB' },
-  { key: 'violet', title: 'Violet', image: require('../../assets/icons/violet.png'), accent: '#A233E5' },
-  { key: 'amber', title: 'Amber', image: require('../../assets/icons/amber.png'), accent: '#E9A115' },
-  { key: 'forest', title: 'Forest', image: require('../../assets/icons/forest.png'), accent: '#31B66A' },
-  { key: 'midnight', title: 'Midnight', image: require('../../assets/icons/midnight.png'), accent: '#4A78E8' },
+const APP_ICON_GROUPS: { title: string; choices: { key: string | null; title: string; image: ImageSourcePropType }[] }[] = [
+  { title: 'Classic', choices: [{ key: null, title: 'Original', image: require('../../assets/icon.png') }] },
+  {
+    title: 'Modern',
+    choices: [
+      { key: 'amber', title: 'Amber', image: require('../../assets/icons/amber.png') },
+      { key: 'forest', title: 'Forest', image: require('../../assets/icons/forest.png') },
+      { key: 'midnight', title: 'Midnight', image: require('../../assets/icons/midnight.png') },
+      { key: 'ocean', title: 'Ocean', image: require('../../assets/icons/ocean.png') },
+      { key: 'violet', title: 'Violet', image: require('../../assets/icons/violet.png') },
+      { key: 'ios27', title: 'ios27', image: require('../../assets/icons/ios27.png') },
+    ],
+  },
 ];
 
 type AppIconNativeModule = {
@@ -66,6 +74,49 @@ type AppIconNativeModule = {
 
 const getAppIconNativeModule = () =>
   requireOptionalNativeModule<AppIconNativeModule>('AwesomeAppIcon');
+
+const useAppIconSelection = () => {
+  const [appIconSupported, setAppIconSupported] = useState<boolean | null>(null);
+  const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
+  const [appIconChangePending, setAppIconChangePending] = useState(false);
+  const [isChangingAppIcon, setIsChangingAppIcon] = useState(false);
+
+  useFocusEffect(useCallback(() => {
+    const iconModule = getAppIconNativeModule();
+    const supported = iconModule?.supportsAlternateIcons() ?? false;
+    setAppIconSupported(supported);
+    if (supported && iconModule) {
+      const state = iconModule.getAppIconState();
+      setSelectedAppIcon(state.selected);
+      setAppIconChangePending(state.isPending);
+    }
+  }, []));
+
+  const selectAppIcon = useCallback(async (iconName: string | null) => {
+    if (!appIconSupported || isChangingAppIcon) return;
+    setIsChangingAppIcon(true);
+    try {
+      const iconModule = getAppIconNativeModule();
+      if (!iconModule?.supportsAlternateIcons()) {
+        setAppIconSupported(false);
+        return;
+      }
+      await iconModule.setAppIconAsync(
+        iconName,
+        Platform.OS === 'android' ? { deferUntilBackground: true } : {},
+      );
+      const state = iconModule.getAppIconState();
+      setSelectedAppIcon(state.selected);
+      setAppIconChangePending(state.isPending);
+    } catch (error) {
+      Alert.alert('Could not change app icon', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setIsChangingAppIcon(false);
+    }
+  }, [appIconSupported, isChangingAppIcon]);
+
+  return { appIconSupported, selectedAppIcon, appIconChangePending, isChangingAppIcon, selectAppIcon };
+};
 
 const RecentlyAddedTrackCard = ({
   track,
@@ -273,9 +324,13 @@ const LibraryHomeScreen = ({
   );
 };
 
-const DeveloperProfileScreen = ({
+const DeveloperProfileContent = ({
   navigation,
-}: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile'>) => {
+  settingsOnly,
+}: {
+  navigation: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile' | 'ProfileSettings'>['navigation'];
+  settingsOnly: boolean;
+}) => {
   const { colors, mode, setMode, isDark } = useAppearanceTheme();
   const {
     importMusicFolder,
@@ -284,6 +339,7 @@ const DeveloperProfileScreen = ({
     spicyLyricsEnabled,
     spicyLyricsConfigured,
     spicyLyricsAutoDownloadOverCellular,
+    apiInitializing,
     setSpicyLyricsEnabled,
     setSpicyLyricsAutoDownloadOverCellular,
     setSpicyLyricsApiKey,
@@ -293,13 +349,20 @@ const DeveloperProfileScreen = ({
   const [isImportingFolder, setIsImportingFolder] = useState(false);
   const [isExportingLibrary, setIsExportingLibrary] = useState(false);
   const [isEmptyingLibrary, setIsEmptyingLibrary] = useState(false);
-  const [appIconSupported, setAppIconSupported] = useState<boolean | null>(null);
-  const [selectedAppIcon, setSelectedAppIcon] = useState<string | null>(null);
-  const [appIconChangePending, setAppIconChangePending] = useState(false);
-  const [isChangingAppIcon, setIsChangingAppIcon] = useState(false);
   const [spicyLyricsKeyDraft, setSpicyLyricsKeyDraft] = useState('');
-  const [isEditingSpicyLyricsKey, setIsEditingSpicyLyricsKey] = useState(false);
   const [isSavingSpicyLyricsKey, setIsSavingSpicyLyricsKey] = useState(false);
+  const showSpicyLyricsKeyEntry = spicyLyricsEnabled || spicyLyricsConfigured;
+  // Seed from persisted state so returning to Settings does not replay the reveal.
+  const [spicyLyricsKeyEntryProgress] = useState(() => new Animated.Value(showSpicyLyricsKeyEntry ? 1 : 0));
+  const [lyricsExtrasProgress] = useState(() => new Animated.Value(spicyLyricsConfigured ? 1 : 0));
+  const [lyricsExtrasOpacity] = useState(() => new Animated.Value(
+    !spicyLyricsConfigured ? 0 : spicyLyricsEnabled ? 1 : 0.45,
+  ));
+  const lyricsSettingsAnimationReady = useRef(!apiInitializing);
+  const settingSurface = isDark ? '#0D0D0A' : colors.surface;
+  const settingBorder = isDark ? '#191916' : colors.separator;
+  const settingInset = isDark ? '#171714' : '#FFFFFF';
+  const lyricAccentSurface = isDark ? '#261317' : '#FCE9EC';
   const profileScrollY = useMemo(() => new Animated.Value(0), []);
   const profileTopFadeOpacity = profileScrollY.interpolate({
     inputRange: [0, 10, 26],
@@ -310,6 +373,68 @@ const DeveloperProfileScreen = ({
     () => Animated.event([{ nativeEvent: { contentOffset: { y: profileScrollY } } }], { useNativeDriver: true }),
     [profileScrollY],
   );
+  useLayoutEffect(() => {
+    if (apiInitializing || lyricsSettingsAnimationReady.current) return;
+
+    // SecureStore restores the verified key asynchronously. Snap to that saved
+    // state before the first paint; only later user changes should animate.
+    lyricsSettingsAnimationReady.current = true;
+    spicyLyricsKeyEntryProgress.setValue(showSpicyLyricsKeyEntry ? 1 : 0);
+    lyricsExtrasProgress.setValue(spicyLyricsConfigured ? 1 : 0);
+    lyricsExtrasOpacity.setValue(!spicyLyricsConfigured ? 0 : spicyLyricsEnabled ? 1 : 0.45);
+  }, [
+    apiInitializing,
+    lyricsExtrasOpacity,
+    lyricsExtrasProgress,
+    spicyLyricsConfigured,
+    spicyLyricsEnabled,
+    spicyLyricsKeyEntryProgress,
+    showSpicyLyricsKeyEntry,
+  ]);
+  useEffect(() => {
+    if (apiInitializing || !lyricsSettingsAnimationReady.current) return;
+    if (!spicyLyricsConfigured) {
+      lyricsExtrasProgress.setValue(0);
+      return;
+    }
+
+    const entrance = Animated.parallel([
+      Animated.timing(lyricsExtrasProgress, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+        isInteraction: false,
+      }),
+    ]);
+    entrance.start();
+    return () => entrance.stop();
+  }, [apiInitializing, lyricsExtrasProgress, spicyLyricsConfigured]);
+  useEffect(() => {
+    if (apiInitializing || !lyricsSettingsAnimationReady.current) return;
+    const entrance = Animated.timing(spicyLyricsKeyEntryProgress, {
+      toValue: showSpicyLyricsKeyEntry ? 1 : 0,
+      duration: 250,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+      isInteraction: false,
+    });
+    entrance.start();
+    return () => entrance.stop();
+  }, [apiInitializing, showSpicyLyricsKeyEntry, spicyLyricsKeyEntryProgress]);
+  useEffect(() => {
+    if (apiInitializing || !lyricsSettingsAnimationReady.current) return;
+    const targetOpacity = !spicyLyricsConfigured ? 0 : spicyLyricsEnabled ? 1 : 0.45;
+    const animation = Animated.timing(lyricsExtrasOpacity, {
+      toValue: targetOpacity,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+      isInteraction: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [apiInitializing, lyricsExtrasOpacity, spicyLyricsConfigured, spicyLyricsEnabled]);
   const links = [
     { title: 'GitHub', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
     { title: 'Instagram', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
@@ -320,40 +445,6 @@ const DeveloperProfileScreen = ({
     { mode: 'light', title: 'Light', icon: 'sunny-outline' },
     { mode: 'dark', title: 'Dark', icon: 'moon-outline' },
   ];
-
-  useFocusEffect(useCallback(() => {
-    const iconModule = getAppIconNativeModule();
-    const supported = iconModule?.supportsAlternateIcons() ?? false;
-    setAppIconSupported(supported);
-    if (supported && iconModule) {
-      const state = iconModule.getAppIconState();
-      setSelectedAppIcon(state.selected);
-      setAppIconChangePending(state.isPending);
-    }
-  }, []));
-
-  const selectAppIcon = async (iconName: string | null) => {
-    if (!appIconSupported || isChangingAppIcon) return;
-    setIsChangingAppIcon(true);
-    try {
-      const iconModule = getAppIconNativeModule();
-      if (!iconModule?.supportsAlternateIcons()) {
-        setAppIconSupported(false);
-        return;
-      }
-      await iconModule.setAppIconAsync(
-        iconName,
-        Platform.OS === 'android' ? { deferUntilBackground: true } : {},
-      );
-      const state = iconModule.getAppIconState();
-      setSelectedAppIcon(state.selected);
-      setAppIconChangePending(state.isPending);
-    } catch (error) {
-      Alert.alert('Could not change app icon', error instanceof Error ? error.message : 'Please try again.');
-    } finally {
-      setIsChangingAppIcon(false);
-    }
-  };
 
   const showSpicyLyricsKeyHelp = () => {
     Alert.alert(
@@ -376,9 +467,15 @@ const DeveloperProfileScreen = ({
     if (isSavingSpicyLyricsKey || !spicyLyricsKeyDraft.trim()) return;
     setIsSavingSpicyLyricsKey(true);
     try {
+      try {
+        await MusicCatalogService.validateSpicyLyricsClientKey(spicyLyricsKeyDraft);
+      } catch (error) {
+        Alert.alert('Could not verify API key', error instanceof Error ? error.message : 'Please check the key and try again.');
+        return;
+      }
       await setSpicyLyricsApiKey(spicyLyricsKeyDraft);
       setSpicyLyricsKeyDraft('');
-      setIsEditingSpicyLyricsKey(false);
+      Keyboard.dismiss();
     } catch (error) {
       Alert.alert('Could not save API key', error instanceof Error ? error.message : 'Please try again.');
     } finally {
@@ -386,28 +483,18 @@ const DeveloperProfileScreen = ({
     }
   };
 
-  const removeSpicyLyricsKey = () => {
-    Alert.alert(
-      'Delete API key?',
-      'Spicy Lyrics will be turned off. Your saved offline lyrics will remain on this device.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete key',
-          style: 'destructive',
-          onPress: () => {
-            setIsSavingSpicyLyricsKey(true);
-            void setSpicyLyricsApiKey('')
-              .then(() => {
-                setSpicyLyricsKeyDraft('');
-                setIsEditingSpicyLyricsKey(false);
-              })
-              .catch((error) => Alert.alert('Could not delete API key', error instanceof Error ? error.message : 'Please try again.'))
-              .finally(() => setIsSavingSpicyLyricsKey(false));
-          },
-        },
-      ],
-    );
+  const removeSpicyLyricsKey = async () => {
+    if (isSavingSpicyLyricsKey) return;
+    setIsSavingSpicyLyricsKey(true);
+    try {
+      await setSpicyLyricsApiKey('');
+      setSpicyLyricsKeyDraft('');
+      Keyboard.dismiss();
+    } catch (error) {
+      Alert.alert('Could not delete API key', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setIsSavingSpicyLyricsKey(false);
+    }
   };
 
   const emptyLibrary = async () => {
@@ -470,26 +557,47 @@ const DeveloperProfileScreen = ({
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top', 'bottom']}>
       <View
         pointerEvents="box-none"
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', zIndex: 20, elevation: 20 }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 20, elevation: 20 }}
       >
         <TouchableOpacity
           onPress={navigation.goBack}
           accessibilityRole="button"
-          accessibilityLabel="Back to Library"
-          style={{ position: 'relative', overflow: 'hidden', width: 42, height: 42, borderRadius: 21, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
+          accessibilityLabel={settingsOnly ? 'Back to profile' : 'Back to Library'}
+          style={settingsOnly
+            ? { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }
+            : { position: 'relative', overflow: 'hidden', width: 42, height: 42, borderRadius: 21, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
         >
-          <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }} />
-          <ThemedIonicons name="chevron-back" size={23} color="white" />
+          {!settingsOnly ? <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }} /> : null}
+          <ThemedIonicons name="chevron-back" size={23} color={settingsOnly ? colors.text : 'white'} />
         </TouchableOpacity>
+        {settingsOnly ? (
+          <Text style={{ position: 'absolute', left: 72, right: 72, textAlign: 'center', color: colors.text, fontSize: 18, fontWeight: '700', transform: [{ translateY: 45 }] }}>
+            Settings
+          </Text>
+        ) : <View style={{ flex: 1 }} />}
+        {settingsOnly ? <View style={{ width: 42, height: 42 }} /> : (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('ProfileSettings')}
+            accessibilityRole="button"
+            accessibilityLabel="Open settings"
+            activeOpacity={0.72}
+            style={{ position: 'relative', overflow: 'hidden', width: 42, height: 42, borderRadius: 21, backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.separator, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
+          >
+            <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }} />
+            <ThemedIonicons name="settings-outline" size={21} color={colors.text} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <Animated.ScrollView
         style={StyleSheet.absoluteFill}
-        contentContainerStyle={{ paddingTop: 56, paddingHorizontal: 20, paddingBottom: 160 }}
+        contentContainerStyle={{ paddingTop: settingsOnly ? 80 : 56, paddingHorizontal: 20, paddingBottom: 160 }}
         showsVerticalScrollIndicator={false}
         onScroll={profileScrollHandler}
         scrollEventThrottle={16}
       >
+        {!settingsOnly ? (
+          <>
         <View style={{ alignItems: 'center', marginTop: 30, marginBottom: 18 }}>
           <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: isDark ? '#2A171C' : '#FCE9EC', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: isDark ? '#4A222A' : '#F4C5CC' }}>
             <ThemedIonicons name="person" size={52} color="#FA5265" />
@@ -512,366 +620,275 @@ const DeveloperProfileScreen = ({
             </TouchableOpacity>
           ))}
         </View>
-
-        <Text style={{ color: colors.mutedText, fontSize: 23, fontWeight: '800', marginBottom: 13 }}>Theme</Text>
-        <View style={{ borderRadius: 24, overflow: 'hidden', backgroundColor: colors.surface, marginBottom: 13 }}>
-          {appearanceOptions.map((option, index) => {
-            const selected = mode === option.mode;
-            return (
-              <TouchableOpacity
-                key={option.mode}
-                onPress={() => setMode(option.mode)}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: selected }}
-                accessibilityLabel={`${option.title} theme`}
-                activeOpacity={0.72}
-                style={{ minHeight: 76, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' }}
-              >
-                <ThemedIonicons name={option.icon} size={25} color={colors.text} style={{ width: 36 }} />
-                <Text style={{ flex: 1, color: colors.text, fontSize: 20, fontWeight: '600' }}>{option.title}</Text>
-                {selected ? (
-                  <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A84FF' }}>
-                    <ThemedIonicons name="checkmark" size={20} color="#FFFFFF" />
-                  </View>
-                ) : (
-                  <View style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: colors.mutedText }} />
-                )}
-                {index < appearanceOptions.length - 1 ? (
-                  <View style={{ position: 'absolute', left: 20, right: 20, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator }} />
-                ) : null}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-        <Text style={{ color: colors.secondaryText, fontSize: 15, lineHeight: 21, marginBottom: 25 }}>
-          Automatic follows your device&apos;s system appearance.
-        </Text>
-
-        <Text style={{ color: colors.mutedText, fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginBottom: 12 }}>
-          APP ICON
-        </Text>
-        <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 22 }}>
-          <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Choose your app icon</Text>
-          <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-            {appIconSupported === false
-              ? 'Icon switching needs an installed build; it is not available in Expo Go.'
-              : appIconChangePending
-                ? 'Selected. Android applies the new icon after you close Musiqapp.'
-                : Platform.OS === 'ios'
-                  ? 'iOS may ask you to confirm the change.'
-                  : 'Choose how Musiqapp appears on your Home Screen.'}
+        <View style={{ alignItems: 'center', marginTop: 4, paddingHorizontal: 12 }}>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>Musiqapp</Text>
+          <Text style={{ color: colors.secondaryText, fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 8 }}>
+            {'© 2026 Egokam. All rights reserved.\nEnjoy, don\'t try to make it commercial, contact admin for support.'}
           </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10, marginTop: 14 }}>
-            {APP_ICON_CHOICES.map((choice) => {
-              const isSelected = selectedAppIcon === choice.key;
-              return (
-                <TouchableOpacity
-                  key={choice.title}
-                  onPress={() => void selectAppIcon(choice.key)}
-                  disabled={!appIconSupported || isChangingAppIcon}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${choice.title} app icon${isSelected ? ', selected' : ''}`}
-                  accessibilityState={{ selected: isSelected, disabled: !appIconSupported || isChangingAppIcon }}
-                  activeOpacity={0.8}
-                  style={{
-                    width: '31.5%',
-                    minHeight: 112,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: 8,
-                    borderRadius: 16,
-                    backgroundColor: isSelected ? '#2A2023' : '#242427',
-                    borderWidth: isSelected ? 1.5 : 1,
-                    borderColor: isSelected ? choice.accent : '#36363A',
-                    opacity: appIconSupported === false ? 0.52 : isChangingAppIcon && !isSelected ? 0.58 : 1,
-                  }}
-                >
-                  <View style={{ position: 'relative' }}>
-                    <Image source={choice.image} resizeMode="cover" style={{ width: 68, height: 68, borderRadius: 15 }} />
-                    {isSelected ? (
-                      <View style={{ position: 'absolute', top: 4, right: 4, width: 21, height: 21, borderRadius: 11, backgroundColor: choice.accent, alignItems: 'center', justifyContent: 'center' }}>
-                        <ThemedIonicons name="checkmark" size={14} color="white" />
+          <Text style={{ color: colors.mutedText, fontSize: 11, textAlign: 'center', marginTop: 8 }}>
+            Version {Constants.expoConfig?.version ?? '3.0.1'}
+          </Text>
+        </View>
+          </>
+        ) : null}
+
+        {settingsOnly ? (
+          <>
+            <Text style={{ color: colors.text, fontSize: 19, fontWeight: '700', marginTop: 26, marginBottom: 16 }}>
+              Theme
+            </Text>
+            <View style={{ borderRadius: 15, overflow: 'hidden', backgroundColor: settingSurface, marginBottom: 12 }}>
+              {appearanceOptions.map((option, index) => {
+                const selected = mode === option.mode;
+                return (
+                  <TouchableOpacity
+                    key={option.mode}
+                    onPress={() => setMode(option.mode)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected }}
+                    accessibilityLabel={`${option.title} theme`}
+                    activeOpacity={0.72}
+                    style={{ minHeight: 57, paddingHorizontal: 19, flexDirection: 'row', alignItems: 'center' }}
+                  >
+                    <ThemedIonicons name={option.icon} size={20} color={colors.text} style={{ width: 30 }} />
+                    <Text style={{ flex: 1, color: colors.text, fontSize: 17, fontWeight: '600' }}>{option.title}</Text>
+                    {selected ? (
+                      <View style={{ width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A84FF' }}>
+                        <ThemedIonicons name="checkmark" size={14} color="#FFFFFF" />
                       </View>
+                    ) : (
+                      <View style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 1.7, borderColor: colors.mutedText }} />
+                    )}
+                    {index < appearanceOptions.length - 1 ? (
+                      <View style={{ position: 'absolute', left: 19, right: 19, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator }} />
                     ) : null}
-                  </View>
-                  <Text numberOfLines={1} style={{ color: isSelected ? 'white' : '#C5C5CA', fontSize: 11, fontWeight: isSelected ? '700' : '500', marginTop: 7 }}>
-                    {choice.title}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          {isChangingAppIcon ? <ActivityIndicator color="#FA5265" size="small" style={{ marginTop: 13 }} /> : null}
-        </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={{ color: colors.secondaryText, fontSize: 12, lineHeight: 18, marginBottom: 20 }}>
+              Automatic follows your device&apos;s system appearance.
+            </Text>
 
-        <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginTop: 18, marginBottom: 12 }}>
-          LYRICS
-        </Text>
-        <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 10 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-              <ThemedIonicons name="key-outline" size={22} color="#FA5265" />
-            </View>
-            <View style={{ flex: 1, marginLeft: 13, marginRight: 8 }}>
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Spicy Lyrics API key</Text>
-              <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-                {spicyLyricsConfigured ? 'Saved securely on this device.' : 'Add a client key to enable online lyrics.'}
-              </Text>
-            </View>
             <TouchableOpacity
-              onPress={showSpicyLyricsKeyHelp}
+              onPress={() => navigation.navigate('AppIconPicker')}
               accessibilityRole="button"
-              accessibilityLabel="How to get a Spicy Lyrics API key"
-              hitSlop={8}
-              style={{ width: 34, height: 38, alignItems: 'center', justifyContent: 'center' }}
+              accessibilityLabel="Change app icon"
+              activeOpacity={0.74}
+              style={{ minHeight: 50, borderRadius: 15, paddingHorizontal: 14, backgroundColor: settingSurface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
             >
-              <ThemedIonicons name="information-circle-outline" size={22} color="#A1A1A6" />
+              <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>Change App Icon</Text>
+              <ThemedIonicons name="chevron-forward" size={20} color={colors.text} />
             </TouchableOpacity>
-          </View>
-          {isEditingSpicyLyricsKey ? (
-            <View style={{ marginTop: 14 }}>
-              <TextInput
-                value={spicyLyricsKeyDraft}
-                onChangeText={setSpicyLyricsKeyDraft}
-                placeholder={spicyLyricsConfigured ? 'Enter a replacement sl_pk_ key' : 'Paste your sl_pk_ client key'}
-                placeholderTextColor="#77777D"
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-                spellCheck={false}
-                editable={!isSavingSpicyLyricsKey}
-                accessibilityLabel="Spicy Lyrics publishable client key"
-                style={{ minHeight: 50, borderRadius: 14, borderWidth: 1, borderColor: '#454549', backgroundColor: '#252527', color: 'white', paddingHorizontal: 14, fontSize: 14 }}
-              />
-              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 11 }}>
-                <TouchableOpacity
-                  onPress={() => { setSpicyLyricsKeyDraft(''); setIsEditingSpicyLyricsKey(false); }}
-                  disabled={isSavingSpicyLyricsKey}
-                  accessibilityRole="button"
-                  style={{ minHeight: 42, paddingHorizontal: 13, justifyContent: 'center' }}
-                >
-                  <Text style={{ color: '#A1A1A6', fontSize: 14, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => void saveSpicyLyricsKey()}
-                  disabled={isSavingSpicyLyricsKey || !spicyLyricsKeyDraft.trim()}
-                  accessibilityRole="button"
-                  accessibilityLabel="Save Spicy Lyrics API key"
-                  style={{ minHeight: 42, borderRadius: 13, backgroundColor: '#FA5265', paddingHorizontal: 17, alignItems: 'center', justifyContent: 'center', opacity: isSavingSpicyLyricsKey || !spicyLyricsKeyDraft.trim() ? 0.55 : 1 }}
-                >
-                  {isSavingSpicyLyricsKey
-                    ? <ActivityIndicator color="white" size="small" />
-                    : <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>Save key</Text>}
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : (
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginTop: 11 }}>
-              {spicyLyricsConfigured ? (
-                <TouchableOpacity
-                  onPress={removeSpicyLyricsKey}
-                  disabled={isSavingSpicyLyricsKey}
-                  accessibilityRole="button"
-                  accessibilityLabel="Delete Spicy Lyrics API key"
-                  style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#292326', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', opacity: isSavingSpicyLyricsKey ? 0.55 : 1 }}
-                >
-                  <ThemedIonicons name="trash-outline" size={16} color="#FA5265" />
-                  <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>Delete</Text>
-                </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity
-                onPress={() => { setSpicyLyricsKeyDraft(''); setIsEditingSpicyLyricsKey(true); }}
-                disabled={isSavingSpicyLyricsKey}
-                accessibilityRole="button"
-                accessibilityLabel={spicyLyricsConfigured ? 'Edit Spicy Lyrics API key' : 'Add Spicy Lyrics API key'}
-                style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#2A171C', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center' }}
-              >
-                <ThemedIonicons name={spicyLyricsConfigured ? 'pencil-outline' : 'add'} size={17} color="#FA5265" />
-                <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>{spicyLyricsConfigured ? 'Edit key' : 'Add key'}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
+            <Text style={{ color: colors.secondaryText, fontSize: 11, lineHeight: 16, marginTop: 8, marginBottom: 19 }}>
+              Personalize your experience by choosing an alternate app icon.
+            </Text>
 
-        <View style={{ minHeight: 100, borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, paddingVertical: 15, marginBottom: 8, flexDirection: 'row', alignItems: 'center', opacity: spicyLyricsConfigured ? 1 : 0.62 }}>
-          <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-            <ThemedIonicons name="musical-notes" size={22} color="#FA5265" />
-          </View>
-          <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
-            <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Spicy Lyrics</Text>
-            <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-              {spicyLyricsConfigured
-                ? 'Check the lyrics catalog in the background and keep results available offline for up to 30 days.'
-                : 'Unavailable until you add a client API key above.'}
+            <Text style={{ color: colors.text, fontSize: 19, fontWeight: '700', marginTop: 8, marginBottom: 13 }}>
+              Lyrics
             </Text>
-          </View>
-          <Switch
-            value={spicyLyricsEnabled}
-            onValueChange={setSpicyLyricsEnabled}
-            disabled={!spicyLyricsConfigured}
-            trackColor={{ false: spicyLyricsConfigured ? '#48484A' : '#333337', true: '#FA5265' }}
-            thumbColor="#FFFFFF"
-            accessibilityState={{ disabled: !spicyLyricsConfigured }}
-            accessibilityLabel="Enable Spicy Lyrics lookup and the 30-day offline lyrics cache"
-          />
-        </View>
-        <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 8, opacity: spicyLyricsConfigured && spicyLyricsEnabled ? 1 : 0.5 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-              <ThemedIonicons name="cloud-download-outline" size={21} color="#FA5265" />
-            </View>
-            <View style={{ flex: 1, marginLeft: 13 }}>
-              <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Automatic lyrics downloads</Text>
-              <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-                Choose whether API lyrics can be saved over cellular data.
-              </Text>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 9, marginTop: 14 }}>
-            {([
-              { title: 'Wi-Fi only', icon: 'wifi-outline' as const, overCellular: false },
-              { title: 'Over cellular', icon: 'cellular-outline' as const, overCellular: true },
-            ]).map((option) => {
-              const isSelected = spicyLyricsAutoDownloadOverCellular === option.overCellular;
-              const isEnabled = spicyLyricsConfigured && spicyLyricsEnabled;
-              return (
+            <View style={{ borderRadius: 17, backgroundColor: settingSurface, padding: 8, marginBottom: 8 }}>
+              <View style={{ minHeight: 31, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <TouchableOpacity
-                  key={option.title}
-                  onPress={() => setSpicyLyricsAutoDownloadOverCellular(option.overCellular)}
-                  disabled={!isEnabled}
-                  accessibilityRole="radio"
-                  accessibilityState={{ disabled: !isEnabled, selected: isSelected }}
-                  accessibilityLabel={`Automatic lyrics downloads: ${option.title}`}
-                  activeOpacity={0.75}
-                  style={{ flex: 1, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: isSelected ? '#FA5265' : '#3A3A3E', backgroundColor: isSelected ? '#3A2026' : '#252527', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+                  onPress={showSpicyLyricsKeyHelp}
+                  accessibilityRole="button"
+                  accessibilityLabel="Spicy Lyrics key information and options"
+                  style={{ flex: 1, justifyContent: 'center' }}
                 >
-                  <ThemedIonicons name={option.icon} size={16} color={isSelected ? '#FA5265' : '#A1A1A6'} />
-                  <Text style={{ color: isSelected ? 'white' : '#A1A1A6', fontSize: 13, fontWeight: isSelected ? '700' : '600' }}>{option.title}</Text>
+                  <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>Spicy lyrics</Text>
                 </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('ApiLyrics')}
-          accessibilityRole="button"
-          accessibilityLabel="Manage downloaded API lyrics"
-          activeOpacity={0.78}
-          style={{ minHeight: 76, borderRadius: 18, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, marginTop: 8, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
-        >
-          <View style={{ width: 42, height: 42, borderRadius: 15, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-            <ThemedIonicons name="cloud-download-outline" size={21} color="#FA5265" />
-          </View>
-          <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
-            <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Manage downloaded lyrics</Text>
-            <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-              Renew API lyrics or ignore them to use your local lyrics.
-            </Text>
-          </View>
-          <ThemedIonicons name="chevron-forward" size={20} color="#8E8E93" />
-        </TouchableOpacity>
-        <View style={{ minHeight: 100, borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, paddingVertical: 15, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-            <ThemedIonicons name="pulse" size={22} color="#FA5265" />
-          </View>
-          <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
-            <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Line-synced word wave</Text>
-            <Text style={{ color: '#A1A1A6', fontSize: 12, lineHeight: 17, marginTop: 4 }}>
+                <Switch
+                  value={spicyLyricsEnabled}
+                  onValueChange={(enabled) => {
+                    if (!enabled && !spicyLyricsConfigured) setSpicyLyricsKeyDraft('');
+                    setSpicyLyricsEnabled(enabled);
+                  }}
+                  trackColor={{ false: isDark ? '#454545' : '#D1D1D6', true: '#FA5265' }}
+                  thumbColor="#FFFFFF"
+                  accessibilityLabel="Enable Spicy Lyrics lookup and the 30-day offline lyrics cache"
+                />
+              </View>
+              <Animated.View
+                pointerEvents={showSpicyLyricsKeyEntry ? 'auto' : 'none'}
+                style={{
+                  height: spicyLyricsKeyEntryProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 33] }),
+                  opacity: spicyLyricsKeyEntryProgress,
+                  marginTop: spicyLyricsKeyEntryProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 4] }),
+                  transform: [{ translateY: spicyLyricsKeyEntryProgress.interpolate({ inputRange: [0, 1], outputRange: [-7, 0] }) }],
+                  overflow: 'hidden',
+                }}
+              >
+                <View style={{ height: 33, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                  <TextInput
+                    value={spicyLyricsKeyDraft}
+                    onChangeText={setSpicyLyricsKeyDraft}
+                    placeholder={spicyLyricsConfigured ? 'API key saved' : 'Sl_pk...'}
+                    placeholderTextColor={isDark ? '#D1D1D1' : '#C7C7CC'}
+                    secureTextEntry={!spicyLyricsConfigured}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    editable={!isSavingSpicyLyricsKey && !spicyLyricsConfigured}
+                    accessibilityLabel="Spicy Lyrics publishable client key"
+                    style={{ flex: 1, minHeight: 31, borderRadius: 13, backgroundColor: isDark ? '#646464' : '#FFFFFF', color: colors.text, paddingHorizontal: 11, fontSize: 13 }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (spicyLyricsConfigured) void removeSpicyLyricsKey();
+                    else if (spicyLyricsKeyDraft.trim()) void saveSpicyLyricsKey();
+                    else Alert.alert('Enter an API key', 'Paste your Spicy Lyrics publishable key, then tap Done.');
+                    }}
+                  disabled={isSavingSpicyLyricsKey}
+                    accessibilityRole="button"
+                    accessibilityLabel={spicyLyricsConfigured ? 'Delete saved Spicy Lyrics API key' : 'Check and save Spicy Lyrics API key'}
+                    activeOpacity={0.78}
+                  style={{ width: spicyLyricsConfigured ? 58 : 43, minHeight: 31, borderRadius: 12, backgroundColor: '#FA5265', alignItems: 'center', justifyContent: 'center', opacity: isSavingSpicyLyricsKey ? 0.7 : 1 }}
+                  >
+                    {isSavingSpicyLyricsKey
+                      ? <ActivityIndicator color="white" size="small" />
+                      : <Text style={{ color: 'white', fontSize: 12, fontWeight: '700' }}>{spicyLyricsConfigured ? 'Delete' : 'Done'}</Text>}
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
+            </View>
+
+            {spicyLyricsConfigured ? (
+              <Animated.View
+                pointerEvents={spicyLyricsEnabled ? 'auto' : 'none'}
+                style={{
+                  opacity: lyricsExtrasOpacity,
+                  transform: [
+                    { translateY: lyricsExtrasProgress.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+                    { scale: lyricsExtrasProgress.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] }) },
+                  ],
+                }}
+              >
+                <View style={{ borderRadius: 17, backgroundColor: settingSurface, padding: 13, marginBottom: 9 }}>
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>Automatic lyrics downloads</Text>
+                  <Text style={{ color: colors.secondaryText, fontSize: 11, lineHeight: 15, marginTop: 3 }}>
+                    Choose whether API lyrics can be saved over cellular data.
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                    {([
+                      { title: 'Wi-Fi only', icon: 'wifi-outline' as const, overCellular: false },
+                      { title: 'Over cellular', icon: 'cellular-outline' as const, overCellular: true },
+                    ]).map((option) => {
+                      const isSelected = spicyLyricsAutoDownloadOverCellular === option.overCellular;
+                      const isEnabled = spicyLyricsConfigured && spicyLyricsEnabled;
+                      return (
+                        <TouchableOpacity
+                          key={option.title}
+                          onPress={() => setSpicyLyricsAutoDownloadOverCellular(option.overCellular)}
+                          disabled={!isEnabled}
+                          accessibilityRole="radio"
+                          accessibilityState={{ disabled: !isEnabled, selected: isSelected }}
+                          accessibilityLabel={`Automatic lyrics downloads: ${option.title}`}
+                          activeOpacity={0.75}
+                          style={{ flex: 1, minHeight: 41, borderRadius: 13, borderWidth: 1, borderColor: isSelected ? '#FA5265' : settingBorder, backgroundColor: isSelected ? lyricAccentSurface : settingInset, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: isEnabled ? 1 : 0.55 }}
+                        >
+                          <ThemedIonicons name={option.icon} size={15} color={isSelected ? '#FA5265' : colors.secondaryText} />
+                          <Text style={{ color: colors.text, fontSize: 12, fontWeight: isSelected ? '700' : '600' }}>{option.title}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('ApiLyrics')}
+                  disabled={!spicyLyricsEnabled}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !spicyLyricsEnabled }}
+                  accessibilityLabel="Manage downloaded API lyrics"
+                  activeOpacity={0.78}
+                  style={{ minHeight: 55, borderRadius: 15, backgroundColor: settingSurface, paddingHorizontal: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
+                >
+                  <Text style={{ flex: 1, color: colors.text, fontSize: 15, fontWeight: '600' }}>Manage downloaded lyrics</Text>
+                  <ThemedIonicons name="chevron-forward" size={19} color={colors.secondaryText} />
+                </TouchableOpacity>
+              </Animated.View>
+            ) : null}
+
+            <View style={{ minHeight: 50, borderRadius: 15, backgroundColor: settingSurface, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>Line synced word wave</Text>
+              <Switch
+                value={lineSyncedWordWaveEnabled}
+                onValueChange={setLineSyncedWordWaveEnabled}
+                trackColor={{ false: isDark ? '#454545' : '#D1D1D6', true: '#FA5265' }}
+                thumbColor="#FFFFFF"
+                style={{ marginRight: -6, transform: [{ translateY: 11 }] }}
+                accessibilityLabel="Animate line-synced lyrics with the word wave"
+              />
+            </View>
+            <Text style={{ color: colors.secondaryText, fontSize: 11, lineHeight: 15, marginTop: 8 }}>
               Animate line-synced lyrics with a moving word highlight. Word-timed lyrics stay animated.
             </Text>
-          </View>
-          <Switch
-            value={lineSyncedWordWaveEnabled}
-            onValueChange={setLineSyncedWordWaveEnabled}
-            trackColor={{ false: '#48484A', true: '#FA5265' }}
-            thumbColor="#FFFFFF"
-            accessibilityLabel="Animate line-synced lyrics with the word wave"
-          />
-        </View>
 
-        <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginTop: 18, marginBottom: 12 }}>
-          YOUR MUSIC
-        </Text>
-        <TouchableOpacity
-          onPress={() => {
-            if (isImportingFolder) return;
-            setIsImportingFolder(true);
-            void importMusicFolder()
-              .then((result) => {
-                if (!result) return;
-                Alert.alert(
-                  result.importedCount > 0 ? 'Music imported' : 'No audio found',
-                  result.importedCount > 0
-                    ? `${result.importedCount} track${result.importedCount === 1 ? '' : 's'} copied into your private Musiqapp library. Embedded lyrics found on ${result.embeddedLyricsCount} track${result.embeddedLyricsCount === 1 ? '' : 's'}; artwork found on ${result.artworkCount}.${result.skippedCount ? ` ${result.skippedCount} unsupported file${result.skippedCount === 1 ? '' : 's'} skipped.` : ''}`
-                    : 'Choose a folder containing MP3, M4A, AAC, WAV, FLAC, OGG, or OPUS files.',
-                );
-              })
-              .catch((error) => {
-                Alert.alert('Could not import folder', error instanceof Error ? error.message : 'Choose the music folder again.');
-              })
-              .finally(() => setIsImportingFolder(false));
-          }}
-          disabled={isImportingFolder}
-          accessibilityRole="button"
-          accessibilityLabel="Import a music folder"
-          style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#2A171C', borderWidth: 1, borderColor: '#5A2630', paddingHorizontal: 18, paddingVertical: 17, flexDirection: 'row', alignItems: 'center', opacity: isImportingFolder ? 0.65 : 1 }}
-        >
-          <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
-            {isImportingFolder ? <ActivityIndicator color="white" /> : <ThemedIonicons name="folder-open" size={28} color="white" />}
-          </View>
-          <View style={{ flex: 1, marginLeft: 15 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Import a music folder</Text>
-            <Text style={{ color: '#D2A9AF', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
+            <Text style={{ color: colors.text, fontSize: 19, fontWeight: '700', marginTop: 27, marginBottom: 13 }}>
+              Library
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (isImportingFolder) return;
+                setIsImportingFolder(true);
+                void importMusicFolder()
+                  .then((result) => {
+                    if (!result) return;
+                    Alert.alert(
+                      result.importedCount > 0 ? 'Music imported' : 'No audio found',
+                      result.importedCount > 0
+                        ? `${result.importedCount} track${result.importedCount === 1 ? '' : 's'} copied into your private Musiqapp library. Embedded lyrics found on ${result.embeddedLyricsCount} track${result.embeddedLyricsCount === 1 ? '' : 's'}; artwork found on ${result.artworkCount}.${result.skippedCount ? ` ${result.skippedCount} unsupported file${result.skippedCount === 1 ? '' : 's'} skipped.` : ''}`
+                        : 'Choose a folder containing MP3, M4A, AAC, WAV, FLAC, OGG, or OPUS files.',
+                    );
+                  })
+                  .catch((error) => {
+                    Alert.alert('Could not import folder', error instanceof Error ? error.message : 'Choose the music folder again.');
+                  })
+                  .finally(() => setIsImportingFolder(false));
+              }}
+              disabled={isImportingFolder}
+              accessibilityRole="button"
+              accessibilityLabel="Import a music folder"
+              activeOpacity={0.75}
+              style={{ minHeight: 50, borderRadius: 15, backgroundColor: settingSurface, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', opacity: isImportingFolder ? 0.72 : 1 }}
+            >
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>Import music folder</Text>
+              {isImportingFolder ? <ActivityIndicator color="#FA5265" size="small" /> : <ThemedIonicons name="chevron-forward" size={19} color={colors.text} />}
+            </TouchableOpacity>
+            <Text style={{ color: colors.secondaryText, fontSize: 11, lineHeight: 15, marginTop: 7, marginBottom: 14 }}>
               Import tracks with embedded lyrics and artwork. LRC, TTML, and TXT sidecars are supported as a fallback.
             </Text>
-          </View>
-          <ThemedIonicons name="chevron-forward" size={21} color="#FA5265" />
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={() => void exportLibrary()}
-          disabled={isExportingLibrary}
-          accessibilityRole="button"
-          accessibilityLabel="Export audio tracks as Music.zip"
-          style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#3A3A3E', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isExportingLibrary ? 0.65 : 1 }}
-        >
-          <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
-            {isExportingLibrary ? <ActivityIndicator color="white" /> : <ThemedIonicons name="download-outline" size={28} color="white" />}
-          </View>
-          <View style={{ flex: 1, marginLeft: 15 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Export Music.zip</Text>
-            <Text style={{ color: '#A1A1A6', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
+            <TouchableOpacity
+              onPress={() => void exportLibrary()}
+              disabled={isExportingLibrary}
+              accessibilityRole="button"
+              accessibilityLabel="Export audio tracks as Music.zip"
+              activeOpacity={0.75}
+              style={{ minHeight: 50, borderRadius: 15, backgroundColor: settingSurface, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', opacity: isExportingLibrary ? 0.72 : 1 }}
+            >
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>Export Music.zip</Text>
+              {isExportingLibrary ? <ActivityIndicator color="#FA5265" size="small" /> : <ThemedIonicons name="chevron-forward" size={19} color={colors.text} />}
+            </TouchableOpacity>
+            <Text style={{ color: colors.secondaryText, fontSize: 11, lineHeight: 15, marginTop: 7, marginBottom: 14 }}>
               Export audio files only, with lyrics and artwork embedded in MP3 copies.
             </Text>
-          </View>
-          <ThemedIonicons name="chevron-forward" size={21} color="#FA5265" />
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={() => void emptyLibrary()}
-          disabled={isEmptyingLibrary}
-          accessibilityRole="button"
-          accessibilityLabel="Empty library. Permanently delete all saved music from this device."
-          style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#201417', borderWidth: 1, borderColor: '#6A2731', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isEmptyingLibrary ? 0.65 : 1 }}
-        >
-          <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
-            {isEmptyingLibrary ? <ActivityIndicator color="white" /> : <ThemedIonicons name="trash" size={27} color="white" />}
-          </View>
-          <View style={{ flex: 1, marginLeft: 15 }}>
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Empty library</Text>
-            <Text style={{ color: '#E0A7AE', fontSize: 13, lineHeight: 18, marginTop: 5 }}>
+            <TouchableOpacity
+              onPress={() => void emptyLibrary()}
+              disabled={isEmptyingLibrary}
+              accessibilityRole="button"
+              accessibilityLabel="Empty library. Permanently delete all saved music from this device."
+              activeOpacity={0.75}
+              style={{ minHeight: 50, borderRadius: 15, backgroundColor: settingSurface, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', opacity: isEmptyingLibrary ? 0.72 : 1 }}
+            >
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>Empty library</Text>
+              {isEmptyingLibrary ? <ActivityIndicator color="#FA5265" size="small" /> : <ThemedIonicons name="chevron-forward" size={19} color={colors.text} />}
+            </TouchableOpacity>
+            <Text style={{ color: colors.secondaryText, fontSize: 11, lineHeight: 15, marginTop: 7 }}>
               Warning: permanently remove all music saved on this device.
             </Text>
-          </View>
-          <ThemedIonicons name="chevron-forward" size={21} color="#FA5265" />
-        </TouchableOpacity>
-
-        <Text style={{ color: '#65656B', fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 34 }}>
-          {'© 2026 Egokam. All rights reserved.\nEnjoy, don\'t try to make it commercial, contact admin for support.'}
-        </Text>
-        <Text style={{ color: '#55555A', fontSize: 11, textAlign: 'center', marginTop: 10 }}>
-          Version {Constants.expoConfig?.version ?? '2.0.1'}
-        </Text>
+          </>
+        ) : null}
       </Animated.ScrollView>
       <Animated.View
         pointerEvents="none"
@@ -894,6 +911,92 @@ const DeveloperProfileScreen = ({
           style={StyleSheet.absoluteFill}
         />
       </Animated.View>
+    </SafeAreaView>
+  );
+};
+
+const DeveloperProfileScreen = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile'>) => (
+  <DeveloperProfileContent navigation={navigation} settingsOnly={false} />
+);
+
+const ProfileSettingsScreen = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'ProfileSettings'>) => (
+  <DeveloperProfileContent navigation={navigation} settingsOnly />
+);
+
+const AppIconPickerScreen = ({ navigation }: NativeStackScreenProps<LibraryStackParamList, 'AppIconPicker'>) => {
+  const { colors, isDark } = useAppearanceTheme();
+  const { appIconSupported, selectedAppIcon, appIconChangePending, isChangingAppIcon, selectAppIcon } = useAppIconSelection();
+  const pickerSurface = isDark ? '#0D0D0A' : colors.surface;
+  const dividerColor = isDark ? '#191916' : colors.separator;
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top', 'bottom']}>
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 5, paddingBottom: 160 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <TouchableOpacity
+          onPress={navigation.goBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back to settings"
+          activeOpacity={0.7}
+          style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', marginLeft: -8 }}
+        >
+          <ThemedIonicons name="chevron-back" size={25} color={colors.text} />
+        </TouchableOpacity>
+
+        <Text style={{ color: colors.text, fontSize: 29, fontWeight: '800', marginTop: 17, marginBottom: 22 }}>
+          Change App Icon
+        </Text>
+
+        {appIconSupported === false ? (
+          <Text style={{ color: colors.secondaryText, fontSize: 12, lineHeight: 17, marginBottom: 4 }}>
+            Icon switching needs an installed build; it is not available in Expo Go.
+          </Text>
+        ) : appIconChangePending ? (
+          <Text style={{ color: colors.secondaryText, fontSize: 12, lineHeight: 17, marginBottom: 4 }}>
+            Your selected icon will appear after you close Musiqapp.
+          </Text>
+        ) : null}
+
+        {APP_ICON_GROUPS.map((group) => (
+          <View key={group.title}>
+            <Text style={{ color: colors.secondaryText, fontSize: 14, fontWeight: '700', marginLeft: 16, marginBottom: 11, marginTop: group.title === 'Classic' ? 0 : 28 }}>
+              {group.title}
+            </Text>
+            <View style={{ borderRadius: 22, overflow: 'hidden', backgroundColor: pickerSurface, paddingHorizontal: 13 }}>
+              {group.choices.map((choice, index) => {
+                const isSelected = selectedAppIcon === choice.key;
+                return (
+                  <TouchableOpacity
+                    key={choice.title}
+                    onPress={() => void selectAppIcon(choice.key)}
+                    disabled={!appIconSupported || isChangingAppIcon}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${choice.title} app icon${isSelected ? ', selected' : ''}`}
+                    accessibilityState={{ selected: isSelected, disabled: !appIconSupported || isChangingAppIcon }}
+                    activeOpacity={0.76}
+                    style={{ minHeight: 67, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 1, opacity: appIconSupported === false ? 0.52 : isChangingAppIcon && !isSelected ? 0.58 : 1 }}
+                  >
+                    <Image source={choice.image} resizeMode="cover" style={{ width: 42, height: 42, borderRadius: 11 }} />
+                    <Text style={{ flex: 1, color: colors.text, fontSize: 15, fontWeight: '600', marginLeft: 14 }}>
+                      {choice.title}
+                    </Text>
+                    {isChangingAppIcon && isSelected ? (
+                      <ActivityIndicator color="#FA5265" size="small" />
+                    ) : isSelected ? (
+                      <ThemedIonicons name="checkmark-circle" size={21} color="#0A84FF" />
+                    ) : null}
+                    {index < group.choices.length - 1 ? (
+                      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: dividerColor }} />
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        ))}
+      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -932,6 +1035,16 @@ const ApiLyricsScreen = ({
   const [menuTranslateY] = useState(() => new Animated.Value(-25));
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set());
+  const lyricsScrollY = useMemo(() => new Animated.Value(0), []);
+  const lyricsTopFadeOpacity = lyricsScrollY.interpolate({
+    inputRange: [0, 10, 26],
+    outputRange: [0, 0.75, 1],
+    extrapolate: 'clamp',
+  });
+  const lyricsScrollHandler = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: lyricsScrollY } } }], { useNativeDriver: true }),
+    [lyricsScrollY],
+  );
   const canCheckOnline = spicyLyricsConfigured && spicyLyricsEnabled;
   const actionsBusy = Boolean(busyAction || busyTrackId);
 
@@ -1430,7 +1543,7 @@ const ApiLyricsScreen = ({
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
-      <View style={{ height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' }}>
+      <View style={{ position: 'absolute', top: 40, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', zIndex: 40, elevation: 40 }}>
         <TouchableOpacity
           onPress={navigation.goBack}
           accessibilityRole="button"
@@ -1453,7 +1566,8 @@ const ApiLyricsScreen = ({
         </TouchableOpacity>
       </View>
 
-      <FlatList
+      <Animated.FlatList<ApiLyricsRow>
+        style={StyleSheet.absoluteFill}
         data={filteredRows}
         keyExtractor={(row) => row.track.id}
         renderItem={renderApiLyricsRow}
@@ -1482,13 +1596,37 @@ const ApiLyricsScreen = ({
             <Text style={{ color: '#A1A1A6', fontSize: 15, marginTop: 10 }}>No matching tracks</Text>
           </View>
         ) : undefined}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 170, flexGrow: 1 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 116, paddingBottom: 170, flexGrow: 1 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        onScroll={lyricsScrollHandler}
+        scrollEventThrottle={16}
       />
 
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: -24,
+          left: 0,
+          right: 0,
+          height: 170,
+          zIndex: 30,
+          elevation: 30,
+          opacity: lyricsTopFadeOpacity,
+        }}
+      >
+        <LinearGradient
+          colors={colors.scrollFade}
+          locations={[0, 0.32, 0.68, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+
       {menuOpen ? (
-        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
+        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 50 }]}>
           <Pressable onPress={() => closeMenu()} accessibilityLabel="Close options" style={StyleSheet.absoluteFill} />
           <Animated.View
             style={{
@@ -2069,6 +2207,12 @@ export const LibraryScreen = () => (
   >
     <Stack.Screen name="LibraryHome" component={LibraryHomeScreen} />
     <Stack.Screen name="DeveloperProfile" component={DeveloperProfileScreen} />
+    <Stack.Screen name="ProfileSettings" component={ProfileSettingsScreen} />
+    <Stack.Screen
+      name="AppIconPicker"
+      component={AppIconPickerScreen}
+      options={{ animation: 'slide_from_right', animationDuration: 280 }}
+    />
     <Stack.Screen name="ApiLyrics" component={ApiLyricsScreen} />
     <Stack.Screen name="ProfileWeb" component={ProfileWebScreen} />
     <Stack.Screen name="Songs" component={SongsRoute} />

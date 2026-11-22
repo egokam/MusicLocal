@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Alert, Animated, Easing, Linking, NativeModules, StatusBar } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, useFocusEffect } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSharedValue, withSpring } from 'react-native-reanimated';
@@ -41,6 +42,60 @@ const spicyLyricsAutoDownloadOverCellularPreferenceKey = 'musiqapp-spicy-lyrics-
 const spicyLyricsApiKeyStorageKey = 'musiqapp-spicy-lyrics-client-key';
 const lineSyncedWordWavePreferenceKey = 'musiqapp-line-synced-word-wave-enabled';
 type PlaybackCounts = Record<string, number>;
+
+function TabFocusTransition({ children }: { children: ReactNode }) {
+  const opacity = useState(() => new Animated.Value(1))[0];
+  const translateY = useState(() => new Animated.Value(0))[0];
+  const hasFocused = useRef(false);
+
+  useFocusEffect(useCallback(() => {
+    if (!hasFocused.current) {
+      hasFocused.current = true;
+      return;
+    }
+
+    opacity.setValue(0);
+    translateY.setValue(8);
+
+    const entrance = Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        isInteraction: false,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        isInteraction: false,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    entrance.start();
+    return () => entrance.stop();
+  }, [opacity, translateY]));
+
+  return (
+    <Animated.View style={{ flex: 1, opacity, transform: [{ translateY }] }}>
+      {children}
+    </Animated.View>
+  );
+}
+
+function HomeTabScreen() {
+  return <TabFocusTransition><HomeScreen /></TabFocusTransition>;
+}
+
+function RadioTabScreen() {
+  return <TabFocusTransition><RadioScreen /></TabFocusTransition>;
+}
+
+function LibraryTabScreen() {
+  return <TabFocusTransition><LibraryScreen /></TabFocusTransition>;
+}
 
 const loadPlaybackCounts = async (): Promise<PlaybackCounts> => {
   if (!playbackCountsFile.exists) return {};
@@ -550,7 +605,6 @@ function AppContent() {
   }, []);
 
   const setSpicyLyricsEnabled = useCallback((enabled: boolean, persistPreference = true) => {
-    if (enabled && !MusicCatalogService.isSpicyLyricsConfigured()) return;
     setSpicyLyricsEnabledState(enabled);
     MusicCatalogService.setSpicyLyricsEnabled(enabled);
     if (persistPreference) {
@@ -614,7 +668,6 @@ function AppContent() {
     await SecureStore.deleteItemAsync(spicyLyricsApiKeyStorageKey);
     MusicCatalogService.setSpicyLyricsClientKey('');
     setSpicyLyricsConfiguredState(false);
-    setSpicyLyricsEnabled(false, false);
   }, [setSpicyLyricsEnabled]);
 
   const setSpicyLyricsIgnored = useCallback(async (trackId: string, ignored: boolean) => {
@@ -671,7 +724,9 @@ function AppContent() {
     ]).then(([savedTracks, savedPlayCounts, spicyLyricsPreference, spicyLyricsApiKey, lineSyncedWordWavePreference, spicyLyricsAutoDownloadOverCellularPreference]) => {
       if (!mounted) return;
       const hasSpicyLyricsKey = Boolean(spicyLyricsApiKey && MusicCatalogService.setSpicyLyricsClientKey(spicyLyricsApiKey));
-      const shouldUseSpicyLyrics = hasSpicyLyricsKey && spicyLyricsPreference !== 'false';
+      const shouldUseSpicyLyrics = hasSpicyLyricsKey
+        ? spicyLyricsPreference !== 'false'
+        : spicyLyricsPreference === 'true';
       const allowSpicyLyricsOverCellular = spicyLyricsAutoDownloadOverCellularPreference === 'true';
       setSpicyLyricsConfiguredState(hasSpicyLyricsKey);
       spicyLyricsAutoDownloadOverCellularRef.current = allowSpicyLyricsOverCellular;
@@ -1895,9 +1950,9 @@ function AppContent() {
                     screenOptions={{ headerShown: false }}
                     initialRouteName="Library"
                   >
-                    <Tab.Screen name="Home" component={HomeScreen} />
-                    <Tab.Screen name="Radio" component={RadioScreen} />
-                    <Tab.Screen name="Library" component={LibraryScreen} />
+                    <Tab.Screen name="Home" component={HomeTabScreen} />
+                    <Tab.Screen name="Radio" component={RadioTabScreen} />
+                    <Tab.Screen name="Library" component={LibraryTabScreen} />
                     <Tab.Screen name="Search" component={SearchScreen} />
                   </Tab.Navigator>
                 </NavigationContainer>

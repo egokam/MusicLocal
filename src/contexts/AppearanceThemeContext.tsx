@@ -1,6 +1,7 @@
-import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useState, type ComponentProps, type ElementRef, type PropsWithChildren } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps, type ElementRef, type PropsWithChildren } from 'react';
 import {
   ActivityIndicator as NativeActivityIndicator,
+  Animated,
   Appearance,
   Pressable as NativePressable,
   ScrollView as NativeScrollView,
@@ -107,6 +108,9 @@ export const AppearanceThemeProvider = ({ children }: PropsWithChildren) => {
   const systemColorScheme = useColorScheme();
   const [mode, setModeState] = useState<AppearanceMode>('dark');
   const [preferenceLoaded, setPreferenceLoaded] = useState(false);
+  const [themeTransitioning, setThemeTransitioning] = useState(false);
+  const [themeTransitionOpacity] = useState(() => new Animated.Value(1));
+  const themeTransitionActive = useRef(false);
   const isDark = mode === 'automatic' ? systemColorScheme !== 'light' : mode === 'dark';
 
   useEffect(() => {
@@ -130,10 +134,36 @@ export const AppearanceThemeProvider = ({ children }: PropsWithChildren) => {
   }, [mode, preferenceLoaded]);
 
   const setMode = useCallback((nextMode: AppearanceMode) => {
-    setModeState(nextMode);
-    Appearance.setColorScheme(nextMode === 'automatic' ? 'auto' : nextMode);
-    void SecureStore.setItemAsync(APPEARANCE_MODE_KEY, nextMode).catch(() => undefined);
-  }, []);
+    if (nextMode === mode || themeTransitionActive.current) return;
+
+    themeTransitionActive.current = true;
+    setThemeTransitioning(true);
+    Animated.timing(themeTransitionOpacity, {
+      toValue: 0,
+      duration: 130,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) {
+        themeTransitionActive.current = false;
+        setThemeTransitioning(false);
+        return;
+      }
+
+      setModeState(nextMode);
+      void SecureStore.setItemAsync(APPEARANCE_MODE_KEY, nextMode).catch(() => undefined);
+      requestAnimationFrame(() => {
+        Animated.timing(themeTransitionOpacity, {
+          toValue: 1,
+          duration: 210,
+          useNativeDriver: true,
+        }).start(({ finished: fadeInFinished }) => {
+          if (!fadeInFinished) return;
+          themeTransitionActive.current = false;
+          setThemeTransitioning(false);
+        });
+      });
+    });
+  }, [mode, themeTransitionOpacity]);
 
   const colors = useMemo(() => isDark ? {
     background: '#000000',
@@ -159,7 +189,18 @@ export const AppearanceThemeProvider = ({ children }: PropsWithChildren) => {
 
   const value = useMemo(() => ({ mode, isDark, colors, setMode }), [colors, isDark, mode, setMode]);
 
-  return <AppearanceThemeContext.Provider value={value}>{children}</AppearanceThemeContext.Provider>;
+  return (
+    <AppearanceThemeContext.Provider value={value}>
+      <NativeView style={{ flex: 1, backgroundColor: colors.background }}>
+        <Animated.View
+          pointerEvents={themeTransitioning ? 'none' : 'auto'}
+          style={{ flex: 1, opacity: themeTransitionOpacity }}
+        >
+          {children}
+        </Animated.View>
+      </NativeView>
+    </AppearanceThemeContext.Provider>
+  );
 };
 
 export const useAppearanceTheme = () => {
