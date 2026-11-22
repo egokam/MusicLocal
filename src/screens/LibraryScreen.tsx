@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Alert, Animated, Easing, FlatList, Image, Platform, StyleSheet, Switch, type ImageSourcePropType } from 'react-native';
+import { ThemedSafeAreaView as SafeAreaView, ThemedPressable as Pressable, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, useAppearanceTheme, type AppearanceMode } from '../contexts/AppearanceThemeContext';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from '@react-navigation/native';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { requireOptionalNativeModule } from 'expo';
 import { Directory } from 'expo-file-system';
@@ -161,6 +160,7 @@ const LibraryHomeScreen = ({
     updateTrack,
     deleteTrack,
   } = usePlaybackActions();
+  const { colors } = useAppearanceTheme();
   const [selectedTrackMenu, setSelectedTrackMenu] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
   const libraryScrollY = useMemo(() => new Animated.Value(0), []);
   const libraryTopFadeOpacity = libraryScrollY.interpolate({
@@ -174,7 +174,7 @@ const LibraryHomeScreen = ({
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-black" edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top']}>
       <Animated.ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 190 }}
@@ -245,7 +245,7 @@ const LibraryHomeScreen = ({
         }}
       >
         <LinearGradient
-          colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+          colors={colors.scrollFade}
           locations={[0, 0.32, 0.68, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
@@ -276,6 +276,7 @@ const LibraryHomeScreen = ({
 const DeveloperProfileScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'DeveloperProfile'>) => {
+  const { colors, mode, setMode, isDark } = useAppearanceTheme();
   const {
     importMusicFolder,
     downloadedTracks,
@@ -313,6 +314,11 @@ const DeveloperProfileScreen = ({
     { title: 'GitHub', icon: 'logo-github' as const, url: 'https://github.com/egokam' },
     { title: 'Instagram', icon: 'logo-instagram' as const, url: 'https://instagram.com/kotmanii' },
     { title: 'Portfolio', icon: 'briefcase-outline' as const, url: 'https://portfolio.egokam.site' },
+  ];
+  const appearanceOptions: { mode: AppearanceMode; title: string; icon: 'contrast-outline' | 'sunny-outline' | 'moon-outline' }[] = [
+    { mode: 'automatic', title: 'Automatic', icon: 'contrast-outline' },
+    { mode: 'light', title: 'Light', icon: 'sunny-outline' },
+    { mode: 'dark', title: 'Dark', icon: 'moon-outline' },
   ];
 
   useFocusEffect(useCallback(() => {
@@ -461,7 +467,7 @@ const DeveloperProfileScreen = ({
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top', 'bottom']}>
       <View
         pointerEvents="box-none"
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', zIndex: 20, elevation: 20 }}
@@ -473,7 +479,7 @@ const DeveloperProfileScreen = ({
           style={{ position: 'relative', overflow: 'hidden', width: 42, height: 42, borderRadius: 21, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
         >
           <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }} />
-          <Ionicons name="chevron-back" size={23} color="white" />
+          <ThemedIonicons name="chevron-back" size={23} color="white" />
         </TouchableOpacity>
       </View>
 
@@ -485,11 +491,11 @@ const DeveloperProfileScreen = ({
         scrollEventThrottle={16}
       >
         <View style={{ alignItems: 'center', marginTop: 30, marginBottom: 18 }}>
-          <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#4A222A' }}>
-            <Ionicons name="person" size={52} color="#FA5265" />
+          <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: isDark ? '#2A171C' : '#FCE9EC', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: isDark ? '#4A222A' : '#F4C5CC' }}>
+            <ThemedIonicons name="person" size={52} color="#FA5265" />
           </View>
-          <Text style={{ color: 'white', fontSize: 34, fontWeight: '800', marginTop: 18 }}>Kamal</Text>
-          <Text style={{ color: '#A1A1A6', fontSize: 16, marginTop: 5 }}>Developer</Text>
+          <Text style={{ color: colors.text, fontSize: 34, fontWeight: '800', marginTop: 18 }}>Kamal</Text>
+          <Text style={{ color: colors.secondaryText, fontSize: 16, marginTop: 5 }}>Developer</Text>
         </View>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22, marginBottom: 34 }}>
@@ -500,14 +506,48 @@ const DeveloperProfileScreen = ({
               accessibilityRole="link"
               accessibilityLabel={`Open Kamal’s ${link.title} profile`}
               activeOpacity={0.72}
-              style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.separator, alignItems: 'center', justifyContent: 'center' }}
             >
-              <Ionicons name={link.icon} size={25} color="white" />
+              <ThemedIonicons name={link.icon} size={25} color={colors.text} />
             </TouchableOpacity>
           ))}
         </View>
 
-        <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginBottom: 12 }}>
+        <Text style={{ color: colors.mutedText, fontSize: 23, fontWeight: '800', marginBottom: 13 }}>Theme</Text>
+        <View style={{ borderRadius: 24, overflow: 'hidden', backgroundColor: colors.surface, marginBottom: 13 }}>
+          {appearanceOptions.map((option, index) => {
+            const selected = mode === option.mode;
+            return (
+              <TouchableOpacity
+                key={option.mode}
+                onPress={() => setMode(option.mode)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+                accessibilityLabel={`${option.title} theme`}
+                activeOpacity={0.72}
+                style={{ minHeight: 76, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' }}
+              >
+                <ThemedIonicons name={option.icon} size={25} color={colors.text} style={{ width: 36 }} />
+                <Text style={{ flex: 1, color: colors.text, fontSize: 20, fontWeight: '600' }}>{option.title}</Text>
+                {selected ? (
+                  <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A84FF' }}>
+                    <ThemedIonicons name="checkmark" size={20} color="#FFFFFF" />
+                  </View>
+                ) : (
+                  <View style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: colors.mutedText }} />
+                )}
+                {index < appearanceOptions.length - 1 ? (
+                  <View style={{ position: 'absolute', left: 20, right: 20, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: colors.separator }} />
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={{ color: colors.secondaryText, fontSize: 15, lineHeight: 21, marginBottom: 25 }}>
+          Automatic follows your device&apos;s system appearance.
+        </Text>
+
+        <Text style={{ color: colors.mutedText, fontSize: 12, fontWeight: '700', letterSpacing: 1.5, marginBottom: 12 }}>
           APP ICON
         </Text>
         <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 22 }}>
@@ -550,7 +590,7 @@ const DeveloperProfileScreen = ({
                     <Image source={choice.image} resizeMode="cover" style={{ width: 68, height: 68, borderRadius: 15 }} />
                     {isSelected ? (
                       <View style={{ position: 'absolute', top: 4, right: 4, width: 21, height: 21, borderRadius: 11, backgroundColor: choice.accent, alignItems: 'center', justifyContent: 'center' }}>
-                        <Ionicons name="checkmark" size={14} color="white" />
+                        <ThemedIonicons name="checkmark" size={14} color="white" />
                       </View>
                     ) : null}
                   </View>
@@ -570,7 +610,7 @@ const DeveloperProfileScreen = ({
         <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="key-outline" size={22} color="#FA5265" />
+              <ThemedIonicons name="key-outline" size={22} color="#FA5265" />
             </View>
             <View style={{ flex: 1, marginLeft: 13, marginRight: 8 }}>
               <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Spicy Lyrics API key</Text>
@@ -585,7 +625,7 @@ const DeveloperProfileScreen = ({
               hitSlop={8}
               style={{ width: 34, height: 38, alignItems: 'center', justifyContent: 'center' }}
             >
-              <Ionicons name="information-circle-outline" size={22} color="#A1A1A6" />
+              <ThemedIonicons name="information-circle-outline" size={22} color="#A1A1A6" />
             </TouchableOpacity>
           </View>
           {isEditingSpicyLyricsKey ? (
@@ -635,7 +675,7 @@ const DeveloperProfileScreen = ({
                   accessibilityLabel="Delete Spicy Lyrics API key"
                   style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#292326', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', opacity: isSavingSpicyLyricsKey ? 0.55 : 1 }}
                 >
-                  <Ionicons name="trash-outline" size={16} color="#FA5265" />
+                  <ThemedIonicons name="trash-outline" size={16} color="#FA5265" />
                   <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>Delete</Text>
                 </TouchableOpacity>
               ) : null}
@@ -646,7 +686,7 @@ const DeveloperProfileScreen = ({
                 accessibilityLabel={spicyLyricsConfigured ? 'Edit Spicy Lyrics API key' : 'Add Spicy Lyrics API key'}
                 style={{ minHeight: 40, borderRadius: 12, backgroundColor: '#2A171C', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center' }}
               >
-                <Ionicons name={spicyLyricsConfigured ? 'pencil-outline' : 'add'} size={17} color="#FA5265" />
+                <ThemedIonicons name={spicyLyricsConfigured ? 'pencil-outline' : 'add'} size={17} color="#FA5265" />
                 <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>{spicyLyricsConfigured ? 'Edit key' : 'Add key'}</Text>
               </TouchableOpacity>
             </View>
@@ -655,7 +695,7 @@ const DeveloperProfileScreen = ({
 
         <View style={{ minHeight: 100, borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, paddingVertical: 15, marginBottom: 8, flexDirection: 'row', alignItems: 'center', opacity: spicyLyricsConfigured ? 1 : 0.62 }}>
           <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="musical-notes" size={22} color="#FA5265" />
+            <ThemedIonicons name="musical-notes" size={22} color="#FA5265" />
           </View>
           <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
             <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Spicy Lyrics</Text>
@@ -678,7 +718,7 @@ const DeveloperProfileScreen = ({
         <View style={{ borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 15, marginBottom: 8, opacity: spicyLyricsConfigured && spicyLyricsEnabled ? 1 : 0.5 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="cloud-download-outline" size={21} color="#FA5265" />
+              <ThemedIonicons name="cloud-download-outline" size={21} color="#FA5265" />
             </View>
             <View style={{ flex: 1, marginLeft: 13 }}>
               <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Automatic lyrics downloads</Text>
@@ -705,7 +745,7 @@ const DeveloperProfileScreen = ({
                   activeOpacity={0.75}
                   style={{ flex: 1, minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: isSelected ? '#FA5265' : '#3A3A3E', backgroundColor: isSelected ? '#3A2026' : '#252527', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
                 >
-                  <Ionicons name={option.icon} size={16} color={isSelected ? '#FA5265' : '#A1A1A6'} />
+                  <ThemedIonicons name={option.icon} size={16} color={isSelected ? '#FA5265' : '#A1A1A6'} />
                   <Text style={{ color: isSelected ? 'white' : '#A1A1A6', fontSize: 13, fontWeight: isSelected ? '700' : '600' }}>{option.title}</Text>
                 </TouchableOpacity>
               );
@@ -720,7 +760,7 @@ const DeveloperProfileScreen = ({
           style={{ minHeight: 76, borderRadius: 18, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, marginTop: 8, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
         >
           <View style={{ width: 42, height: 42, borderRadius: 15, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="cloud-download-outline" size={21} color="#FA5265" />
+            <ThemedIonicons name="cloud-download-outline" size={21} color="#FA5265" />
           </View>
           <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
             <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Manage downloaded lyrics</Text>
@@ -728,11 +768,11 @@ const DeveloperProfileScreen = ({
               Renew API lyrics or ignore them to use your local lyrics.
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+          <ThemedIonicons name="chevron-forward" size={20} color="#8E8E93" />
         </TouchableOpacity>
         <View style={{ minHeight: 100, borderRadius: 20, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 16, paddingVertical: 15, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ width: 46, height: 46, borderRadius: 16, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="pulse" size={22} color="#FA5265" />
+            <ThemedIonicons name="pulse" size={22} color="#FA5265" />
           </View>
           <View style={{ flex: 1, marginLeft: 13, marginRight: 10 }}>
             <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>Line-synced word wave</Text>
@@ -777,7 +817,7 @@ const DeveloperProfileScreen = ({
           style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#2A171C', borderWidth: 1, borderColor: '#5A2630', paddingHorizontal: 18, paddingVertical: 17, flexDirection: 'row', alignItems: 'center', opacity: isImportingFolder ? 0.65 : 1 }}
         >
           <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
-            {isImportingFolder ? <ActivityIndicator color="white" /> : <Ionicons name="folder-open" size={28} color="white" />}
+            {isImportingFolder ? <ActivityIndicator color="white" /> : <ThemedIonicons name="folder-open" size={28} color="white" />}
           </View>
           <View style={{ flex: 1, marginLeft: 15 }}>
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Import a music folder</Text>
@@ -785,7 +825,7 @@ const DeveloperProfileScreen = ({
               Import tracks with embedded lyrics and artwork. LRC, TTML, and TXT sidecars are supported as a fallback.
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={21} color="#FA5265" />
+          <ThemedIonicons name="chevron-forward" size={21} color="#FA5265" />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -796,7 +836,7 @@ const DeveloperProfileScreen = ({
           style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#3A3A3E', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isExportingLibrary ? 0.65 : 1 }}
         >
           <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
-            {isExportingLibrary ? <ActivityIndicator color="white" /> : <Ionicons name="download-outline" size={28} color="white" />}
+            {isExportingLibrary ? <ActivityIndicator color="white" /> : <ThemedIonicons name="download-outline" size={28} color="white" />}
           </View>
           <View style={{ flex: 1, marginLeft: 15 }}>
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Export Music.zip</Text>
@@ -804,7 +844,7 @@ const DeveloperProfileScreen = ({
               Export audio files only, with lyrics and artwork embedded in MP3 copies.
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={21} color="#FA5265" />
+          <ThemedIonicons name="chevron-forward" size={21} color="#FA5265" />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -815,7 +855,7 @@ const DeveloperProfileScreen = ({
           style={{ minHeight: 112, borderRadius: 22, backgroundColor: '#201417', borderWidth: 1, borderColor: '#6A2731', paddingHorizontal: 18, paddingVertical: 17, marginTop: 12, flexDirection: 'row', alignItems: 'center', opacity: isEmptyingLibrary ? 0.65 : 1 }}
         >
           <View style={{ width: 58, height: 58, borderRadius: 18, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
-            {isEmptyingLibrary ? <ActivityIndicator color="white" /> : <Ionicons name="trash" size={27} color="white" />}
+            {isEmptyingLibrary ? <ActivityIndicator color="white" /> : <ThemedIonicons name="trash" size={27} color="white" />}
           </View>
           <View style={{ flex: 1, marginLeft: 15 }}>
             <Text style={{ color: 'white', fontSize: 18, fontWeight: '800' }}>Empty library</Text>
@@ -823,7 +863,7 @@ const DeveloperProfileScreen = ({
               Warning: permanently remove all music saved on this device.
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={21} color="#FA5265" />
+          <ThemedIonicons name="chevron-forward" size={21} color="#FA5265" />
         </TouchableOpacity>
 
         <Text style={{ color: '#65656B', fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 34 }}>
@@ -847,7 +887,7 @@ const DeveloperProfileScreen = ({
         }}
       >
         <LinearGradient
-          colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+          colors={colors.scrollFade}
           locations={[0, 0.32, 0.68, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
@@ -1189,7 +1229,7 @@ const ApiLyricsScreen = ({
       ) : null}
 
       <View style={{ minHeight: 50, borderRadius: 16, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-        <Ionicons name="search" size={20} color="#A1A1A6" />
+        <ThemedIonicons name="search" size={20} color="#A1A1A6" />
         <TextInput
           value={query}
           onChangeText={setQuery}
@@ -1201,7 +1241,7 @@ const ApiLyricsScreen = ({
         />
         {query ? (
           <TouchableOpacity onPress={() => setQuery('')} accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={10}>
-            <Ionicons name="close-circle" size={19} color="#77777D" />
+            <ThemedIonicons name="close-circle" size={19} color="#77777D" />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -1224,7 +1264,7 @@ const ApiLyricsScreen = ({
             accessibilityState={{ checked: allFilteredRowsSelected, disabled: actionsBusy || filteredRows.length === 0 }}
             style={{ minHeight: 38, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, opacity: filteredRows.length ? 1 : 0.5 }}
           >
-            <Ionicons name={allFilteredRowsSelected ? 'checkbox' : 'square-outline'} size={20} color={allFilteredRowsSelected ? '#FA5265' : '#A1A1A6'} />
+            <ThemedIonicons name={allFilteredRowsSelected ? 'checkbox' : 'square-outline'} size={20} color={allFilteredRowsSelected ? '#FA5265' : '#A1A1A6'} />
             <Text style={{ color: 'white', fontSize: 13, fontWeight: '600', marginLeft: 9 }}>
               Select all{query.trim() ? ' matching tracks' : ' tracks'} ({filteredRows.length})
             </Text>
@@ -1232,18 +1272,18 @@ const ApiLyricsScreen = ({
           {selectedRows.length > 0 ? (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
               <TouchableOpacity onPress={() => void renewSelected()} disabled={actionsBusy || selectedLyricsRows.length === 0} accessibilityRole="button" style={{ flexGrow: 1, flexBasis: '30%', minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy || selectedLyricsRows.length === 0 ? 0.45 : 1 }}>
-                {busyAction === 'renew-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={17} color="#FA5265" />}
+                {busyAction === 'renew-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="refresh-outline" size={17} color="#FA5265" />}
                 <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Renew</Text>
               </TouchableOpacity>
               {selectedNotIgnoredRows.length > 0 ? (
                 <TouchableOpacity onPress={() => void ignoreSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flexGrow: 1, flexBasis: '30%', minHeight: 42, borderRadius: 13, backgroundColor: '#2A171C', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.45 : 1 }}>
-                  {busyAction === 'ignore-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="eye-off-outline" size={17} color="#FA5265" />}
+                  {busyAction === 'ignore-selected' ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="eye-off-outline" size={17} color="#FA5265" />}
                   <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Ignore</Text>
                 </TouchableOpacity>
               ) : null}
               {selectedIgnoredRows.length > 0 ? (
                 <TouchableOpacity onPress={() => void undoIgnoreSelected()} disabled={actionsBusy} accessibilityRole="button" style={{ flexGrow: 1, flexBasis: '30%', minHeight: 42, borderRadius: 13, backgroundColor: '#202024', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.45 : 1 }}>
-                  {busyAction === 'undo-ignore-selected' ? <ActivityIndicator size="small" color="#D1D1D6" /> : <Ionicons name="eye-outline" size={17} color="#D1D1D6" />}
+                  {busyAction === 'undo-ignore-selected' ? <ActivityIndicator size="small" color="#D1D1D6" /> : <ThemedIonicons name="eye-outline" size={17} color="#D1D1D6" />}
                   <Text style={{ color: '#D1D1D6', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Undo ignore</Text>
                 </TouchableOpacity>
               ) : null}
@@ -1286,7 +1326,7 @@ const ApiLyricsScreen = ({
               accessibilityState={{ checked: selected }}
               style={{ width: 32, height: 58, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
             >
-              <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={23} color={selected ? '#FA5265' : '#77777D'} />
+              <ThemedIonicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={23} color={selected ? '#FA5265' : '#77777D'} />
             </TouchableOpacity>
           ) : null}
           <View style={{ width: 58, height: 58, borderRadius: 13, overflow: 'hidden', backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
@@ -1296,7 +1336,7 @@ const ApiLyricsScreen = ({
                 resizeMode="cover"
                 style={{ width: '100%', height: '100%' }}
               />
-            ) : <Ionicons name="musical-notes" size={23} color="#FA5265" />}
+            ) : <ThemedIonicons name="musical-notes" size={23} color="#FA5265" />}
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text numberOfLines={1} style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{row.track.title}</Text>
@@ -1318,7 +1358,7 @@ const ApiLyricsScreen = ({
                 accessibilityLabel={`Check API lyrics for ${row.track.title}`}
                 style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: '#2A171C', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy || !canCheckOnline ? 0.48 : 1 }}
               >
-                {isChecking ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="search-outline" size={17} color="#FA5265" />}
+                {isChecking ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="search-outline" size={17} color="#FA5265" />}
                 <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Check</Text>
               </TouchableOpacity>
               {hasApiLyrics ? (
@@ -1329,7 +1369,7 @@ const ApiLyricsScreen = ({
                   accessibilityLabel={`Renew API lyrics for ${row.track.title}`}
                   style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: '#2A171C', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.48 : 1 }}
                 >
-                  {isRenewing ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={17} color="#FA5265" />}
+                  {isRenewing ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="refresh-outline" size={17} color="#FA5265" />}
                   <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Renew</Text>
                 </TouchableOpacity>
               ) : null}
@@ -1364,7 +1404,7 @@ const ApiLyricsScreen = ({
           accessibilityLabel="Back to profile"
           style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
         >
-          <Ionicons name="chevron-back" size={23} color="white" />
+          <ThemedIonicons name="chevron-back" size={23} color="white" />
         </TouchableOpacity>
         <Text style={{ flex: 1, color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>
           Downloaded lyrics
@@ -1376,7 +1416,7 @@ const ApiLyricsScreen = ({
           accessibilityState={{ expanded: menuOpen }}
           style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
         >
-          <Ionicons name="ellipsis-horizontal" size={22} color="white" />
+          <ThemedIonicons name="ellipsis-horizontal" size={22} color="white" />
         </TouchableOpacity>
       </View>
 
@@ -1396,7 +1436,7 @@ const ApiLyricsScreen = ({
         ) : rows.length === 0 ? (
           <View style={{ minHeight: 220, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#36363A', padding: 24, alignItems: 'center', justifyContent: 'center' }}>
             <View style={{ width: 58, height: 58, borderRadius: 20, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-              <Ionicons name="musical-notes-outline" size={27} color="#FA5265" />
+              <ThemedIonicons name="musical-notes-outline" size={27} color="#FA5265" />
             </View>
             <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>Your library is empty</Text>
             <Text style={{ color: '#8E8E93', fontSize: 14, lineHeight: 20, textAlign: 'center', marginTop: 7 }}>
@@ -1405,7 +1445,7 @@ const ApiLyricsScreen = ({
           </View>
         ) : query.trim() ? (
           <View style={{ paddingVertical: 44, alignItems: 'center' }}>
-            <Ionicons name="search-outline" size={30} color="#77777D" />
+            <ThemedIonicons name="search-outline" size={30} color="#77777D" />
             <Text style={{ color: '#A1A1A6', fontSize: 15, marginTop: 10 }}>No matching tracks</Text>
           </View>
         ) : undefined}
@@ -1419,17 +1459,17 @@ const ApiLyricsScreen = ({
           <TouchableOpacity onPress={() => setMenuOpen(false)} activeOpacity={1} accessibilityLabel="Close options" style={StyleSheet.absoluteFill} />
           <View style={{ position: 'absolute', top: 62, right: 18, width: 240, borderRadius: 16, backgroundColor: '#252527', borderWidth: 1, borderColor: '#454549', padding: 6, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 12 }}>
             <TouchableOpacity onPress={() => void renewAll()} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
-              {busyAction === 'renew-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="refresh-outline" size={19} color="#FA5265" />}
+              {busyAction === 'renew-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="refresh-outline" size={19} color="#FA5265" />}
               <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Renew all</Text>
             </TouchableOpacity>
             <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#454549', marginHorizontal: 7 }} />
             <TouchableOpacity onPress={openCheckAllOptions} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
-              {busyAction === 'check-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <Ionicons name="search-outline" size={19} color="#FA5265" />}
+              {busyAction === 'check-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="search-outline" size={19} color="#FA5265" />}
               <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Check all</Text>
             </TouchableOpacity>
             <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#454549', marginHorizontal: 7 }} />
             <TouchableOpacity onPress={() => { setMenuOpen(false); setSelectionMode(true); setSelectedTrackIds(new Set()); }} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
-              <Ionicons name="checkbox-outline" size={19} color="#D1D1D6" />
+              <ThemedIonicons name="checkbox-outline" size={19} color="#D1D1D6" />
               <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Select</Text>
             </TouchableOpacity>
           </View>
@@ -1464,7 +1504,7 @@ const ProfileWebScreen = ({
           accessibilityLabel={canGoBack ? 'Back in page' : 'Back to developer profile'}
           style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
         >
-          <Ionicons name="chevron-back" size={23} color="white" />
+          <ThemedIonicons name="chevron-back" size={23} color="white" />
         </TouchableOpacity>
         <Text numberOfLines={1} style={{ flex: 1, color: 'white', fontSize: 16, fontWeight: '700', textAlign: 'center', marginHorizontal: 12 }}>
           {route.params.title}
@@ -1946,7 +1986,7 @@ export const LibraryScreen = () => (
     initialRouteName="LibraryHome"
     screenOptions={{
       headerShown: false,
-      contentStyle: { backgroundColor: '#000000' },
+      contentStyle: { backgroundColor: 'transparent' },
       animation: 'simple_push',
       animationDuration: 280,
       gestureEnabled: true,

@@ -1,5 +1,4 @@
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, ThemedIcon as ThemedIonicons, ThemedTouchableOpacity as TouchableOpacity } from '../../contexts/AppearanceThemeContext';
 
 export const AlbumCollectionControls = ({
   search,
@@ -25,7 +24,7 @@ export const AlbumCollectionControls = ({
         alignItems: 'center',
       }}
     >
-      <Ionicons name="search" size={22} color="white" />
+      <ThemedIonicons name="search" size={22} color="white" />
       <TextInput
         value={search}
         onChangeText={onSearchChange}
@@ -37,7 +36,7 @@ export const AlbumCollectionControls = ({
         accessibilityLabel="Search albums and artists"
         style={{ flex: 1, height: '100%', marginLeft: 10, padding: 0, color: 'white', fontSize: 18 }}
       />
-      <Ionicons name="mic" size={22} color="white" />
+      <ThemedIonicons name="mic" size={22} color="white" />
     </View>
 
     <View style={{ flexDirection: 'row', gap: 14, marginTop: 24 }}>
@@ -47,7 +46,7 @@ export const AlbumCollectionControls = ({
         accessibilityLabel="Play albums"
         style={{ flex: 1, height: 46, borderRadius: 24, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
       >
-        <Ionicons name="play" size={20} color="#FA243C" />
+        <ThemedIonicons name="play" size={20} color="#FA243C" />
         <Text style={{ color: '#FA243C', fontSize: 17, fontWeight: '700' }}>Play</Text>
       </TouchableOpacity>
       <TouchableOpacity
@@ -56,7 +55,7 @@ export const AlbumCollectionControls = ({
         accessibilityLabel="Shuffle albums"
         style={{ flex: 1, height: 46, borderRadius: 24, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
       >
-        <Ionicons name="shuffle" size={22} color="#FA243C" />
+        <ThemedIonicons name="shuffle" size={22} color="#FA243C" />
         <Text style={{ color: '#FA243C', fontSize: 17, fontWeight: '700' }}>Shuffle</Text>
       </TouchableOpacity>
     </View>

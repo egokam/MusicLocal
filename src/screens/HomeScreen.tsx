@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { ThemedSafeAreaView as SafeAreaView, ThemedPressable as Pressable, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, useAppearanceTheme } from '../contexts/AppearanceThemeContext';
+import type { ElementRef, ReactNode } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Animated,
   FlatList,
@@ -9,15 +9,10 @@ import {
   Linking,
   Modal,
   PanResponder,
-  Pressable,
   RefreshControl,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
   useWindowDimensions,
   type StyleProp,
+  type View as NativeView,
   type ViewStyle,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -28,7 +23,7 @@ import { File, Paths } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { BlurTargetView, BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { AUDIO_MIXES, GENRE_MIXES, AudiusCatalogService, type AudiusMixDefinition, type AudiusMixId, type GenreMixId } from '../services/AudiusCatalogService';
@@ -482,7 +477,7 @@ const NonStopMixCard = memo(({
         />
         <View style={{ position: 'absolute', top: 13, flexDirection: 'row', alignItems: 'center', gap: 5, opacity: 0.92 }}>
           <Ionicons name="infinite" size={15} color="white" />
-          <Text style={{ color: 'white', fontSize: 10, fontWeight: '800', letterSpacing: 1.15 }}>NON-STOP</Text>
+          <Text style={{ color: 'white', fontSize: 10, fontWeight: '800', letterSpacing: 1.15, textShadowColor: 'rgba(0,0,0,0.85)', textShadowRadius: 3 }}>NON-STOP</Text>
         </View>
         <Text
           numberOfLines={2}
@@ -542,7 +537,7 @@ const GenreMixCard = memo(({
         />
         <View style={{ position: 'absolute', top: 13, flexDirection: 'row', alignItems: 'center', gap: 5, opacity: 0.94 }}>
           <Ionicons name="sparkles" size={14} color="#E4C5F0" />
-          <Text style={{ color: 'white', fontSize: 10, fontWeight: '800', letterSpacing: 1.15 }}>GENRE MIX</Text>
+          <Text style={{ color: 'white', fontSize: 10, fontWeight: '800', letterSpacing: 1.15, textShadowColor: 'rgba(0,0,0,0.85)', textShadowRadius: 3 }}>GENRE MIX</Text>
         </View>
         <Text
           numberOfLines={2}
@@ -607,7 +602,7 @@ const QuranReciterCard = memo(({
         <Text style={{ color: '#F0E5C3', fontSize: 10, fontWeight: '800', letterSpacing: 1.15 }}>QURAN</Text>
       </View>
       {!reciter.artwork ? <Text style={{ color: 'rgba(255,255,255,0.62)', fontSize: 58, fontWeight: '800' }}>{reciter.name.slice(0, 1).toUpperCase()}</Text> : null}
-      <Text numberOfLines={2} style={{ position: 'absolute', bottom: 17, color: 'white', fontSize: 16, lineHeight: 20, fontWeight: '800', letterSpacing: -0.25, textAlign: 'center', paddingHorizontal: 12 }}>
+      <Text numberOfLines={2} style={{ position: 'absolute', bottom: 17, color: 'white', fontSize: 16, lineHeight: 20, fontWeight: '800', letterSpacing: -0.25, textAlign: 'center', paddingHorizontal: 12, textShadowColor: 'rgba(0,0,0,0.82)', textShadowRadius: 3 }}>
         {reciter.name}
       </Text>
       <View style={{ position: 'absolute', bottom: 12, right: 12, width: 31, height: 31, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.58)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
@@ -645,7 +640,7 @@ const AllQuranRecitersCard = memo(({ width, count, onPress }: { width: number; c
       <View style={{ width: 62, height: 62, borderRadius: 31, borderWidth: 1, borderColor: 'rgba(232,216,166,0.32)', alignItems: 'center', justifyContent: 'center', marginBottom: 10, backgroundColor: 'rgba(230,215,170,0.08)' }}>
         <Ionicons name="ellipsis-horizontal" size={31} color="#E4D6A8" />
       </View>
-      <Text style={{ color: 'white', fontSize: 16, lineHeight: 20, fontWeight: '800', letterSpacing: -0.25, textAlign: 'center', paddingHorizontal: 12 }}>
+      <Text style={{ color: 'white', fontSize: 16, lineHeight: 20, fontWeight: '800', letterSpacing: -0.25, textAlign: 'center', paddingHorizontal: 12, textShadowColor: 'rgba(0,0,0,0.82)', textShadowRadius: 3 }}>
         All reciters
       </Text>
     </View>
@@ -687,7 +682,7 @@ const LiveRadioCard = memo(({
         )}
         <View style={{ position: 'absolute', left: 10, top: 10, height: 24, paddingHorizontal: 8, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.68)', flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: '#FA5265' }} />
-          <Text style={{ color: 'white', fontSize: 9, fontWeight: '800', letterSpacing: 0.8 }}>LIVE</Text>
+          <Text style={{ color: 'white', fontSize: 9, fontWeight: '800', letterSpacing: 0.8, textShadowColor: 'rgba(0,0,0,0.82)', textShadowRadius: 3 }}>LIVE</Text>
         </View>
         <View style={{ position: 'absolute', right: 11, bottom: 11, width: 32, height: 32, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.72)', alignItems: 'center', justifyContent: 'center' }}>
           <Ionicons name={active ? 'volume-high' : 'play'} size={15} color="white" />
@@ -707,6 +702,7 @@ export const HomeScreen = () => {
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const { activeTrack, playTrack, togglePlayback } = usePlaybackActions();
+  const { isDark, colors } = useAppearanceTheme();
   const [mixTracks, setMixTracks] = useState<MixTracks>(emptyMixTracks);
   const [quranSurahs, setQuranSurahs] = useState<QuranSurah[]>([]);
   const [quranLoading, setQuranLoading] = useState(true);
@@ -736,7 +732,7 @@ export const HomeScreen = () => {
   const quranReciterCatalogRequest = useRef(false);
   const pinnedQuranRecitersRef = useRef<QuranReciter[]>([...QURAN_RECITERS]);
   const editedQuranReciterPins = useRef(false);
-  const quranBlurTarget = useRef<View | null>(null);
+  const quranBlurTarget = useRef<ElementRef<typeof NativeView> | null>(null);
   const [stations, setStations] = useState<RadioStation[]>([]);
   const [mixLoading, setMixLoading] = useState(true);
   const [radioLoading, setRadioLoading] = useState(true);
@@ -1114,8 +1110,8 @@ export const HomeScreen = () => {
                 accessibilityLabel="Open Kamal’s profile"
                 style={{ width: 48, height: 48, borderRadius: 24, overflow: 'hidden' }}
               >
-                <LinearGradient colors={['#514A68', '#262331']} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="person" size={27} color="white" />
+                <LinearGradient colors={isDark ? ['#514A68', '#262331'] : ['#D8D2E8', '#F0EDF7']} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="person" size={27} color={isDark ? 'white' : '#1C1C1E'} />
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -1322,7 +1318,7 @@ export const HomeScreen = () => {
           }}
         >
           <LinearGradient
-            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            colors={colors.scrollFade}
             locations={[0, 0.32, 0.68, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
@@ -1349,7 +1345,7 @@ export const HomeScreen = () => {
               blurMethod="dimezisBlurView"
               blurReductionFactor={2}
               intensity={32}
-              tint="dark"
+              tint={isDark ? 'dark' : 'light'}
               style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
             />
             <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.12)' }} />
@@ -1365,14 +1361,14 @@ export const HomeScreen = () => {
             style={{
               height: selectedQuranReciter ? '84%' : '88%',
               width: '100%',
-              backgroundColor: '#171719',
+              backgroundColor: isDark ? '#171719' : '#F2F2F7',
               borderTopLeftRadius: 28,
               borderTopRightRadius: 28,
               overflow: 'hidden',
               transform: [{ translateY: quranSheetTranslateY }],
             }}
           >
-            <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: '#171719', paddingTop: 8 }}>
+            <SafeAreaView edges={['bottom']} style={{ flex: 1, backgroundColor: isDark ? '#171719' : '#F2F2F7', paddingTop: 8 }}>
             <View
               {...quranSheetPanResponder.panHandlers}
               accessibilityRole="button"
@@ -1389,7 +1385,7 @@ export const HomeScreen = () => {
                   accessibilityLabel={returnToReciterList ? 'Back to Quran reciters' : 'Back to Home'}
                   style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#29292D', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}
                 >
-                  <Ionicons name="chevron-back" size={21} color="white" />
+                  <Ionicons name="chevron-back" size={21} color={isDark ? 'white' : '#1C1C1E'} />
                 </TouchableOpacity>
               ) : null}
               <View style={{ flex: 1 }}>
@@ -1408,7 +1404,7 @@ export const HomeScreen = () => {
                 accessibilityLabel="Close Quran"
                 style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#29292D', alignItems: 'center', justifyContent: 'center' }}
               >
-                <Ionicons name="close" size={23} color="white" />
+                <Ionicons name="close" size={23} color={isDark ? 'white' : '#1C1C1E'} />
               </TouchableOpacity>
             </View>
 
@@ -1477,7 +1473,7 @@ export const HomeScreen = () => {
                       accessibilityLabel={`Play all surahs by ${selectedQuranReciter.name}`}
                       style={{ height: 49, borderRadius: 16, backgroundColor: '#FA5265', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 17 }}
                     >
-                      <Ionicons name="play" size={17} color="white" />
+                      <Ionicons name="play" size={17} color={isDark ? 'white' : '#1C1C1E'} />
                       <Text style={{ color: 'white', fontSize: 15, fontWeight: '800', marginLeft: 8 }}>Play full Quran</Text>
                     </TouchableOpacity>
                   </View>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ThemedSafeAreaView as SafeAreaView, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, useAppearanceTheme } from '../contexts/AppearanceThemeContext';
 import {
-  ActivityIndicator,
   Animated,
   Alert,
   FlatList,
@@ -10,21 +10,15 @@ import {
   Modal,
   PanResponder,
   Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
   type ScrollViewInstance,
   type ViewInstance,
   useWindowDimensions,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { File } from 'expo-file-system';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { LinearGradient } from 'expo-linear-gradient';
 import { parseBuffer } from 'music-metadata';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassSurface } from '../../glass';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { SongsHeader } from '../components/songs/SongsHeader';
@@ -266,6 +260,7 @@ const parseLyrics = (lyrics: string): TimedLyricLine[] => splitLyricText(lyrics)
   .map((text, index) => ({ id: `${index}-${text}`, text, timeMs: null }));
 
 export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
+  const { colors } = useAppearanceTheme();
   const { downloadedTracks, isLoadingTracks, apiInitializing, saveSynchronizedTrack, updateTrack } = usePlaybackActions();
   const scrollY = useMemo(() => new Animated.Value(0), []);
   const player = useAudioPlayer(null, { updateInterval: 200 });
@@ -1230,7 +1225,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               {isImporting ? (
                 <ActivityIndicator color="white" />
               ) : (
-                <Ionicons name="musical-notes-outline" size={21} color="white" />
+                <ThemedIonicons name="musical-notes-outline" size={21} color="white" />
               )}
               <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
                 {isImporting ? 'Reading track…' : selectedMp3 ? 'Choose another track' : 'Browse your library'}
@@ -1257,7 +1252,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                   alignItems: 'flex-start',
                 }}
               >
-                <Ionicons name="alert-circle-outline" size={19} color="#FA5265" />
+                <ThemedIonicons name="alert-circle-outline" size={19} color="#FA5265" />
                 <Text style={{ flex: 1, color: '#FA7A89', fontSize: 13, lineHeight: 19, marginLeft: 9 }}>
                   {importError}
                 </Text>
@@ -1286,7 +1281,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                       justifyContent: 'center',
                     }}
                   >
-                    <Ionicons name="musical-note" size={24} color="#FA5265" />
+                    <ThemedIonicons name="musical-note" size={24} color="#FA5265" />
                   </View>
                   <View style={{ flex: 1, minWidth: 0, marginLeft: 13 }}>
                     <Text numberOfLines={1} style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>
@@ -1333,7 +1328,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                           opacity: lyricLines.length > 0 ? 1 : 0.45,
                         }}
                       >
-                        <Ionicons name="trash-outline" size={16} color="#FA5265" />
+                        <ThemedIonicons name="trash-outline" size={16} color="#FA5265" />
                         <Text style={{ color: '#FA5265', fontSize: 12, fontWeight: '700' }}>Delete all</Text>
                       </TouchableOpacity>
                     </View>
@@ -1413,7 +1408,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                                 backgroundColor: draggingLineId === line.id ? 'rgba(250,82,101,0.16)' : 'transparent',
                               }}
                             >
-                              <Ionicons
+                              <ThemedIonicons
                                 name="reorder-three-outline"
                                 size={21}
                                 color={draggingLineId === line.id ? '#FA5265' : '#77777F'}
@@ -1428,7 +1423,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               hitSlop={8}
                               style={{ width: 32, height: 34, marginLeft: 5, alignItems: 'center', justifyContent: 'center' }}
                             >
-                              <Ionicons name="create-outline" size={16} color="#8E8E93" />
+                              <ThemedIonicons name="create-outline" size={16} color="#8E8E93" />
                             </TouchableOpacity>
                           ) : null}
                           {line.text.trim() ? (
@@ -1439,7 +1434,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                               hitSlop={8}
                               style={{ width: 32, height: 34, marginLeft: 2, alignItems: 'center', justifyContent: 'center' }}
                             >
-                              <Ionicons name="trash-outline" size={15} color="#8E8E93" />
+                              <ThemedIonicons name="trash-outline" size={15} color="#8E8E93" />
                             </TouchableOpacity>
                           ) : null}
                         </Animated.View>
@@ -1469,7 +1464,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                         justifyContent: 'center',
                       }}
                     >
-                      <Ionicons name="document-text-outline" size={27} color="#FA5265" />
+                      <ThemedIonicons name="document-text-outline" size={27} color="#FA5265" />
                     </View>
                     <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', marginTop: 15 }}>
                       No lyrics found
@@ -1493,7 +1488,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                           gap: 8,
                         }}
                       >
-                        <Ionicons name="clipboard-outline" size={17} color="#FA5265" />
+                        <ThemedIonicons name="clipboard-outline" size={17} color="#FA5265" />
                         <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>Paste lyrics</Text>
                       </TouchableOpacity>
                     </View>
@@ -1519,7 +1514,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
           }}
         >
           <LinearGradient
-            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            colors={colors.scrollFade}
             locations={[0, 0.32, 0.68, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
@@ -1602,7 +1597,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 accessibilityLabel="Restart synchronization"
                 style={{ minWidth: 40, height: 40, marginLeft: 8, alignItems: 'center', justifyContent: 'center' }}
               >
-                <Ionicons name="refresh" size={19} color="#A1A1A6" />
+                <ThemedIonicons name="refresh" size={19} color="#A1A1A6" />
               </TouchableOpacity>
             ) : null}
           </View>
@@ -1674,7 +1669,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               accessibilityLabel="Seek backward three seconds"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', opacity: selectedMp3 ? 1 : 0.4 }}
             >
-              <Ionicons name="play-back" size={20} color="#D1D1D6" />
+              <ThemedIonicons name="play-back" size={20} color="#D1D1D6" />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
@@ -1695,7 +1690,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 opacity: selectedMp3 ? 1 : 0.4,
               }}
             >
-              <Ionicons name={playerStatus.playing ? 'pause' : 'play'} size={21} color="white" />
+              <ThemedIonicons name={playerStatus.playing ? 'pause' : 'play'} size={21} color="white" />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => void seekTo(playerStatus.currentTime + 3)}
@@ -1704,7 +1699,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               accessibilityLabel="Seek forward three seconds"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', opacity: selectedMp3 ? 1 : 0.4 }}
             >
-              <Ionicons name="play-forward" size={20} color="#D1D1D6" />
+              <ThemedIonicons name="play-forward" size={20} color="#D1D1D6" />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={assignTimestampToSelectedLine}
@@ -1726,7 +1721,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 opacity: !selectedLineId || !playerStatus.playing ? 0.48 : 1,
               }}
             >
-              <Ionicons name="sync" size={16} color="white" />
+              <ThemedIonicons name="sync" size={16} color="white" />
               <Text numberOfLines={1} style={{ color: 'white', fontSize: 12, fontWeight: '700', flexShrink: 1 }}>
                 {selectedLineId ? 'Sync' : 'Done'}
               </Text>
@@ -1750,7 +1745,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 opacity: selectedMp3 ? 1 : 0.45,
               }}
             >
-              <Ionicons name="add" size={15} color="#FA5265" />
+              <ThemedIonicons name="add" size={15} color="#FA5265" />
               <Text numberOfLines={1} style={{ color: '#FA5265', fontSize: 11, fontWeight: '700', flexShrink: 1 }}>
                 Add line
               </Text>
@@ -1782,7 +1777,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
           >
             {isSaving
               ? <ActivityIndicator size="small" color="#FA5265" />
-              : <Ionicons name="save-outline" size={17} color="#FA5265" />}
+              : <ThemedIonicons name="save-outline" size={17} color="#FA5265" />}
             <Text style={{ color: '#FA5265', fontSize: 14, fontWeight: '700' }}>
               {isSaving ? 'Saving to library…' : 'Save to library'}
             </Text>
@@ -1883,7 +1878,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                   accessibilityLabel="Close track library"
                   style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center' }}
                 >
-                  <Ionicons name="close" size={21} color="white" />
+                  <ThemedIonicons name="close" size={21} color="white" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -1899,7 +1894,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 alignItems: 'center',
               }}
             >
-              <Ionicons name="search" size={19} color="#8E8E93" />
+              <ThemedIonicons name="search" size={19} color="#8E8E93" />
               <TextInput
                 value={librarySearch}
                 onChangeText={setLibrarySearch}
@@ -1918,7 +1913,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                   accessibilityLabel="Clear track search"
                   style={{ padding: 5 }}
                 >
-                  <Ionicons name="close-circle" size={19} color="#8E8E93" />
+                  <ThemedIonicons name="close-circle" size={19} color="#8E8E93" />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -1935,7 +1930,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
               </View>
             ) : availableMp3Tracks.length === 0 ? (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 }}>
-                <Ionicons name="musical-notes-outline" size={34} color="#FA5265" />
+                <ThemedIonicons name="musical-notes-outline" size={34} color="#FA5265" />
                 <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>No local MP3 tracks</Text>
                 <Text style={{ color: '#8E8E93', fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 6 }}>
                   Add or download an MP3 to your library before synchronizing its lyrics.
@@ -1972,7 +1967,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                       <Image source={{ uri: item.artwork }} style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#303034' }} />
                     ) : (
                       <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#382027', alignItems: 'center', justifyContent: 'center' }}>
-                        <Ionicons name="musical-note" size={21} color="#FA5265" />
+                        <ThemedIonicons name="musical-note" size={21} color="#FA5265" />
                       </View>
                     )}
                     <View style={{ flex: 1, minWidth: 0, marginLeft: 13 }}>
@@ -1981,7 +1976,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                         {item.artist}{item.album ? ` · ${item.album}` : ''}
                       </Text>
                     </View>
-                    {selectedMp3?.uri === item.localUri ? <Ionicons name="checkmark-circle" size={21} color="#FA5265" /> : null}
+                    {selectedMp3?.uri === item.localUri ? <ThemedIonicons name="checkmark-circle" size={21} color="#FA5265" /> : null}
                     {isImporting ? <ActivityIndicator size="small" color="#FA5265" style={{ marginLeft: 10 }} /> : null}
                   </TouchableOpacity>
                 )}
@@ -2021,7 +2016,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 accessibilityLabel="Close line editor"
                 style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center' }}
               >
-                <Ionicons name="close" size={21} color="white" />
+                <ThemedIonicons name="close" size={21} color="white" />
               </TouchableOpacity>
             </View>
             <TextInput
@@ -2092,7 +2087,7 @@ export const LrcSynchronizerScreen = ({ onBack }: { onBack: () => void }) => {
                 accessibilityLabel="Close paste lyrics"
                 style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center' }}
               >
-                <Ionicons name="close" size={21} color="white" />
+                <ThemedIonicons name="close" size={21} color="white" />
               </TouchableOpacity>
             </View>
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>

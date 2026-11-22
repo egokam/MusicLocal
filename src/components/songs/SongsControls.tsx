@@ -1,6 +1,6 @@
 import { useContext } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons } from '../../contexts/AppearanceThemeContext';
+
 import Animated, {
   Extrapolation,
   interpolate,
@@ -46,7 +46,7 @@ export const SongsControls = ({
         alignItems: 'center',
       }}
     >
-      <Ionicons name="search" size={22} color="white" />
+      <ThemedIonicons name="search" size={22} color="white" />
       <TextInput
         value={search}
         onChangeText={onSearchChange}
@@ -64,7 +64,7 @@ export const SongsControls = ({
           fontSize: 18,
         }}
       />
-      <Ionicons name="mic" size={22} color="white" />
+      <ThemedIonicons name="mic" size={22} color="white" />
     </View>
 
       <Animated.View style={[{ overflow: 'hidden' }, actionsStyle]}>
@@ -85,7 +85,7 @@ export const SongsControls = ({
           gap: 7,
         }}
       >
-        <Ionicons name="play" size={20} color="#FA243C" />
+        <ThemedIonicons name="play" size={20} color="#FA243C" />
         <Text style={{ color: '#FA243C', fontSize: 17, fontWeight: '700' }}>Play</Text>
       </TouchableOpacity>
       <TouchableOpacity
@@ -104,7 +104,7 @@ export const SongsControls = ({
           gap: 7,
         }}
       >
-        <Ionicons name="shuffle" size={22} color="#FA243C" />
+        <ThemedIonicons name="shuffle" size={22} color="#FA243C" />
         <Text style={{ color: '#FA243C', fontSize: 17, fontWeight: '700' }}>Shuffle</Text>
       </TouchableOpacity>
         </View>

@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedView as View, ThemedPressable as Pressable } from '../../contexts/AppearanceThemeContext';
+import {
+  Modal,
+  Platform,
+  StyleSheet,
+} from 'react-native';
 import { AndroidUpdateService, type AndroidUpdate } from '../../services/AndroidUpdateService';
 
 type PromptState = 'available' | 'downloading' | 'ready' | 'error';

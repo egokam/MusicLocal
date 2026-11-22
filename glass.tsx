@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { View, type ColorValue, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, View, type ColorValue, type StyleProp, type ViewStyle } from 'react-native';
+import { BlurView } from 'expo-blur';
 import {
   GlassView,
   isGlassEffectAPIAvailable,
@@ -8,6 +9,7 @@ import {
   type GlassEffectStyleConfig,
   type GlassStyle,
 } from 'expo-glass-effect';
+import { useAppearanceTheme } from './src/contexts/AppearanceThemeContext';
 
 /**
  * Liquid-glass surface for layering behind a component's content.
@@ -31,19 +33,22 @@ export function GlassSurface({
   style,
   children,
   glassEffectStyle = 'regular',
-  colorScheme = 'dark',
+  colorScheme = 'auto',
   tintColor,
   isInteractive = false,
   fallbackColor = 'rgba(32,32,36,0.92)',
   pointerEvents = 'none',
 }: GlassSurfaceProps) {
+  const { isDark, colors } = useAppearanceTheme();
+  const resolvedColorScheme = colorScheme === 'auto' ? (isDark ? 'dark' : 'light') : colorScheme;
+
   if (supportsLiquidGlass) {
     return (
       <GlassView
         pointerEvents={pointerEvents}
         style={style}
         glassEffectStyle={glassEffectStyle}
-        colorScheme={colorScheme}
+        colorScheme={resolvedColorScheme}
         tintColor={tintColor}
         isInteractive={isInteractive}
       >
@@ -52,8 +57,28 @@ export function GlassSurface({
     );
   }
 
+  if (Platform.OS === 'ios') {
+    return (
+      <View pointerEvents={pointerEvents} style={[style, { overflow: 'hidden' }]}>
+        <BlurView
+          intensity={72}
+          tint={resolvedColorScheme === 'dark' ? 'dark' : 'light'}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: isDark ? 'rgba(28,28,30,0.24)' : 'rgba(255,255,255,0.22)' },
+          ]}
+        />
+        {children}
+      </View>
+    );
+  }
+
   return (
-    <View pointerEvents={pointerEvents} style={[{ backgroundColor: fallbackColor }, style]}>
+    <View pointerEvents={pointerEvents} style={[{ backgroundColor: isDark ? fallbackColor : colors.surface }, style]}>
       {children}
     </View>
   );

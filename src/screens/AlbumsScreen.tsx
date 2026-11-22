@@ -1,7 +1,11 @@
 import { useMemo, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { ThemedSafeAreaView as SafeAreaView, ThemedText as Text, ThemedView as View, useAppearanceTheme } from '../contexts/AppearanceThemeContext';
+import {
+  Animated,
+  StyleSheet,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { AlbumGridItem } from '../components/library/AlbumGridItem';
 import { AlbumCollectionControls } from '../components/library/AlbumCollectionControls';
@@ -42,6 +46,7 @@ export const AlbumsScreen = ({
   onPlayAll: (queue: Track[]) => void;
   onShuffle: (queue: Track[]) => void;
 }) => {
+  const { colors } = useAppearanceTheme();
   const listRef = useRef<Animated.SectionList<AlbumGridRow, AlbumSection>>(null);
   const insets = useSafeAreaInsets();
   const topInsetCompensation = Math.max(0, insets.top - 24);
@@ -197,7 +202,7 @@ export const AlbumsScreen = ({
           }}
         >
           <LinearGradient
-            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            colors={colors.scrollFade}
             locations={[0, 0.32, 0.68, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}

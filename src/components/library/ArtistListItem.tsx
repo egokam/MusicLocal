@@ -1,5 +1,5 @@
-import { Image, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'react-native';
+import { ThemedText as Text, ThemedView as View, ThemedIcon as ThemedIonicons, ThemedTouchableOpacity as TouchableOpacity } from '../../contexts/AppearanceThemeContext';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
 
 export const ArtistListItem = ({
@@ -23,7 +23,7 @@ export const ArtistListItem = ({
       {artwork ? (
         <Image source={{ uri: artwork, headers: getMusicApiHeaders() }} resizeMode="cover" style={{ width: '100%', height: '100%' }} />
       ) : (
-        <Ionicons name="mic" size={25} color="#77777D" />
+        <ThemedIonicons name="mic" size={25} color="#77777D" />
       )}
     </View>
     <View
@@ -42,7 +42,7 @@ export const ArtistListItem = ({
       <Text numberOfLines={1} style={{ flex: 1, color: 'white', fontSize: 18, fontWeight: '500' }}>
         {name}
       </Text>
-      <Ionicons name="chevron-forward" size={21} color="#3A3A3C" />
+      <ThemedIonicons name="chevron-forward" size={21} color="#3A3A3C" />
     </View>
   </TouchableOpacity>
 );
