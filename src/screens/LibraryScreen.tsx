@@ -911,6 +911,7 @@ const hasCachedApiLyrics = (entry: SpicyLyricsCacheEntry | null): entry is Spicy
 const ApiLyricsScreen = ({
   navigation,
 }: NativeStackScreenProps<LibraryStackParamList, 'ApiLyrics'>) => {
+  const { colors, isDark } = useAppearanceTheme();
   const {
     downloadedTracks,
     setSpicyLyricsIgnored,
@@ -926,10 +927,41 @@ const ApiLyricsScreen = ({
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpacity] = useState(() => new Animated.Value(0));
+  const [menuScale] = useState(() => new Animated.Value(0.001));
+  const [menuTranslateY] = useState(() => new Animated.Value(-25));
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(() => new Set());
   const canCheckOnline = spicyLyricsConfigured && spicyLyricsEnabled;
   const actionsBusy = Boolean(busyAction || busyTrackId);
+
+  const openMenu = () => {
+    setMenuOpen(true);
+    menuOpacity.setValue(0);
+    menuScale.setValue(0.001);
+    menuTranslateY.setValue(-25);
+    Animated.parallel([
+      Animated.timing(menuOpacity, { toValue: 1, duration: 170, useNativeDriver: true }),
+      Animated.spring(menuScale, { toValue: 1, damping: 19, stiffness: 260, mass: 0.7, useNativeDriver: true }),
+      Animated.spring(menuTranslateY, { toValue: 0, damping: 19, stiffness: 260, mass: 0.7, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const closeMenu = (afterClose?: () => void) => {
+    if (!menuOpen) {
+      afterClose?.();
+      return;
+    }
+    Animated.parallel([
+      Animated.timing(menuOpacity, { toValue: 0, duration: 120, useNativeDriver: true }),
+      Animated.spring(menuScale, { toValue: 0.001, damping: 20, stiffness: 300, mass: 0.65, useNativeDriver: true }),
+      Animated.spring(menuTranslateY, { toValue: -25, damping: 20, stiffness: 300, mass: 0.65, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (!finished) return;
+      setMenuOpen(false);
+      afterClose?.();
+    });
+  };
 
   const loadRows = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -1314,6 +1346,7 @@ const ApiLyricsScreen = ({
     const isRenewing = isBusy && busyTrackAction === 'renew';
     const selected = selectedTrackIds.has(row.track.id);
     const hasApiLyrics = hasCachedApiLyrics(row.entry);
+    const actionButtonBackground = isDark ? '#2A171C' : '#FCE9EC';
 
     return (
       <View style={{ borderRadius: 20, backgroundColor: selected ? '#241A1D' : '#1C1C1E', borderWidth: 1, borderColor: selected ? '#71303A' : '#36363A', padding: 14, marginBottom: 12 }}>
@@ -1356,7 +1389,7 @@ const ApiLyricsScreen = ({
                 disabled={actionsBusy || !canCheckOnline}
                 accessibilityRole="button"
                 accessibilityLabel={`Check API lyrics for ${row.track.title}`}
-                style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: '#2A171C', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy || !canCheckOnline ? 0.48 : 1 }}
+                style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: actionButtonBackground, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy || !canCheckOnline ? 0.48 : 1 }}
               >
                 {isChecking ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="search-outline" size={17} color="#FA5265" />}
                 <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Check</Text>
@@ -1367,7 +1400,7 @@ const ApiLyricsScreen = ({
                   disabled={actionsBusy}
                   accessibilityRole="button"
                   accessibilityLabel={`Renew API lyrics for ${row.track.title}`}
-                  style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: '#2A171C', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.48 : 1 }}
+                  style={{ flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: actionButtonBackground, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', opacity: actionsBusy ? 0.48 : 1 }}
                 >
                   {isRenewing ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="refresh-outline" size={17} color="#FA5265" />}
                   <Text style={{ color: '#FA5265', fontSize: 13, fontWeight: '700', marginLeft: 6 }}>Renew</Text>
@@ -1410,7 +1443,7 @@ const ApiLyricsScreen = ({
           Downloaded lyrics
         </Text>
         <TouchableOpacity
-          onPress={() => setMenuOpen((open) => !open)}
+          onPress={() => menuOpen ? closeMenu() : openMenu()}
           accessibilityRole="button"
           accessibilityLabel="Downloaded lyrics options"
           accessibilityState={{ expanded: menuOpen }}
@@ -1456,23 +1489,62 @@ const ApiLyricsScreen = ({
 
       {menuOpen ? (
         <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
-          <TouchableOpacity onPress={() => setMenuOpen(false)} activeOpacity={1} accessibilityLabel="Close options" style={StyleSheet.absoluteFill} />
-          <View style={{ position: 'absolute', top: 62, right: 18, width: 240, borderRadius: 16, backgroundColor: '#252527', borderWidth: 1, borderColor: '#454549', padding: 6, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 12 }}>
-            <TouchableOpacity onPress={() => void renewAll()} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
-              {busyAction === 'renew-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="refresh-outline" size={19} color="#FA5265" />}
-              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Renew all</Text>
-            </TouchableOpacity>
-            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#454549', marginHorizontal: 7 }} />
-            <TouchableOpacity onPress={openCheckAllOptions} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
-              {busyAction === 'check-all' ? <ActivityIndicator size="small" color="#FA5265" /> : <ThemedIonicons name="search-outline" size={19} color="#FA5265" />}
-              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Check all</Text>
-            </TouchableOpacity>
-            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: '#454549', marginHorizontal: 7 }} />
-            <TouchableOpacity onPress={() => { setMenuOpen(false); setSelectionMode(true); setSelectedTrackIds(new Set()); }} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 46, borderRadius: 11, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.5 : 1 }}>
-              <ThemedIonicons name="checkbox-outline" size={19} color="#D1D1D6" />
-              <Text style={{ color: 'white', fontSize: 14, fontWeight: '600', marginLeft: 10 }}>Select</Text>
-            </TouchableOpacity>
-          </View>
+          <Pressable onPress={() => closeMenu()} accessibilityLabel="Close options" style={StyleSheet.absoluteFill} />
+          <Animated.View
+            style={{
+              position: 'absolute',
+              top: 62,
+              right: 18,
+              width: 240,
+              padding: 4,
+              borderRadius: 16,
+              backgroundColor: 'transparent',
+              borderWidth: 1,
+              borderColor: colors.separator,
+              shadowColor: '#000000',
+              shadowOpacity: 0.34,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 },
+              zIndex: 2,
+              elevation: 22,
+              transformOrigin: ['100%', 0, 0],
+              transform: [{ scale: menuScale }, { translateY: menuTranslateY }],
+            }}
+          >
+            <GlassSurface
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16 }}
+              colorScheme={isDark ? 'dark' : 'light'}
+              fallbackColor={isDark ? 'rgba(37,37,39,0.98)' : 'rgba(242,242,247,0.98)'}
+            />
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: 1,
+                left: 1,
+                right: 1,
+                bottom: 1,
+                borderRadius: 15,
+                backgroundColor: isDark ? 'rgba(37,37,39,0.90)' : 'rgba(248,248,250,0.92)',
+              }}
+            />
+            <Animated.View style={{ opacity: menuOpacity }}>
+              <TouchableOpacity onPress={() => closeMenu(() => { void renewAll(); })} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 42, borderRadius: 11, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.4 : 1 }}>
+                {busyAction === 'renew-all' ? <ActivityIndicator size="small" color={colors.accent} /> : <ThemedIonicons name="refresh-outline" size={19} color={colors.accent} />}
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', marginLeft: 9 }}>Renew all</Text>
+              </TouchableOpacity>
+              <View style={{ height: StyleSheet.hairlineWidth, marginHorizontal: 11, backgroundColor: colors.separator }} />
+              <TouchableOpacity onPress={() => closeMenu(openCheckAllOptions)} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 42, borderRadius: 11, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.4 : 1 }}>
+                {busyAction === 'check-all' ? <ActivityIndicator size="small" color={colors.accent} /> : <ThemedIonicons name="search-outline" size={19} color={colors.accent} />}
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', marginLeft: 9 }}>Check all</Text>
+              </TouchableOpacity>
+              <View style={{ height: StyleSheet.hairlineWidth, marginHorizontal: 11, backgroundColor: colors.separator }} />
+              <TouchableOpacity onPress={() => closeMenu(() => { setSelectionMode(true); setSelectedTrackIds(new Set()); })} disabled={actionsBusy} accessibilityRole="button" style={{ minHeight: 42, borderRadius: 11, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', opacity: actionsBusy ? 0.4 : 1 }}>
+                <ThemedIonicons name="checkbox-outline" size={19} color={colors.text} />
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', marginLeft: 9 }}>Select</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </Animated.View>
         </View>
       ) : null}
     </SafeAreaView>
