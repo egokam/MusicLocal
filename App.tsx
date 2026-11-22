@@ -1787,7 +1787,7 @@ function AppContent() {
                 >
                   <Tab.Navigator
                     tabBar={(props) => <CustomTabBar {...props} />}
-                    screenOptions={{ headerShown: false }}
+                    screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: colors.background } }}
                     initialRouteName="Library"
                   >
                     <Tab.Screen name="Home" component={HomeTabScreen} />
