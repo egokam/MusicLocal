@@ -220,12 +220,13 @@ const RadioHeroCard = memo(({
   onPlayStation: (station: RadioStation) => void;
   onTogglePlayback: () => void;
 }) => {
+  const { isDark } = useAppearanceTheme();
   const isPlaying = useRadioPlaybackStatus();
   const isRadioActive = activeTrack?.provider === 'radio';
 
   return (
     <LinearGradient
-      colors={['#30131B', '#191216', '#141416']}
+      colors={isDark ? ['#30131B', '#191216', '#141416'] : ['#51232D', '#38252A', '#2B292C']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{ minHeight: 188, borderRadius: 26, overflow: 'hidden', padding: 20, marginTop: 20 }}

@@ -83,11 +83,12 @@ export const PlaybackContext = createContext<PlaybackActions | null>(null);
 export const RadioPlaybackStatusContext = createContext(false);
 
 export type LibrarySelectionBarState = {
-  selectionType: 'songs' | 'downloads';
+  selectionType: 'songs' | 'favorites' | 'downloads';
   selectedCount: number;
   allSelected: boolean;
   canSelectAll: boolean;
   deleting: boolean;
+  actionLabel?: string;
   onToggleSelectAll: () => void;
   onCancel: () => void;
   onDelete: () => void;

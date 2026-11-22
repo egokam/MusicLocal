@@ -448,7 +448,9 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
                 disabled={!selectionBarVisible || !displayedSelectionBar.canSelectAll || displayedSelectionBar.deleting}
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: displayedSelectionBar.allSelected, disabled: !selectionBarVisible }}
-                accessibilityLabel={displayedSelectionBar.selectionType === 'songs' ? 'Select all songs' : 'Select all downloaded tracks'}
+                accessibilityLabel={displayedSelectionBar.selectionType === 'downloads'
+                  ? 'Select all downloaded tracks'
+                  : displayedSelectionBar.selectionType === 'favorites' ? 'Select all favorites' : 'Select all songs'}
                 style={styles.selectionAll}
               >
                 <View style={[styles.selectionCheck, displayedSelectionBar.allSelected && styles.selectionCheckActive]}>
@@ -472,11 +474,13 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
                 onPress={displayedSelectionBar.onDelete}
                 disabled={!selectionBarVisible || displayedSelectionBar.selectedCount === 0 || displayedSelectionBar.deleting}
                 accessibilityRole="button"
-                accessibilityLabel={`Delete ${displayedSelectionBar.selectedCount} selected ${displayedSelectionBar.selectionType === 'songs' ? 'songs' : 'downloads'}`}
+                accessibilityLabel={`${displayedSelectionBar.actionLabel ?? 'Delete'} ${displayedSelectionBar.selectedCount} selected ${displayedSelectionBar.selectionType === 'downloads'
+                  ? 'downloads'
+                  : displayedSelectionBar.selectionType === 'favorites' ? 'favorites' : 'songs'}`}
                 style={[styles.selectionDelete, (!selectionBarVisible || displayedSelectionBar.selectedCount === 0 || displayedSelectionBar.deleting) && styles.selectionDeleteDisabled]}
               >
                 {displayedSelectionBar.deleting ? <ActivityIndicator size="small" color="white" /> : (
-                  <Text style={styles.selectionDeleteText}>Delete</Text>
+                  <Text style={styles.selectionDeleteText}>{displayedSelectionBar.actionLabel ?? 'Delete'}</Text>
                 )}
               </Pressable>
             </Animated.View>

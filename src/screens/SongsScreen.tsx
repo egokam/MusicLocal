@@ -130,7 +130,7 @@ export const SongsScreen = ({
   const [connecting, setConnecting] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
-  const [selectionType, setSelectionType] = useState<'songs' | 'downloads' | null>(null);
+  const [selectionType, setSelectionType] = useState<'songs' | 'favorites' | 'downloads' | null>(null);
   const [selectedDownloadIds, setSelectedDownloadIds] = useState<Set<string>>(() => new Set());
   const [deletingSelected, setDeletingSelected] = useState(false);
   const [freedStorageMessage, setFreedStorageMessage] = useState<string | null>(null);
@@ -283,6 +283,51 @@ export const SongsScreen = ({
     );
   }, [deleteSelectedSongs, deletingSelected, selectedDownloadIds]);
 
+  const removeSelectedFavorites = useCallback(async () => {
+    if (selectedDownloadIds.size === 0 || deletingSelected) return;
+    setDeletingSelected(true);
+    const failedIds = new Set<string>();
+    const errors: string[] = [];
+    try {
+      for (const trackId of selectedDownloadIds) {
+        const track = tracks.find((item) => item.id === trackId);
+        if (!track) continue;
+        try {
+          await onToggleFavorite(track);
+        } catch (error) {
+          failedIds.add(trackId);
+          errors.push(`${track.title}: ${error instanceof Error ? error.message : 'Please try again.'}`);
+        }
+      }
+
+      setSelectedDownloadIds(failedIds);
+      if (failedIds.size === 0) {
+        setSelectionMode(false);
+        setSelectionType(null);
+      } else {
+        Alert.alert(
+          'Some favorites could not be removed',
+          `${selectedDownloadIds.size - failedIds.size} removed.\n${errors.join('\n')}`,
+        );
+      }
+    } finally {
+      setDeletingSelected(false);
+    }
+  }, [deletingSelected, onToggleFavorite, selectedDownloadIds, tracks]);
+
+  const confirmRemoveSelectedFavorites = useCallback(() => {
+    if (selectedDownloadIds.size === 0 || deletingSelected) return;
+    const count = selectedDownloadIds.size;
+    Alert.alert(
+      'Remove selected favorites?',
+      `${count} ${count === 1 ? 'song' : 'songs'} will be removed from Favorites. They will stay in your library.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', onPress: () => void removeSelectedFavorites() },
+      ],
+    );
+  }, [deletingSelected, removeSelectedFavorites, selectedDownloadIds]);
+
   useEffect(() => {
     if (!setSelectionBar) return;
     if (!selectionToolbarActive || !selectionType) {
@@ -296,14 +341,18 @@ export const SongsScreen = ({
       allSelected: allTracksSelected,
       canSelectAll: tracks.length > 0,
       deleting: deletingSelected,
+      actionLabel: selectionType === 'favorites' ? 'Remove' : undefined,
       onToggleSelectAll: toggleSelectAllTracks,
       onCancel: cancelDownloadSelection,
-      onDelete: selectionType === 'songs' ? confirmDeleteSelectedSongs : () => { void deleteSelectedDownloads(); },
+      onDelete: selectionType === 'songs'
+        ? confirmDeleteSelectedSongs
+        : selectionType === 'favorites' ? confirmRemoveSelectedFavorites : () => { void deleteSelectedDownloads(); },
     });
   }, [
     allTracksSelected,
     cancelDownloadSelection,
     confirmDeleteSelectedSongs,
+    confirmRemoveSelectedFavorites,
     deleteSelectedDownloads,
     deletingSelected,
     selectedDownloadIds.size,
@@ -605,13 +654,13 @@ export const SongsScreen = ({
           sortAccessibilityLabel="Reverse song order"
           liquidGlass
           moreMenuItems={[
-            ...(title === 'Songs' ? [
+            ...(title === 'Songs' || title === 'Favorites' ? [
               {
-                label: selectionMode && selectionType === 'songs' ? 'Cancel Selection' : 'Select',
-                icon: selectionMode && selectionType === 'songs' ? 'close' as const : 'checkbox-outline' as const,
-                onPress: selectionMode && selectionType === 'songs' ? cancelDownloadSelection : () => {
+                label: selectionMode && selectionType === (title === 'Favorites' ? 'favorites' : 'songs') ? 'Cancel Selection' : 'Select',
+                icon: selectionMode && selectionType === (title === 'Favorites' ? 'favorites' : 'songs') ? 'close' as const : 'checkbox-outline' as const,
+                onPress: selectionMode && selectionType === (title === 'Favorites' ? 'favorites' : 'songs') ? cancelDownloadSelection : () => {
                   setSelectedDownloadIds(new Set());
-                  setSelectionType('songs');
+                  setSelectionType(title === 'Favorites' ? 'favorites' : 'songs');
                   setSelectionMode(true);
                 },
               },
