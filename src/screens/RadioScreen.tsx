@@ -1,17 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ThemedSafeAreaView as SafeAreaView, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, useAppearanceTheme } from '../contexts/AppearanceThemeContext';
 import {
   Animated,
   Image,
   RefreshControl,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { usePlaybackActions, useRadioPlaybackStatus } from '../contexts/PlaybackContext';
@@ -241,10 +237,10 @@ const RadioHeroCard = memo(({
             <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#FA5265', marginRight: 7 }} />
             <Text style={{ color: '#FA5265', fontSize: 11, fontWeight: '800', letterSpacing: 1.5 }}>LIVE RADIO</Text>
           </View>
-          <Text numberOfLines={2} style={{ color: 'white', fontSize: 23, lineHeight: 28, fontWeight: '800', maxWidth: 230 }}>
+          <Text numberOfLines={2} style={{ color: 'white', fontSize: 23, lineHeight: 28, fontWeight: '800', maxWidth: 230, textShadowColor: 'rgba(0,0,0,0.72)', textShadowRadius: 3 }}>
             {isRadioActive ? activeTrack?.title : 'Find your frequency'}
           </Text>
-          <Text numberOfLines={1} style={{ color: '#AAA2A5', fontSize: 14, fontWeight: '500', marginTop: 6, maxWidth: 235 }}>
+          <Text numberOfLines={1} style={{ color: '#AAA2A5', fontSize: 14, fontWeight: '500', marginTop: 6, maxWidth: 235, textShadowColor: 'rgba(0,0,0,0.72)', textShadowRadius: 3 }}>
             {isRadioActive ? `${activeTrack?.artist} · streaming now` : 'Music, news and voices from everywhere'}
           </Text>
         </View>
@@ -264,7 +260,7 @@ const RadioHeroCard = memo(({
         accessibilityLabel={isRadioActive ? (isPlaying ? 'Pause live radio' : 'Resume live radio') : 'Play a featured radio station'}
         style={{ alignSelf: 'flex-start', marginTop: 19, height: 40, paddingHorizontal: 16, borderRadius: 22, backgroundColor: '#FA243C', flexDirection: 'row', alignItems: 'center', gap: 8, opacity: !isRadioActive && !suggestedStation ? 0.5 : 1 }}
       >
-        <Ionicons name={isRadioActive && isPlaying ? 'pause' : 'play'} size={17} color="white" />
+        <ThemedIonicons name={isRadioActive && isPlaying ? 'pause' : 'play'} size={17} color="white" />
         <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>
           {isRadioActive ? (isPlaying ? 'Pause' : 'Resume') : 'Play a station'}
         </Text>
@@ -283,7 +279,7 @@ const StationArtwork = memo(({ station }: { station: RadioStation }) => {
         <Image source={{ uri: station.favicon }} onError={() => setFailed(true)} resizeMode="cover" style={{ width: '100%', height: '100%' }} />
       ) : (
         <LinearGradient colors={['#57202C', '#211419']} style={{ width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
-          <Ionicons name="radio" size={25} color="#FA5265" />
+          <ThemedIonicons name="radio" size={25} color="#FA5265" />
         </LinearGradient>
       )}
     </View>
@@ -356,7 +352,7 @@ const RadioStationRow = memo(({
           hitSlop={8}
           style={{ width: 38, height: 42, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Ionicons name={favorite ? 'heart' : 'heart-outline'} size={20} color={favorite ? '#FA5265' : '#77777D'} />
+          <ThemedIonicons name={favorite ? 'heart' : 'heart-outline'} size={20} color={favorite ? '#FA5265' : '#77777D'} />
         </TouchableOpacity>
         <TouchableOpacity
           onPress={onPress}
@@ -365,7 +361,7 @@ const RadioStationRow = memo(({
           accessibilityLabel={active && isPlaying ? `Pause ${station.name}` : `Play ${station.name}`}
           style={{ width: 40, height: 42, borderRadius: 21, backgroundColor: active ? 'rgba(250,82,101,0.15)' : '#202024', alignItems: 'center', justifyContent: 'center', marginLeft: 2 }}
         >
-          <Ionicons name={active && isPlaying ? 'pause' : 'play'} size={18} color={active ? '#FA5265' : 'white'} />
+          <ThemedIonicons name={active && isPlaying ? 'pause' : 'play'} size={18} color={active ? '#FA5265' : 'white'} />
         </TouchableOpacity>
       </View>
     </Animated.View>
@@ -374,6 +370,7 @@ const RadioStationRow = memo(({
 RadioStationRow.displayName = 'RadioStationRow';
 
 export const RadioScreen = () => {
+  const { colors } = useAppearanceTheme();
   const insets = useSafeAreaInsets();
   const { activeTrack, playTrack, togglePlayback } = usePlaybackActions();
   const [category, setCategory] = useState<CategoryId>('popular');
@@ -518,7 +515,7 @@ export const RadioScreen = () => {
           hitSlop={8}
           style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
         >
-          <Ionicons name="refresh" size={19} color="white" />
+          <ThemedIonicons name="refresh" size={19} color="white" />
         </TouchableOpacity>
       </View>
 
@@ -530,7 +527,7 @@ export const RadioScreen = () => {
       />
 
       <View style={{ height: 48, borderRadius: 24, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15, marginTop: 20 }}>
-        <Ionicons name="search" size={21} color="#A1A1A6" />
+        <ThemedIonicons name="search" size={21} color="#A1A1A6" />
         <TextInput
           value={search}
           onChangeText={setSearch}
@@ -558,7 +555,7 @@ export const RadioScreen = () => {
               accessibilityState={{ selected }}
               style={{ height: 37, paddingHorizontal: 13, borderRadius: 20, backgroundColor: selected ? '#FA243C' : '#1C1C1E', flexDirection: 'row', alignItems: 'center', gap: 6 }}
             >
-              <Ionicons name={item.icon} size={15} color={selected ? 'white' : '#A1A1A6'} />
+              <ThemedIonicons name={item.icon} size={15} color={selected ? 'white' : '#A1A1A6'} />
               <Text style={{ color: selected ? 'white' : '#A1A1A6', fontSize: 13, fontWeight: '700' }}>{item.label}</Text>
             </TouchableOpacity>
           );
@@ -588,7 +585,7 @@ export const RadioScreen = () => {
               <View style={{ minHeight: 156, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 20 }}>
               {error ? (
                 <>
-                  <Ionicons name="cloud-offline-outline" size={28} color="#77777D" />
+                  <ThemedIonicons name="cloud-offline-outline" size={28} color="#77777D" />
                   <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>Couldn’t reach the radio directory</Text>
                   <Text style={{ color: '#8E8E93', fontSize: 13, textAlign: 'center', marginTop: 6 }}>Check your connection, then try again.</Text>
                   <TouchableOpacity onPress={() => setRefreshKey((key) => key + 1)} activeOpacity={0.75} style={{ marginTop: 16, paddingHorizontal: 17, height: 38, borderRadius: 20, backgroundColor: '#2A171C', alignItems: 'center', justifyContent: 'center' }}>
@@ -597,7 +594,7 @@ export const RadioScreen = () => {
                 </>
               ) : (
                 <>
-                  <Ionicons name={category === 'favorites' ? 'heart-outline' : 'radio-outline'} size={28} color="#77777D" />
+                  <ThemedIonicons name={category === 'favorites' ? 'heart-outline' : 'radio-outline'} size={28} color="#77777D" />
                   <Text style={{ color: 'white', fontSize: 16, fontWeight: '700', marginTop: 12 }}>
                     {category === 'favorites' ? 'No favorite stations yet' : search.trim() ? 'No matching stations' : 'No stations found'}
                   </Text>
@@ -635,7 +632,7 @@ export const RadioScreen = () => {
           }}
         >
           <LinearGradient
-            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            colors={colors.scrollFade}
             locations={[0, 0.32, 0.68, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}

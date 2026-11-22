@@ -1,5 +1,7 @@
-import { ActivityIndicator, Image, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
+import { ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedView as View, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons } from '../../contexts/AppearanceThemeContext';
+
+import { Image } from 'expo-image';
 import type { Track } from '../../types';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
 
@@ -38,6 +40,8 @@ export const SongListItem = ({
   onAddToPlaylist?: () => void;
   isLast: boolean;
 }) => {
+  const [failedArtworkUri, setFailedArtworkUri] = useState<string | null>(null);
+
   return (
   <View
     style={{
@@ -47,15 +51,17 @@ export const SongListItem = ({
       alignItems: 'center',
     }}
   >
-    {track.artwork ? (
+    {track.artwork && failedArtworkUri !== track.artwork ? (
       <Image
         source={{ uri: track.artwork, ...(track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
-        resizeMode="cover"
+        contentFit="cover"
+        transition={140}
+        onError={() => setFailedArtworkUri(track.artwork)}
         style={{ width: 50, height: 50, borderRadius: 7, backgroundColor: '#2C2C2E' }}
       />
     ) : (
       <View style={{ width: 50, height: 50, borderRadius: 7, backgroundColor: '#2C2C2E', alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name="musical-note" size={21} color="#FA5265" />
+        <ThemedIonicons name="musical-note" size={21} color="#FA5265" />
       </View>
     )}
     <TouchableOpacity
@@ -80,7 +86,7 @@ export const SongListItem = ({
           {track.title}
         </Text>
         {track.isFavorite ? (
-          <Ionicons
+          <ThemedIonicons
             name="heart"
             size={13}
             color="#FA243C"
@@ -129,7 +135,7 @@ export const SongListItem = ({
               justifyContent: 'center',
             }}
           >
-            {selected ? <Ionicons name="checkmark" size={16} color="white" /> : null}
+            {selected ? <ThemedIonicons name="checkmark" size={16} color="white" /> : null}
           </View>
         </TouchableOpacity>
       ) : addMode ? (
@@ -158,7 +164,7 @@ export const SongListItem = ({
                 justifyContent: 'center',
               }}
             >
-              <Ionicons name={alreadyAdded ? 'close' : 'add'} size={21} color="#FA5265" />
+              <ThemedIonicons name={alreadyAdded ? 'close' : 'add'} size={21} color="#FA5265" />
             </View>
           )}
         </TouchableOpacity>
@@ -189,7 +195,7 @@ export const SongListItem = ({
                 justifyContent: 'center',
               }}
             >
-              <Ionicons name={downloaded ? 'checkmark' : 'arrow-down'} size={12} color="#8E8E93" />
+              <ThemedIonicons name={downloaded ? 'checkmark' : 'arrow-down'} size={12} color="#8E8E93" />
             </View>
           )}
         </TouchableOpacity>
@@ -205,7 +211,7 @@ export const SongListItem = ({
             hitSlop={10}
             style={{ width: 28, height: 40, alignItems: 'center', justifyContent: 'center' }}
           >
-            <Ionicons name="ellipsis-horizontal" size={23} color="white" />
+            <ThemedIonicons name="ellipsis-horizontal" size={23} color="white" />
           </TouchableOpacity>
       ) : null}
     </View>

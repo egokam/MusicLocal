@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Linking, NativeModules } from 'react-native';
+import { Alert, Animated, Easing, Linking, NativeModules, StatusBar } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -15,6 +15,7 @@ import { CustomTabBar } from './src/components/navigation/CustomTabBar';
 import { PlayerOverlay } from './src/components/player/PlayerOverlay';
 import { publishPlayerPlaybackStatus, type PlayerPlaybackStatus } from './src/services/PlayerStatusStore';
 import { LibrarySelectionBarContext, PlaybackContext, RadioPlaybackStatusContext, type LibrarySelectionBarState } from './src/contexts/PlaybackContext';
+import { AppearanceThemeProvider, useAppearanceTheme } from './src/contexts/AppearanceThemeContext';
 import { systemMediaControls } from './src/native/SystemMediaControls';
 import { NowPlayingWidgetService } from './src/services/NowPlayingWidgetService';
 import { AndroidUpdatePrompt } from './src/components/updates/AndroidUpdatePrompt';
@@ -105,6 +106,15 @@ const PlayerStatusBridge = ({
 };
 
 export default function App() {
+  return (
+    <AppearanceThemeProvider>
+      <AppContent />
+    </AppearanceThemeProvider>
+  );
+}
+
+function AppContent() {
+  const { colors, isDark } = useAppearanceTheme();
   const startupFadeOpacity = useRef(new Animated.Value(0)).current;
   const startupFadeStarted = useRef(false);
   const expoPlaylist = useAudioPlaylist({ updateInterval: 250 });
@@ -1694,12 +1704,13 @@ export default function App() {
   ]);
 
   return (
-    <SafeAreaProvider initialMetrics={initialWindowMetrics} style={{ flex: 1, backgroundColor: '#000' }}>
-      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000' }}>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics} style={{ flex: 1, backgroundColor: colors.background }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
         <Animated.View
           onLayout={startStartupFade}
           style={{ flex: 1, opacity: startupFadeOpacity }}
         >
+          <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} animated />
           <PlayerStatusBridge
             playlist={expoPlaylist}
             onStatus={handlePlayerStatus}

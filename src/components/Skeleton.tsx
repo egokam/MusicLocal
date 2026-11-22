@@ -1,5 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Animated, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ThemedView as View } from '../contexts/AppearanceThemeContext';
+import {
+  Animated,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 export const SkeletonPulse = ({
   children,

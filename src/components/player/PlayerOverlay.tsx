@@ -20,12 +20,14 @@ import type { SongMenuAnchor } from '../songs/SongListItem';
 import type { PlaylistSummary, Track } from '../../types';
 import type { TrackEditChanges } from '../../services/MusicCatalogService';
 import { usePlayerPlaybackStatus } from '../../services/PlayerStatusStore';
+import { useAppearanceTheme } from '../../contexts/AppearanceThemeContext';
 
 const HAS_LIQUID_GLASS = isLiquidGlassAvailable() && isGlassEffectAPIAvailable();
 const TRACK_DETAILS_FADE_DURATION = 290;
 const TRACK_DETAILS_OVERLAP_GAP = 100;
 const TRACK_DETAILS_FADE_EASING = Easing.bezier(0.4, 0, 0.2, 1);
 const ReanimatedExpoImage = ReanimatedAnimated.createAnimatedComponent(ExpoImage);
+const ReanimatedGlassView = ReanimatedAnimated.createAnimatedComponent(GlassView);
 const getArtworkSource = (track: Track) => track.artwork
   ? {
       uri: track.artwork,
@@ -520,6 +522,7 @@ const PlayerOverlayView = ({
 }) => {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const safeAreaInsets = useSafeAreaInsets();
+  const { isDark } = useAppearanceTheme();
   const isLandscape = windowWidth > windowHeight;
   const progress = useSharedValue(0);
   const gestureStartProgress = useSharedValue(1);
@@ -1007,6 +1010,13 @@ const PlayerOverlayView = ({
       { translateY: interpolate(progress.value, [0, 1], [miniTop, 0]) },
     ],
   }));
+  const frameCornerStyle = useAnimatedStyle(() => ({
+    borderTopLeftRadius: interpolate(progress.value, [0, 1], [32, 40]),
+    borderTopRightRadius: interpolate(progress.value, [0, 1], [32, 40]),
+    borderBottomLeftRadius: interpolate(progress.value, [0, 1], [32, 0]),
+    borderBottomRightRadius: interpolate(progress.value, [0, 1], [32, 0]),
+    overflow: 'hidden',
+  }));
   const backgroundArtworkPositionStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: interpolate(progress.value, [0, 1], [-16, 0]) },
@@ -1074,6 +1084,7 @@ const PlayerOverlayView = ({
       left: expandedLeft,
       top: expandedTop,
       right: expandedRight,
+      mixBlendMode: progress.value < 0.06 ? 'difference' : 'normal',
       transform: [
         { translateX: interpolate(progress.value, [0, 1], [60 - expandedLeft, 0]) },
         { translateY: interpolate(progress.value, [0, 1], [12 - expandedTop, 0]) },
@@ -1097,6 +1108,7 @@ const PlayerOverlayView = ({
     return { opacity: isTrackTransitioning ? 0.72 * blurEnvelope * value : 0 };
   });
   const titleTextStyle = useAnimatedStyle(() => ({
+    color: '#FFFFFF',
     fontSize: interpolate(
       progress.value,
       [0, 1],
@@ -1104,7 +1116,8 @@ const PlayerOverlayView = ({
     ),
   }));
   const artistTextStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(progress.value, [0, 1], ['#A1A1A6', '#D0CFCC']),
+    color: interpolateColor(progress.value, [0, 1], ['#FFFFFF', '#D0CFCC']),
+    opacity: interpolate(progress.value, [0, 1], [0.78, 1]),
     fontSize: interpolate(
       progress.value,
       [0, 1],
@@ -1122,6 +1135,7 @@ const PlayerOverlayView = ({
       left: windowWidth / 2 - 26,
       top: fullCenter - 26,
       width: interpolate(progress.value, [0, 1], [48, 52]),
+      mixBlendMode: progress.value < 0.06 ? 'difference' : 'normal',
       transform: [
         { translateX: interpolate(progress.value, [0, 1], [windowWidth - 144 - (windowWidth / 2 - 26), 0]) },
         { translateY: interpolate(progress.value, [0, 1], [3 - (fullCenter - 26), 0]) },
@@ -1138,6 +1152,7 @@ const PlayerOverlayView = ({
     return {
       left: windowWidth - 88,
       top: fullCenter - 22,
+      mixBlendMode: progress.value < 0.06 ? 'difference' : 'normal',
       transform: [
         { translateY: interpolate(progress.value, [0, 1], [7 - (fullCenter - 22), 0]) },
       ],
@@ -1328,16 +1343,22 @@ const PlayerOverlayView = ({
           ]}
         >
           {HAS_LIQUID_GLASS ? (
-            <GlassView
+            <ReanimatedGlassView
               pointerEvents="none"
               glassEffectStyle="regular"
               colorScheme="dark"
-              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+              style={[
+                { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+                frameCornerStyle,
+              ]}
             />
           ) : (
-            <View
+            <ReanimatedAnimated.View
               pointerEvents="none"
-              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(32,32,36,0.92)' }}
+              style={[
+                { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(32,32,36,0.92)' },
+                frameCornerStyle,
+              ]}
             />
           )}
           <ReanimatedAnimated.View
@@ -1830,7 +1851,7 @@ const PlayerOverlayView = ({
                 { width: '100%', height: 52, alignItems: 'center', justifyContent: 'center' },
                 pressed ? {
                   transform: [{ scale: 0.96 }],
-                  shadowColor: '#FFFFFF',
+                  shadowColor: isDark || visible ? '#FFFFFF' : '#1C1C1E',
                   shadowOpacity: 0.18,
                   shadowRadius: 8,
                   shadowOffset: { width: 0, height: 0 },
@@ -1884,7 +1905,7 @@ const PlayerOverlayView = ({
                 { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
                 pressed ? {
                   transform: [{ scale: 0.96 }],
-                  shadowColor: '#FFFFFF',
+                  shadowColor: isDark || visible ? '#FFFFFF' : '#1C1C1E',
                   shadowOpacity: 0.18,
                   shadowRadius: 8,
                   shadowOffset: { width: 0, height: 0 },

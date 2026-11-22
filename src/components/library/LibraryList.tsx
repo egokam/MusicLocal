@@ -1,4 +1,5 @@
-import { View } from 'react-native';
+
+import { ThemedView as View } from '../../contexts/AppearanceThemeContext';
 import { libraryCategories } from '../../data/libraryCategories';
 import { LibraryListItem } from './LibraryListItem';
 
@@ -7,7 +8,7 @@ export const LibraryList = ({
 }: {
   onSelectCategory: (title: string) => void;
 }) => (
-  <View className="mt-2">
+  <View style={{ marginTop: 8 }}>
     {libraryCategories.map((item, index) => (
       <LibraryListItem
         key={item.id}

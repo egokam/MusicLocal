@@ -1,5 +1,5 @@
-import { ActivityIndicator, Image, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'react-native';
+import { ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedView as View, ThemedIcon as ThemedIonicons, ThemedTouchableOpacity as TouchableOpacity } from '../../contexts/AppearanceThemeContext';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
 import type { Track } from '../../types';
 
@@ -63,7 +63,7 @@ export const LrcCheckerRow = ({
         />
       ) : (
         <View style={{ width: 54, height: 54, borderRadius: 8, backgroundColor: '#2C2C2E', alignItems: 'center', justifyContent: 'center' }}>
-          <Ionicons name="musical-note" size={22} color="#FA5265" />
+          <ThemedIonicons name="musical-note" size={22} color="#FA5265" />
         </View>
       )}
 
@@ -74,7 +74,7 @@ export const LrcCheckerRow = ({
           {state === 'checking' ? (
             <ActivityIndicator size="small" color={stateColor[state]} style={{ marginRight: 5, transform: [{ scale: 0.72 }] }} />
           ) : (
-            <Ionicons
+            <ThemedIonicons
               name={state === 'synced' ? 'checkmark-circle' : state === 'candidate' ? 'help-circle' : state === 'error' ? 'alert-circle' : state === 'plain' ? 'text' : 'ellipse-outline'}
               size={13}
               color={stateColor[state]}

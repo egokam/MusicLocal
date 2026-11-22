@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, ThemedPressable as Pressable, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, useAppearanceTheme } from '../../contexts/AppearanceThemeContext';
 import {
   Animated,
-  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
-  Pressable,
-  ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -57,26 +51,29 @@ const ActionRow = ({
   disabled?: boolean;
   destructive?: boolean;
   showChevron?: boolean;
-}) => (
-  <TouchableOpacity
-    onPress={onPress}
-    disabled={disabled}
-    accessibilityRole="button"
-    style={{
-      minHeight: 42,
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 10,
-      opacity: disabled ? 0.4 : 1,
-    }}
-  >
-    <Ionicons name={icon} size={19} color={destructive ? '#FA5265' : '#F5F5F7'} />
-    <Text style={{ flex: 1, color: destructive ? '#FA5265' : '#F5F5F7', fontSize: 14, fontWeight: '500', marginLeft: 10 }} numberOfLines={1}>
-      {title}
-    </Text>
-    {showChevron ? <Ionicons name="chevron-forward" size={15} color="#8E8E93" /> : null}
-  </TouchableOpacity>
-);
+}) => {
+  const { colors } = useAppearanceTheme();
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      style={{
+        minHeight: 42,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        opacity: disabled ? 0.4 : 1,
+      }}
+    >
+      <ThemedIonicons name={icon} size={19} color={destructive ? colors.accent : colors.text} />
+      <Text style={{ flex: 1, color: destructive ? colors.accent : colors.text, fontSize: 14, fontWeight: '500', marginLeft: 10 }} numberOfLines={1}>
+        {title}
+      </Text>
+      {showChevron ? <ThemedIonicons name="chevron-forward" size={15} color={colors.mutedText} /> : null}
+    </TouchableOpacity>
+  );
+};
 
 const Field = ({
   label,
@@ -92,30 +89,33 @@ const Field = ({
   multiline?: boolean;
   placeholder?: string;
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-}) => (
-  <View style={{ marginTop: 15 }}>
-    <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '700', marginBottom: 7 }}>{label}</Text>
-    <TextInput
-      value={value}
-      onChangeText={onChangeText}
-      placeholder={placeholder}
-      placeholderTextColor="#77777D"
-      autoCapitalize={autoCapitalize}
-      autoCorrect={false}
-      multiline={multiline}
-      textAlignVertical={multiline ? 'top' : 'center'}
-      style={{
-        minHeight: multiline ? 150 : 50,
-        borderRadius: 14,
-        paddingHorizontal: 14,
-        paddingVertical: multiline ? 12 : 0,
-        color: 'white',
-        backgroundColor: '#242427',
-        fontSize: 15,
-      }}
-    />
-  </View>
-);
+}) => {
+  const { colors } = useAppearanceTheme();
+  return (
+    <View style={{ marginTop: 15 }}>
+      <Text style={{ color: colors.secondaryText, fontSize: 13, fontWeight: '700', marginBottom: 7 }}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={colors.mutedText}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={false}
+        multiline={multiline}
+        textAlignVertical={multiline ? 'top' : 'center'}
+        style={{
+          minHeight: multiline ? 150 : 50,
+          borderRadius: 14,
+          paddingHorizontal: 14,
+          paddingVertical: multiline ? 12 : 0,
+          color: colors.text,
+          backgroundColor: colors.raisedSurface,
+          fontSize: 15,
+        }}
+      />
+    </View>
+  );
+};
 
 export const TrackActionsSheet = ({
   track,
@@ -134,6 +134,7 @@ export const TrackActionsSheet = ({
   onRemoveFromPlaylist,
 }: TrackActionsSheetProps) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { isDark, colors } = useAppearanceTheme();
   const [page, setPage] = useState<SheetPage>('actions');
   const [title, setTitle] = useState(track?.title ?? '');
   const [artist, setArtist] = useState(track?.artist ?? '');
@@ -376,7 +377,7 @@ export const TrackActionsSheet = ({
               overflow: 'hidden',
               backgroundColor: 'transparent',
               borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.13)',
+              borderColor: isDark ? 'rgba(255,255,255,0.13)' : 'rgba(60,60,67,0.18)',
               shadowColor: '#000000',
               shadowOpacity: 0.4,
               shadowRadius: 24,
@@ -388,38 +389,39 @@ export const TrackActionsSheet = ({
           >
           <GlassSurface
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }}
-            fallbackColor="rgba(31,31,34,0.98)"
+            colorScheme={isDark ? 'dark' : 'light'}
+            fallbackColor={isDark ? 'rgba(31,31,34,0.98)' : 'rgba(242,242,247,0.98)'}
           />
           <View
             pointerEvents="none"
-            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(31,31,34,0.56)' }]}
+            style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(31,31,34,0.56)' : 'rgba(255,255,255,0.52)' }]}
           />
           <Animated.View style={{ flex: 1, opacity: cardOpacity }}>
           <View style={{ minHeight: 48, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center' }}>
             {page === 'actions' ? (
               track.artwork ? (
-                <Image source={{ uri: track.artwork }} style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: '#29292D' }} />
+                <Image source={{ uri: track.artwork }} style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.raisedSurface }} />
               ) : (
-                <View style={{ width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#3A2027' }}>
-                  <Ionicons name="musical-note" size={17} color="#FA5265" />
+                <View style={{ width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#3A2027' : '#FCE9EC' }}>
+                  <ThemedIonicons name="musical-note" size={17} color="#FA5265" />
                 </View>
               )
             ) : (
               <TouchableOpacity onPress={() => transitionToPage('actions')} accessibilityLabel="Back to track options" style={{ width: 34, height: 40, justifyContent: 'center' }}>
-                <Ionicons name="chevron-back" size={22} color="white" />
+                <ThemedIonicons name="chevron-back" size={22} color="white" />
               </TouchableOpacity>
             )}
             <View style={{ flex: 1, minWidth: 0, marginLeft: 9 }}>
               <Text numberOfLines={1} style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>{heading}</Text>
-              <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 12, marginTop: 2 }}>
+              <Text numberOfLines={1} style={{ color: colors.secondaryText, fontSize: 12, marginTop: 2 }}>
                 {page === 'actions' ? track.artist : `${track.title} · ${track.artist}`}
               </Text>
             </View>
             <TouchableOpacity onPress={dismiss} hitSlop={9} accessibilityLabel="Close track options" style={{ width: 34, height: 40, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="close" size={21} color="#A1A1A6" />
+              <ThemedIonicons name="close" size={21} color={colors.secondaryText} />
             </TouchableOpacity>
           </View>
-          <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.12)', marginHorizontal: 10 }} />
+          <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 10 }} />
 
           <Animated.View style={{ flex: 1, opacity: pageOpacity }}>
             {page === 'actions' ? (
@@ -436,14 +438,14 @@ export const TrackActionsSheet = ({
                       destructive
                       disabled={busy || !onRemoveFromPlaylist}
                     />
-                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
+                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 12 }} />
                     <ActionRow
                       icon={track.isFavorite ? 'star' : 'star-outline'}
                       title={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
                       onPress={toggleFavorite}
                       disabled={busy}
                     />
-                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
+                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 12 }} />
                     <ActionRow
                       icon="play-skip-forward-outline"
                       title="Play Next"
@@ -464,7 +466,7 @@ export const TrackActionsSheet = ({
                         accessibilityLabel="Edit track details"
                         style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}
                       >
-                        <Ionicons name="create-outline" size={29} color="#F5F5F7" />
+                        <ThemedIonicons name="create-outline" size={29} color={colors.text} />
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={toggleFavorite}
@@ -473,12 +475,12 @@ export const TrackActionsSheet = ({
                         accessibilityLabel={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
                         style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.4 : 1 }}
                       >
-                        <Ionicons name={track.isFavorite ? 'star' : 'star-outline'} size={29} color="#F5F5F7" />
+                        <ThemedIonicons name={track.isFavorite ? 'star' : 'star-outline'} size={29} color={colors.text} />
                       </TouchableOpacity>
                     </View>
-                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
+                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 12 }} />
                     <ActionRow icon="list-outline" title="Add to playlist" onPress={() => transitionToPage('playlist')} showChevron />
-                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
+                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 12 }} />
                     <ActionRow
                       icon="play-skip-forward-outline"
                       title="Play next"
@@ -488,7 +490,7 @@ export const TrackActionsSheet = ({
                         dismiss();
                       }}
                     />
-                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
+                    <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 12 }} />
                     <ActionRow icon="trash-outline" title="Delete" onPress={confirmDelete} destructive disabled={busy} />
                   </>
                 )}
@@ -501,7 +503,7 @@ export const TrackActionsSheet = ({
                 <Field label="Artist" value={artist} onChangeText={setArtist} />
                 <Field label="Album" value={album} onChangeText={setAlbum} />
                 <View style={{ marginTop: 16 }}>
-                  <Text style={{ color: '#A1A1A6', fontSize: 13, fontWeight: '700', marginBottom: 7 }}>Artwork</Text>
+                  <Text style={{ color: colors.secondaryText, fontSize: 13, fontWeight: '700', marginBottom: 7 }}>Artwork</Text>
                   <TouchableOpacity
                     onPress={() => void chooseArtwork()}
                     disabled={busy || choosingArtwork || !localTrack}
@@ -513,29 +515,29 @@ export const TrackActionsSheet = ({
                       alignItems: 'center',
                       padding: 8,
                       borderRadius: 16,
-                      backgroundColor: '#242427',
+                      backgroundColor: colors.raisedSurface,
                       opacity: busy || !localTrack ? 0.55 : 1,
                     }}
                   >
-                    <View style={{ width: 72, height: 72, borderRadius: 12, overflow: 'hidden', backgroundColor: '#303034', alignItems: 'center', justifyContent: 'center' }}>
+                    <View style={{ width: 72, height: 72, borderRadius: 12, overflow: 'hidden', backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' }}>
                       {visibleArtworkUri ? (
                         <Image source={{ uri: visibleArtworkUri }} style={{ width: '100%', height: '100%' }} />
                       ) : (
-                        <Ionicons name="musical-notes-outline" size={27} color="#A1A1A6" />
+                        <ThemedIonicons name="musical-notes-outline" size={27} color={colors.secondaryText} />
                       )}
                       <View style={{ position: 'absolute', right: 4, bottom: 4, width: 25, height: 25, borderRadius: 13, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center' }}>
-                        {choosingArtwork ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="camera" size={14} color="white" />}
+                        {choosingArtwork ? <ActivityIndicator size="small" color="white" /> : <ThemedIonicons name="camera" size={14} color="white" />}
                       </View>
                     </View>
                     <View style={{ flex: 1, minWidth: 0, marginLeft: 12 }}>
                       <Text style={{ color: 'white', fontSize: 15, fontWeight: '700' }} numberOfLines={1}>Album artwork</Text>
-                      <Text style={{ color: '#A1A1A6', fontSize: 13, marginTop: 4 }} numberOfLines={2}>
+                      <Text style={{ color: colors.secondaryText, fontSize: 13, marginTop: 4 }} numberOfLines={2}>
                         {localTrack
                           ? visibleArtworkUri ? 'Tap the cover to replace it' : 'Tap to add a cover image'
                           : 'Save this track to your library to change its artwork'}
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={17} color="#8E8E93" />
+                    <ThemedIonicons name="chevron-forward" size={17} color={colors.mutedText} />
                   </TouchableOpacity>
                 </View>
                 <Field
@@ -550,8 +552,8 @@ export const TrackActionsSheet = ({
                   placeholder="Paste [mm:ss.xx] lyric lines or plain lyrics"
                 />
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-                  <TouchableOpacity onPress={dismiss} style={{ flex: 1, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: '#303034' }}>
-                    <Text style={{ color: 'white', fontSize: 15, fontWeight: '600' }}>Discard</Text>
+                  <TouchableOpacity onPress={dismiss} style={{ flex: 1, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.raisedSurface }}>
+                    <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>Discard</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={saveChanges}
@@ -568,7 +570,7 @@ export const TrackActionsSheet = ({
               <ScrollView contentContainerStyle={{ paddingHorizontal: 6, paddingVertical: 5 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
                 {playlists.map((playlist, index) => (
                   <View key={playlist.id}>
-                    {index > 0 ? <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} /> : null}
+                    {index > 0 ? <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 12 }} /> : null}
                     <ActionRow
                       icon="musical-notes-outline"
                       title={`${playlist.name} · ${playlist.trackCount}`}
@@ -578,18 +580,18 @@ export const TrackActionsSheet = ({
                   </View>
                 ))}
                 {playlists.length === 0 ? (
-                  <Text style={{ color: '#A1A1A6', fontSize: 14, lineHeight: 21, margin: 12 }}>
+                  <Text style={{ color: colors.secondaryText, fontSize: 14, lineHeight: 21, margin: 12 }}>
                     You don’t have any playlists yet. Create one to add this track.
                   </Text>
                 ) : null}
-                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 12 }} />
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginHorizontal: 12 }} />
                 <View style={{ flexDirection: 'row', gap: 9, paddingHorizontal: 10, paddingTop: 12, paddingBottom: 5 }}>
                   <TextInput
                     value={playlistName}
                     onChangeText={setPlaylistName}
                     placeholder="New playlist"
-                    placeholderTextColor="#77777D"
-                    style={{ flex: 1, height: 44, paddingHorizontal: 14, borderRadius: 14, color: 'white', backgroundColor: '#29292D', fontSize: 14 }}
+                    placeholderTextColor={colors.mutedText}
+                    style={{ flex: 1, height: 44, paddingHorizontal: 14, borderRadius: 14, color: colors.text, backgroundColor: colors.raisedSurface, fontSize: 14 }}
                   />
                   <TouchableOpacity
                     onPress={createAndAddPlaylist}
@@ -597,7 +599,7 @@ export const TrackActionsSheet = ({
                     accessibilityLabel="Create playlist and add track"
                     style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: '#FA243C', alignItems: 'center', justifyContent: 'center', opacity: busy || !playlistName.trim() ? 0.5 : 1 }}
                   >
-                    {busy ? <ActivityIndicator color="white" /> : <Ionicons name="add" size={24} color="white" />}
+                    {busy ? <ActivityIndicator color="white" /> : <ThemedIonicons name="add" size={24} color="white" />}
                   </TouchableOpacity>
                 </View>
               </ScrollView>

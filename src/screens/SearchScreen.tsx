@@ -1,19 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
+import { ThemedSafeAreaView as SafeAreaView, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View } from '../contexts/AppearanceThemeContext';
 import {
-  ActivityIndicator,
   Alert,
   Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+  type TextInput as NativeTextInput,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
@@ -96,7 +91,7 @@ const SearchTrackRow = ({
         />
       ) : (
         <View style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#202023', alignItems: 'center', justifyContent: 'center' }}>
-          <Ionicons name="musical-note" size={22} color="#FA5265" />
+          <ThemedIonicons name="musical-note" size={22} color="#FA5265" />
         </View>
       )}
       <TouchableOpacity
@@ -119,7 +114,7 @@ const SearchTrackRow = ({
           <Text numberOfLines={1} style={{ flexShrink: 1, color: '#F5F5F7', fontSize: 16, fontWeight: '600' }}>
             {track.title}
           </Text>
-          {track.isFavorite ? <Ionicons name="heart" size={13} color="#FA243C" style={{ marginLeft: 5 }} /> : null}
+          {track.isFavorite ? <ThemedIonicons name="heart" size={13} color="#FA243C" style={{ marginLeft: 5 }} /> : null}
         </View>
         <Text numberOfLines={1} style={{ color: '#A1A1A6', fontSize: 14, fontWeight: '500', marginTop: 3 }}>
           Song · {track.artist}
@@ -138,7 +133,7 @@ const SearchTrackRow = ({
         >
           {downloading ? <ActivityIndicator size="small" color="#8E8E93" /> : (
             <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#2C2C2E', alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name={downloaded ? 'checkmark' : 'arrow-down'} size={14} color="#A1A1A6" />
+              <ThemedIonicons name={downloaded ? 'checkmark' : 'arrow-down'} size={14} color="#A1A1A6" />
             </View>
           )}
         </TouchableOpacity>
@@ -153,7 +148,7 @@ const SearchTrackRow = ({
             hitSlop={8}
             style={{ width: 30, height: 40, alignItems: 'center', justifyContent: 'center' }}
           >
-            <Ionicons name="ellipsis-horizontal" size={22} color="white" />
+            <ThemedIonicons name="ellipsis-horizontal" size={22} color="white" />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -164,7 +159,7 @@ const SearchTrackRow = ({
 export const SearchScreen = () => {
   const actions = usePlaybackActions();
   const insets = useSafeAreaInsets();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<ElementRef<typeof NativeTextInput>>(null);
   const recentLoaded = useRef(false);
   const [scope, setScope] = useState<SearchScope>('universal');
   const [query, setQuery] = useState('');
@@ -455,7 +450,7 @@ export const SearchScreen = () => {
                         />
                       ) : (
                         <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#202023', alignItems: 'center', justifyContent: 'center' }}>
-                          <Ionicons name="person" size={22} color="#A1A1A6" />
+                          <ThemedIonicons name="person" size={22} color="#A1A1A6" />
                         </View>
                       )}
                       <View style={{ flex: 1, minHeight: 82, marginLeft: 12, justifyContent: 'center', borderBottomWidth: index === recents.length - 1 ? 0 : 1, borderBottomColor: '#2C2C2E' }}>
@@ -463,7 +458,7 @@ export const SearchScreen = () => {
                         <Text style={{ color: '#A1A1A6', fontSize: 14, marginTop: 3 }}>Artist</Text>
                         <Text style={{ color: '#8E8E93', fontSize: 13, marginTop: 3 }}>From {entry.source}</Text>
                       </View>
-                      <View style={{ width: 48, alignItems: 'center' }}><Ionicons name="chevron-forward" size={20} color="#8E8E93" /></View>
+                      <View style={{ width: 48, alignItems: 'center' }}><ThemedIonicons name="chevron-forward" size={20} color="#8E8E93" /></View>
                     </TouchableOpacity>
                   );
                 }
@@ -476,13 +471,13 @@ export const SearchScreen = () => {
                     style={{ minHeight: 68, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', borderBottomWidth: index === recents.length - 1 ? 0 : 1, borderBottomColor: '#2C2C2E' }}
                   >
                     <View style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: '#202023', alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="search" size={22} color="#A1A1A6" />
+                      <ThemedIonicons name="search" size={22} color="#A1A1A6" />
                     </View>
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text numberOfLines={1} style={{ color: '#F5F5F7', fontSize: 16, fontWeight: '600' }}>{entry.title}</Text>
                       <Text style={{ color: '#8E8E93', fontSize: 13, marginTop: 3 }}>{entry.scope === 'universal' ? 'Universal search' : 'Library search'}</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+                    <ThemedIonicons name="chevron-forward" size={20} color="#8E8E93" />
                   </TouchableOpacity>
                 );
               }) : (
@@ -514,7 +509,7 @@ export const SearchScreen = () => {
                         />
                       ) : (
                         <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: '#202023', alignItems: 'center', justifyContent: 'center' }}>
-                          <Ionicons name="person" size={22} color="#A1A1A6" />
+                          <ThemedIonicons name="person" size={22} color="#A1A1A6" />
                         </View>
                       )}
                       <View style={{ flex: 1, minHeight: 68, marginLeft: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#2C2C2E' }}>
@@ -522,7 +517,7 @@ export const SearchScreen = () => {
                           <Text numberOfLines={1} style={{ color: '#F5F5F7', fontSize: 16, fontWeight: '600' }}>{artist.name}</Text>
                           <Text style={{ color: '#8E8E93', fontSize: 13, marginTop: 3 }}>Artist · {sourceLabel(artist.sourceTrack).replace('From ', '')}</Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={20} color="#8E8E93" style={{ marginRight: 16 }} />
+                        <ThemedIonicons name="chevron-forward" size={20} color="#8E8E93" style={{ marginRight: 16 }} />
                       </View>
                     </TouchableOpacity>
                   ))}
@@ -553,7 +548,7 @@ export const SearchScreen = () => {
 
         <View style={{ marginHorizontal: 16, marginBottom: searchBottomGap, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View style={{ flex: 1, height: 52, borderRadius: 28, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#29292C' }}>
-            <Ionicons name="search" size={22} color="#F5F5F7" />
+            <ThemedIonicons name="search" size={22} color="#F5F5F7" />
             <TextInput
               ref={inputRef}
               value={query}
@@ -571,7 +566,7 @@ export const SearchScreen = () => {
               style={{ flex: 1, minWidth: 0, height: '100%', marginLeft: 10, paddingVertical: 0, color: 'white', fontSize: 16, fontWeight: '500' }}
             />
             <View accessible={false} style={{ width: 28, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="mic-outline" size={22} color="#F5F5F7" />
+              <ThemedIonicons name="mic-outline" size={22} color="#F5F5F7" />
             </View>
           </View>
           <TouchableOpacity
@@ -584,7 +579,7 @@ export const SearchScreen = () => {
             accessibilityLabel="Clear search and close keyboard"
             style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#2C2C2E' }}
           >
-            <Ionicons name="close" size={29} color="white" />
+            <ThemedIonicons name="close" size={29} color="white" />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>

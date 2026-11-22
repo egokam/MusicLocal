@@ -1,5 +1,8 @@
 import { useState, type ComponentProps } from 'react';
-import { Animated, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { ThemedText as Text, ThemedView as View, ThemedPressable as Pressable, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, useAppearanceTheme } from '../../contexts/AppearanceThemeContext';
+import {
+  Animated,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { GlassSurface } from '../../../glass';
 
@@ -10,7 +13,7 @@ export const SongsHeader = ({
   showSortButton = true,
   showMoreButton = true,
   sortAccessibilityLabel = 'Toggle sort order',
-  liquidGlass = false,
+  liquidGlass = true,
 }: {
   onBack: () => void;
   onToggleSort: () => void;
@@ -26,6 +29,8 @@ export const SongsHeader = ({
   sortAccessibilityLabel?: string;
   liquidGlass?: boolean;
 }) => {
+  const { isDark, colors } = useAppearanceTheme();
+  const glassBorderColor = isDark ? 'rgba(255,255,255,0.42)' : 'rgba(60,60,67,0.32)';
   const [menuVisible, setMenuVisible] = useState(false);
   const [opacity] = useState(() => new Animated.Value(0));
   const [scale] = useState(() => new Animated.Value(0.001));
@@ -94,15 +99,24 @@ export const SongsHeader = ({
             width: 44,
             height: 44,
             borderRadius: 22,
-            backgroundColor: liquidGlass ? 'transparent' : 'rgba(28,28,30,0.84)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.10)',
+            backgroundColor: 'transparent',
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          {liquidGlass ? <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }} /> : null}
-          <Ionicons name="chevron-back" size={27} color="white" />
+          {liquidGlass ? (
+            <GlassSurface
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }}
+              colorScheme={isDark ? 'dark' : 'light'}
+              fallbackColor={isDark ? 'rgba(28,28,30,0.72)' : 'rgba(255,255,255,0.68)'}
+              isInteractive
+            />
+          ) : null}
+          <ThemedIonicons name="chevron-back" size={27} color="white" />
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22, borderWidth: 1.2, borderColor: glassBorderColor }}
+          />
         </TouchableOpacity>
 
         {showSortButton ? (
@@ -114,15 +128,20 @@ export const SongsHeader = ({
               height: 44,
               paddingHorizontal: showMoreButton ? 18 : 0,
               borderRadius: 24,
-              backgroundColor: liquidGlass ? 'transparent' : 'rgba(28,28,30,0.84)',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.10)',
+              backgroundColor: 'transparent',
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: showMoreButton ? 'flex-start' : 'center',
             }}
           >
-            {liquidGlass ? <GlassSurface style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 24 }} /> : null}
+            {liquidGlass ? (
+              <GlassSurface
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 24 }}
+                colorScheme={isDark ? 'dark' : 'light'}
+                fallbackColor={isDark ? 'rgba(28,28,30,0.72)' : 'rgba(255,255,255,0.68)'}
+                isInteractive
+              />
+            ) : null}
             <TouchableOpacity
               onPress={onToggleSort}
               accessibilityRole="button"
@@ -135,7 +154,7 @@ export const SongsHeader = ({
                 justifyContent: 'center',
               }}
             >
-              <Ionicons name="list" size={25} color="white" />
+              <ThemedIonicons name="list" size={25} color="white" />
             </TouchableOpacity>
             {showMoreButton ? (
               <>
@@ -147,10 +166,14 @@ export const SongsHeader = ({
                   accessibilityState={{ expanded: menuVisible }}
                   hitSlop={8}
                 >
-                  <Ionicons name="ellipsis-horizontal" size={24} color="white" />
+                  <ThemedIonicons name="ellipsis-horizontal" size={24} color="white" />
                 </TouchableOpacity>
               </>
             ) : null}
+            <View
+              pointerEvents="none"
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 24, borderWidth: 1.2, borderColor: glassBorderColor }}
+            />
           </View>
         ) : null}
       </View>
@@ -166,7 +189,7 @@ export const SongsHeader = ({
             borderRadius: 16,
             backgroundColor: 'transparent',
             borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.12)',
+            borderColor: colors.separator,
             shadowColor: '#000000',
             shadowOpacity: 0.34,
             shadowRadius: 18,
@@ -179,12 +202,25 @@ export const SongsHeader = ({
         >
           <GlassSurface
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16 }}
-            fallbackColor="rgba(37,37,39,0.98)"
+            colorScheme={isDark ? 'dark' : 'light'}
+            fallbackColor={isDark ? 'rgba(37,37,39,0.98)' : 'rgba(242,242,247,0.98)'}
+          />
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 1,
+              left: 1,
+              right: 1,
+              bottom: 1,
+              borderRadius: 15,
+              backgroundColor: isDark ? 'rgba(37,37,39,0.90)' : 'rgba(248,248,250,0.92)',
+            }}
           />
           <Animated.View style={{ opacity }}>
             {moreMenuItems.map((item, index) => (
               <View key={item.label}>
-                {index > 0 ? <View style={{ height: 1, marginHorizontal: 11, backgroundColor: 'rgba(255,255,255,0.09)' }} /> : null}
+                {index > 0 ? <View style={{ height: 1, marginHorizontal: 11, backgroundColor: colors.separator }} /> : null}
                 <TouchableOpacity
                   onPress={() => closeMenu(item.onPress)}
                   disabled={item.disabled}
@@ -199,8 +235,8 @@ export const SongsHeader = ({
                     opacity: item.disabled ? 0.4 : 1,
                   }}
                 >
-                  <Ionicons name={item.icon} size={18} color={item.destructive ? '#FA5265' : 'white'} />
-                  <Text style={{ color: item.destructive ? '#FA5265' : 'white', fontSize: 14, fontWeight: '600', marginLeft: 9 }}>
+                  <ThemedIonicons name={item.icon} size={18} color={item.destructive ? colors.accent : colors.text} />
+                  <Text style={{ color: item.destructive ? colors.accent : colors.text, fontSize: 14, fontWeight: '600', marginLeft: 9 }}>
                     {item.label}
                   </Text>
                 </TouchableOpacity>

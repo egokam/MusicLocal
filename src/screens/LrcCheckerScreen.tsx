@@ -1,23 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ThemedSafeAreaView as SafeAreaView, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, useAppearanceTheme } from '../contexts/AppearanceThemeContext';
 import {
-  ActivityIndicator,
   Animated,
   Alert,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
-  ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
   useWindowDimensions,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassSurface } from '../../glass';
 import { TrackListSkeleton } from '../components/Skeleton';
 import { LrcCheckerRow, type LrcCheckState } from '../components/library/LrcCheckerRow';
@@ -105,6 +99,7 @@ export const LrcCheckerScreen = ({
   onCheckTrack: (track: Track, forceOnline?: boolean, excludedCandidateSignatures?: string[]) => Promise<Track>;
   onSaveTrackLyrics: (track: Track, syncedLyrics: string) => Promise<Track>;
 }) => {
+  const { colors } = useAppearanceTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const topInsetCompensation = Math.max(0, insets.top - 24);
@@ -500,7 +495,7 @@ export const LrcCheckerScreen = ({
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(250,36,60,0.16)', alignItems: 'center', justifyContent: 'center', marginRight: 11 }}>
-                      <Ionicons name="musical-notes" size={18} color="#FA5265" />
+                      <ThemedIonicons name="musical-notes" size={18} color="#FA5265" />
                     </View>
                     <View>
                       <Text style={{ color: 'white', fontSize: 15, fontWeight: '700' }}>{syncedCount} with synced lyrics</Text>
@@ -527,7 +522,7 @@ export const LrcCheckerScreen = ({
                   accessibilityLabel={isScanning ? 'Stop library scan' : scanSnapshot.hasSavedScan ? 'Resume saved scan or start a new scan' : 'Scan all tracks for synced lyrics'}
                   style={{ height: 48, borderRadius: 24, backgroundColor: isScanning ? '#303033' : '#28282B', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, opacity: isLoadingTracks ? 0.6 : 1 }}
                 >
-                  {isBusy ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="scan-outline" size={19} color="#FA5265" />}
+                  {isBusy ? <ActivityIndicator size="small" color="white" /> : <ThemedIonicons name="scan-outline" size={19} color="#FA5265" />}
                   <Text style={{ color: 'white', fontSize: 15, fontWeight: '700', marginLeft: 9 }}>
                     {isLoadingCatalog ? (isStopping ? 'Stopping…' : 'Loading your full library…') : isScanning ? (isStopping ? 'Finishing current track…' : 'Stop scan') : scanSnapshot.hasSavedScan ? 'Continue saved lyrics scan' : 'Scan lyrics across all sources'}
                   </Text>
@@ -549,7 +544,7 @@ export const LrcCheckerScreen = ({
                     opacity: isBusy || isApplyingAll || pendingLyricMatches.length === 0 ? 0.6 : 1,
                   }}
                 >
-                  {isApplyingAll ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="checkmark-done" size={19} color="white" />}
+                  {isApplyingAll ? <ActivityIndicator size="small" color="white" /> : <ThemedIonicons name="checkmark-done" size={19} color="white" />}
                   <Text style={{ color: 'white', fontSize: 14, fontWeight: '700', marginLeft: 8 }}>
                     {isApplyingAll
                       ? `Applying ${applyAllProgress.completed}/${applyAllProgress.total}…`
@@ -566,7 +561,7 @@ export const LrcCheckerScreen = ({
               </View>
 
               <View style={{ height: 48, marginTop: 20, paddingHorizontal: 14, borderRadius: 24, backgroundColor: '#1C1C1E', flexDirection: 'row', alignItems: 'center' }}>
-                <Ionicons name="search" size={20} color="#A1A1A6" />
+                <ThemedIonicons name="search" size={20} color="#A1A1A6" />
                 <TextInput
                   value={search}
                   onChangeText={setSearch}
@@ -576,7 +571,7 @@ export const LrcCheckerScreen = ({
                   returnKeyType="search"
                   style={{ flex: 1, color: 'white', fontSize: 16, marginLeft: 10, padding: 0 }}
                 />
-                {search ? <TouchableOpacity onPress={() => setSearch('')}><Ionicons name="close-circle" size={19} color="#8E8E93" /></TouchableOpacity> : null}
+                {search ? <TouchableOpacity onPress={() => setSearch('')}><ThemedIonicons name="close-circle" size={19} color="#8E8E93" /></TouchableOpacity> : null}
               </View>
 
               <Text style={{ color: '#8E8E93', fontSize: 12, fontWeight: '700', letterSpacing: 0.7, marginTop: 24, marginBottom: 5 }}>
@@ -608,7 +603,7 @@ export const LrcCheckerScreen = ({
           ListEmptyComponent={(
             isLoadingTracks ? <TrackListSkeleton count={7} /> : (
               <View style={{ alignItems: 'center', paddingHorizontal: 35, paddingTop: 48 }}>
-                <Ionicons name="musical-notes-outline" size={34} color="#66666B" />
+                <ThemedIonicons name="musical-notes-outline" size={34} color="#66666B" />
                 <Text style={{ color: '#A1A1A6', fontSize: 14, textAlign: 'center', lineHeight: 21, marginTop: 12 }}>
                   {search ? 'No songs match this filter.' : 'Your library tracks will appear here.'}
                 </Text>
@@ -631,7 +626,7 @@ export const LrcCheckerScreen = ({
           }}
         >
           <LinearGradient
-            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            colors={colors.scrollFade}
             locations={[0, 0.32, 0.68, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
@@ -651,11 +646,11 @@ export const LrcCheckerScreen = ({
               style={{ position: 'relative', overflow: 'hidden', width: 44, height: 44, borderRadius: 22, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' }}
             >
               <GlassSurface style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 22 }} fallbackColor="rgba(28,28,30,0.84)" />
-              <Ionicons name="chevron-back" size={27} color="white" />
+              <ThemedIonicons name="chevron-back" size={27} color="white" />
             </TouchableOpacity>
             <View style={{ position: 'relative', overflow: 'hidden', height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <GlassSurface style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 22 }} fallbackColor="rgba(28,28,30,0.84)" />
-              <Ionicons name="time-outline" size={19} color="#FA5265" />
+              <ThemedIonicons name="time-outline" size={19} color="#FA5265" />
               <Text style={{ color: 'white', fontSize: 13, fontWeight: '700' }}>LYRICS</Text>
             </View>
           </View>
@@ -675,7 +670,7 @@ export const LrcCheckerScreen = ({
               >
                 {isUndoingReview
                   ? <ActivityIndicator size="small" color="#FA5265" />
-                  : <Ionicons name="arrow-undo" size={20} color={hasPreviousReview ? '#FA5265' : '#8E8E93'} />}
+                  : <ThemedIonicons name="arrow-undo" size={20} color={hasPreviousReview ? '#FA5265' : '#8E8E93'} />}
               </TouchableOpacity>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: 'white', fontSize: 21, lineHeight: 26, fontWeight: '800' }} numberOfLines={2}>{reviewTrack?.title}</Text>
@@ -722,7 +717,7 @@ export const LrcCheckerScreen = ({
                 <Text style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>{isSpicyReview ? 'Close' : 'Discard'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={retryReview} disabled={isSavingReview || isUndoingReview || retryingTrackId === reviewTrack?.id} accessibilityRole="button" accessibilityLabel="Retry with a different lyric version" style={{ flex: 1, height: 46, borderRadius: 23, backgroundColor: '#303033', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', opacity: retryingTrackId === reviewTrack?.id ? 0.75 : 1 }}>
-                {retryingTrackId === reviewTrack?.id ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="refresh" size={16} color="#FA5265" />}
+                {retryingTrackId === reviewTrack?.id ? <ActivityIndicator size="small" color="white" /> : <ThemedIonicons name="refresh" size={16} color="#FA5265" />}
                 <Text style={{ color: 'white', fontSize: 13, fontWeight: '700', marginLeft: 5 }}>Retry</Text>
               </TouchableOpacity>
               {!isSpicyReview ? (

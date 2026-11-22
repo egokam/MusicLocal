@@ -1,7 +1,8 @@
-import { Text, View } from 'react-native';
+
+import { ThemedText as Text, ThemedView as View } from '../contexts/AppearanceThemeContext';
 
 export const ScreenPlaceholder = ({ title }: { title: string }) => (
-  <View className="flex-1 items-center justify-center bg-black">
-    <Text className="text-2xl font-bold text-white">{title}</Text>
+  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000000' }}>
+    <Text style={{ color: 'white', fontSize: 24, fontWeight: '700' }}>{title}</Text>
   </View>
 );

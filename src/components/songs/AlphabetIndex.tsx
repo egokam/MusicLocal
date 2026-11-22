@@ -1,4 +1,4 @@
-import { Text, TouchableOpacity, View } from 'react-native';
+import { ThemedText as Text, ThemedView as View, ThemedTouchableOpacity as TouchableOpacity } from '../../contexts/AppearanceThemeContext';
 
 const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
 

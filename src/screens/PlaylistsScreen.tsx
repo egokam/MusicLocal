@@ -1,20 +1,14 @@
 import { useState } from 'react';
+import { ThemedSafeAreaView as SafeAreaView, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View } from '../contexts/AppearanceThemeContext';
 import {
-  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
-  ScrollView,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { getMusicApiHeaders } from '../services/MusicCatalogService';
 import type { PlaylistCoverSelection, PlaylistSummary } from '../types';
@@ -95,7 +89,7 @@ export const PlaylistsScreen = ({
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
       <View style={{ paddingHorizontal: 20, paddingTop: 5, paddingBottom: 12, flexDirection: 'row', alignItems: 'center' }}>
         <TouchableOpacity onPress={onBack} accessibilityLabel="Back" style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1C1E' }}>
-          <Ionicons name="chevron-back" size={27} color="white" />
+          <ThemedIonicons name="chevron-back" size={27} color="white" />
         </TouchableOpacity>
         <Text style={{ flex: 1, color: 'white', fontSize: 32, fontWeight: '800', marginLeft: 14 }}>Playlists</Text>
         <TouchableOpacity
@@ -103,7 +97,7 @@ export const PlaylistsScreen = ({
           accessibilityLabel="Create playlist"
           style={{ width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1C1E' }}
         >
-          <Ionicons name="add" size={27} color="#FA5265" />
+          <ThemedIonicons name="add" size={27} color="#FA5265" />
         </TouchableOpacity>
       </View>
 
@@ -130,7 +124,7 @@ export const PlaylistsScreen = ({
             onPress={() => setCreateVisible(true)}
             style={{ marginTop: 16, padding: 24, borderRadius: 22, backgroundColor: '#1C1C1E', alignItems: 'center' }}
           >
-            <Ionicons name="musical-notes-outline" size={34} color="#FA5265" />
+            <ThemedIonicons name="musical-notes-outline" size={34} color="#FA5265" />
             <Text style={{ color: 'white', fontSize: 17, fontWeight: '700', marginTop: 12 }}>Create your first playlist</Text>
             <Text style={{ color: '#A1A1A6', fontSize: 14, textAlign: 'center', marginTop: 6 }}>
               Add a name and choose a cover from Photos.
@@ -151,7 +145,7 @@ export const PlaylistsScreen = ({
                   <Image source={artwork} style={{ width: 58, height: 58, borderRadius: 12, backgroundColor: '#2C2C2E' }} />
                 ) : (
                   <View style={{ width: 58, height: 58, borderRadius: 12, backgroundColor: '#3A2027', alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="musical-notes" size={25} color="#FA5265" />
+                    <ThemedIonicons name="musical-notes" size={25} color="#FA5265" />
                   </View>
                 )}
                 <View style={{ flex: 1, marginLeft: 13 }}>
@@ -160,7 +154,7 @@ export const PlaylistsScreen = ({
                 </View>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => confirmDelete(playlist)} hitSlop={10} accessibilityRole="button" accessibilityLabel={`Delete ${playlist.name}`} style={{ width: 46, height: 52, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="trash-outline" size={21} color="#FA5265" />
+                <ThemedIonicons name="trash-outline" size={21} color="#FA5265" />
               </TouchableOpacity>
             </View>
           );
@@ -200,12 +194,12 @@ export const PlaylistsScreen = ({
                   <Image source={{ uri: cover.uri }} style={{ width: '100%', height: '100%' }} />
                 ) : (
                   <>
-                    <Ionicons name="musical-note" size={35} color="#FA5265" />
+                    <ThemedIonicons name="musical-note" size={35} color="#FA5265" />
                     <Text style={{ color: '#D1D1D6', fontSize: 12, fontWeight: '600', marginTop: 7 }}>Add Cover</Text>
                   </>
                 )}
                 <View style={{ position: 'absolute', right: 7, bottom: 7, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.72)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="camera" size={15} color="white" />
+                  <ThemedIonicons name="camera" size={15} color="white" />
                 </View>
               </TouchableOpacity>
               <TextInput

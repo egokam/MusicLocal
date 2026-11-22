@@ -1,5 +1,5 @@
-import { Image, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'react-native';
+import { ThemedText as Text, ThemedView as View, ThemedIcon as ThemedIonicons, ThemedTouchableOpacity as TouchableOpacity } from '../../contexts/AppearanceThemeContext';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
 
 export const AlbumGridItem = ({
@@ -24,7 +24,7 @@ export const AlbumGridItem = ({
         <Image source={{ uri: artwork, headers: getMusicApiHeaders() }} resizeMode="cover" style={{ width: '100%', height: '100%' }} />
       ) : (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#29292E' }}>
-          <Ionicons name="albums" size={42} color="#77777D" />
+          <ThemedIonicons name="albums" size={42} color="#77777D" />
         </View>
       )}
     </View>

@@ -1,5 +1,7 @@
 import type { ComponentProps } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { ThemedText as Text, ThemedView as View, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon } from '../../contexts/AppearanceThemeContext';
+
 import { Ionicons } from '@expo/vector-icons';
 
 export const LibraryListItem = ({
@@ -13,17 +15,15 @@ export const LibraryListItem = ({
   isLast: boolean;
   onPress: () => void;
 }) => (
-  <TouchableOpacity onPress={onPress} className="flex-row items-center pl-5 active:bg-zinc-900">
-    <View className="w-10 items-start">
-      <Ionicons name={icon} size={24} color="#FA243C" />
+  <TouchableOpacity onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 20 }}>
+    <View style={{ width: 40, alignItems: 'flex-start' }}>
+      <ThemedIcon name={icon} size={24} color="#FA243C" />
     </View>
     <View
-      className={`flex-1 flex-row items-center justify-between py-[14px] pr-5 ${
-        !isLast ? 'border-b border-[#2C2C2E]' : ''
-      }`}
+      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, paddingRight: 20, borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth, borderBottomColor: '#2C2C2E' }}
     >
-      <Text className="text-white text-[20px]">{title}</Text>
-      <Ionicons name="chevron-forward" size={20} color="#3A3A3C" />
+      <Text style={{ color: '#FFFFFF', fontSize: 20 }}>{title}</Text>
+      <ThemedIcon name="chevron-forward" size={20} color="#3A3A3C" />
     </View>
   </TouchableOpacity>
 );

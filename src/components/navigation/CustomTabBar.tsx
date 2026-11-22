@@ -1,10 +1,13 @@
 /* eslint-disable react-hooks/immutability */
+import { ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedView as View, ThemedPressable as Pressable, ThemedIcon as ThemedIonicons, useAppearanceTheme } from '../../contexts/AppearanceThemeContext';
 
 import { useCallback, useContext, useEffect, useMemo, useState, type ComponentProps } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import {
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
 import { GlassContainer, GlassView, isLiquidGlassAvailable, type GlassEffectStyleConfig, type GlassStyle } from 'expo-glass-effect';
 import * as Haptics from 'expo-haptics';
-import { Ionicons } from '@expo/vector-icons';
 import { StackActions } from '@react-navigation/native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -94,10 +97,10 @@ const TabItem = ({ name, itemIndex, position, selected, onSelect }: TabItemProps
     >
       <View style={styles.iconBox}>
         <Animated.View style={[StyleSheet.absoluteFill, styles.center, inactiveIcon]}>
-          <Ionicons name={outline} size={24} color={INACTIVE} />
+          <ThemedIonicons name={outline} size={24} color={INACTIVE} />
         </Animated.View>
         <Animated.View style={[StyleSheet.absoluteFill, styles.center, activeIcon]}>
-          <Ionicons name={filled} size={24} color={ACCENT} />
+          <ThemedIonicons name={filled} size={24} color={ACCENT} />
         </Animated.View>
       </View>
       <Animated.Text style={[styles.label, label]}>{name}</Animated.Text>
@@ -106,6 +109,7 @@ const TabItem = ({ name, itemIndex, position, selected, onSelect }: TabItemProps
 };
 
 export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
+  const { isDark } = useAppearanceTheme();
   const { width: windowWidth } = useWindowDimensions();
   const selectionContext = useContext(LibrarySelectionBarContext)!;
   const selectionBar = selectionContext.bar;
@@ -171,9 +175,9 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
     backgroundColor: interpolateColor(
       selectionBarProgress.value,
       [0, 1],
-      ['rgba(32,32,36,0.92)', 'rgba(32,32,36,0)'],
+      [isDark ? 'rgba(32,32,36,0.92)' : 'rgba(242,242,247,0.94)', isDark ? 'rgba(32,32,36,0)' : 'rgba(242,242,247,0)'],
     ),
-  }));
+  }), [isDark]);
   const selectionGlassProps = useAnimatedProps(() => ({
     glassEffectStyle: {
       style: (selectionBarProgress.value > 0.01 ? 'regular' : 'none') as GlassStyle,
@@ -356,7 +360,7 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
         <View style={styles.barWrap}>
           <AnimatedGlassView
             animatedProps={tabBarGlassProps as ComponentProps<typeof AnimatedGlassView>['animatedProps']}
-            colorScheme="dark"
+            colorScheme={isDark ? 'dark' : 'light'}
             style={[StyleSheet.absoluteFill, styles.capsule, !HAS_GLASS && tabBarFallbackStyle]}
           />
 
@@ -394,7 +398,7 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
           <AnimatedGlassView
               isInteractive
               animatedProps={tabBarGlassProps as ComponentProps<typeof AnimatedGlassView>['animatedProps']}
-              colorScheme="dark"
+              colorScheme={isDark ? 'dark' : 'light'}
               style={[styles.searchGlass, !HAS_GLASS && tabBarFallbackStyle]}
             >
               <Animated.View style={[StyleSheet.absoluteFill, tabBarContentVisibilityStyle]}>
@@ -413,7 +417,7 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
                     if (!focused && !event.defaultPrevented) navigation.navigate(searchRoute.name);
                   }}
                 >
-                  <Ionicons
+                  <ThemedIonicons
                     name={state.routes[state.index]?.key === searchRoute.key ? 'search' : 'search-outline'}
                     size={26}
                     color={state.routes[state.index]?.key === searchRoute.key ? ACCENT_LABEL : '#FFFFFF'}
@@ -435,8 +439,8 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
           <Animated.View style={styles.selectionIsland}>
             <AnimatedGlassView
               animatedProps={selectionGlassProps as ComponentProps<typeof AnimatedGlassView>['animatedProps']}
-              colorScheme="dark"
-              style={[StyleSheet.absoluteFill, styles.capsule, !HAS_GLASS && styles.capsuleFallback]}
+              colorScheme={isDark ? 'dark' : 'light'}
+              style={[StyleSheet.absoluteFill, styles.capsule, !HAS_GLASS && { backgroundColor: isDark ? 'rgba(32,32,36,0.92)' : 'rgba(242,242,247,0.94)' }]}
             />
             <Animated.View style={[styles.selectionControls, selectionControlsVisibilityStyle]}>
               <Pressable
@@ -448,7 +452,7 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
                 style={styles.selectionAll}
               >
                 <View style={[styles.selectionCheck, displayedSelectionBar.allSelected && styles.selectionCheckActive]}>
-                  {displayedSelectionBar.allSelected ? <Ionicons name="checkmark" size={16} color="white" /> : null}
+                  {displayedSelectionBar.allSelected ? <ThemedIonicons name="checkmark" size={16} color="white" /> : null}
                 </View>
                 <View style={{ minWidth: 0 }}>
                   <Text numberOfLines={1} style={styles.selectionAllTitle}>Select All</Text>

@@ -1,8 +1,13 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ThemedSafeAreaView as SafeAreaView, ThemedTouchableOpacity as TouchableOpacity, ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, useAppearanceTheme } from '../contexts/AppearanceThemeContext';
+import {
+  Alert,
+  Animated,
+  StyleSheet,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlphabetIndex } from '../components/songs/AlphabetIndex';
 import { SongListItem, type SongMenuAnchor } from '../components/songs/SongListItem';
 import { SongsControls } from '../components/songs/SongsControls';
@@ -108,6 +113,7 @@ export const SongsScreen = ({
   onRemoveFromPlaylist?: (track: Track) => Promise<void>;
   emptyMessage?: string;
 }) => {
+  const { colors } = useAppearanceTheme();
   const listRef = useRef<Animated.SectionList<Track, SongSection>>(null);
   const pendingLetterSection = useRef<number | null>(null);
   const letterScrollRetries = useRef(0);
@@ -558,7 +564,7 @@ export const SongsScreen = ({
           }}
         >
           <LinearGradient
-            colors={['#000000', '#000000', 'rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+            colors={colors.scrollFade}
             locations={[0, 0.32, 0.68, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
