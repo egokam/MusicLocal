@@ -265,12 +265,28 @@ function AppContent() {
   const [downloadingTrackIds, setDownloadingTrackIds] = useState<string[]>([]);
   const [playerVisible, setPlayerVisible] = useState(false);
   const [isLrcSynchronizerActive, setIsLrcSynchronizerActive] = useState(false);
+  const [isLibraryProfilePageActive, setIsLibraryProfilePageActive] = useState(false);
+  const isLibraryChromeHidden = isLrcSynchronizerActive || isLibraryProfilePageActive;
+  const playerChromeHideProgress = useState(
+    () => new Animated.Value(isLibraryChromeHidden ? 1 : 0),
+  )[0];
   const [widgetLaunchTrackId, setWidgetLaunchTrackId] = useState<string | null>(null);
   const [playbackQueue, setPlaybackQueue] = useState<Track[]>([]);
   const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
   const canRotatePlayer = playerVisible && Boolean(activeTrack) && !isLrcSynchronizerActive;
+
+  useEffect(() => {
+    const animation = Animated.timing(playerChromeHideProgress, {
+      toValue: isLibraryChromeHidden ? 1 : 0,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [isLibraryChromeHidden, playerChromeHideProgress]);
 
   const startStartupFade = useCallback(() => {
     if (startupFadeStarted.current) return;
@@ -1937,12 +1953,19 @@ function AppContent() {
               <RadioPlaybackStatusContext.Provider value={playerIsPlaying}>
                 <NavigationContainer
                   onStateChange={(navigationState) => {
-                    const libraryRoute = navigationState?.routes.find((route) => route.name === 'Library');
-                    const libraryState = libraryRoute?.state;
-                    const libraryScreen = libraryState?.routes?.[libraryState.index ?? 0];
-                    const active = libraryScreen?.name === 'LrcSynchronizer';
+                    const focusedTab = navigationState?.routes[navigationState.index ?? 0];
+                    const focusedTabState = focusedTab?.name === 'Library' ? focusedTab.state : undefined;
+                    const focusedLibraryScreen = focusedTabState?.routes?.[focusedTabState.index ?? 0];
+                    setIsLibraryProfilePageActive(
+                      focusedLibraryScreen?.name === 'ProfileSettings'
+                        || focusedLibraryScreen?.name === 'Account'
+                        || focusedLibraryScreen?.name === 'EditPassword'
+                        || focusedLibraryScreen?.name === 'ChangeEmail',
+                    );
+
+                    const active = focusedTab?.name === 'Library'
+                      && focusedLibraryScreen?.name === 'LrcSynchronizer';
                     setIsLrcSynchronizerActive(active);
-                    if (active) setPlayerVisible(false);
                   }}
                 >
                   <Tab.Navigator
@@ -1959,47 +1982,63 @@ function AppContent() {
               </RadioPlaybackStatusContext.Provider>
             </LibrarySelectionBarContext.Provider>
           </PlaybackContext.Provider>
-          {activeTrack && !isLrcSynchronizerActive && (librarySelectionBar === null || playerVisible) ? (
-            <PlayerOverlay
-              visible={playerVisible}
-              track={activeTrack}
-              lyricsLoadingTrackId={lyricsLoadingTrackId}
-              lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
-              isFavorite={Boolean(activeTrack.isFavorite)}
-              isPlaying={playerIsPlaying}
-              durationSeconds={playerDuration || activeTrack.durationSeconds || 0}
-              volume={playerVolume}
-              queue={playbackQueue}
-              shuffleEnabled={shuffleEnabled}
-              repeatMode={repeatMode}
-              autoplayEnabled={autoplayEnabled}
-              onOpen={openPlayer}
-              onClose={closePlayer}
-              onTogglePlayback={togglePlayback}
-              onSkipPrevious={skipPrevious}
-              onSkipNext={skipNext}
-              onHoldPreviousStart={beginRewind}
-              onHoldPreviousEnd={endRewind}
-              onHoldNextStart={beginFastForward}
-              onHoldNextEnd={endFastForward}
-              onSeek={seekTo}
-              onVolumeChange={setPlayerVolume}
-              onToggleFavorite={toggleActiveTrackFavorite}
-              playlists={playlists}
-              hasActiveTrack={Boolean(activeTrack)}
-              onPlayNext={playNext}
-              onToggleTrackFavorite={toggleFavorite}
-              onAddToPlaylist={addTrackToPlaylist}
-              onCreatePlaylist={createPlaylist}
-              onSaveTrack={savePlayerMenuTrack}
-              onDeleteTrack={deleteTrack}
-              onPlayQueueTrack={playQueueTrack}
-              onToggleShuffle={toggleQueueShuffle}
-              onToggleRepeat={toggleRepeatMode}
-              onToggleAutoplay={toggleQueueAutoplay}
-              onClearQueue={clearUpcomingQueue}
-              onRemoveQueueTrack={removeQueuedTrack}
-            />
+          {activeTrack && (librarySelectionBar === null || playerVisible) ? (
+            <Animated.View
+              pointerEvents={isLibraryChromeHidden ? 'none' : 'box-none'}
+              accessibilityElementsHidden={isLibraryChromeHidden}
+              importantForAccessibility={isLibraryChromeHidden ? 'no-hide-descendants' : 'auto'}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 20,
+                opacity: playerChromeHideProgress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                transform: [{ translateY: playerChromeHideProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 36] }) }],
+              }}
+            >
+              <PlayerOverlay
+                visible={playerVisible}
+                track={activeTrack}
+                lyricsLoadingTrackId={lyricsLoadingTrackId}
+                lineSyncedWordWaveEnabled={lineSyncedWordWaveEnabled}
+                isFavorite={Boolean(activeTrack.isFavorite)}
+                isPlaying={playerIsPlaying}
+                durationSeconds={playerDuration || activeTrack.durationSeconds || 0}
+                volume={playerVolume}
+                queue={playbackQueue}
+                shuffleEnabled={shuffleEnabled}
+                repeatMode={repeatMode}
+                autoplayEnabled={autoplayEnabled}
+                onOpen={openPlayer}
+                onClose={closePlayer}
+                onTogglePlayback={togglePlayback}
+                onSkipPrevious={skipPrevious}
+                onSkipNext={skipNext}
+                onHoldPreviousStart={beginRewind}
+                onHoldPreviousEnd={endRewind}
+                onHoldNextStart={beginFastForward}
+                onHoldNextEnd={endFastForward}
+                onSeek={seekTo}
+                onVolumeChange={setPlayerVolume}
+                onToggleFavorite={toggleActiveTrackFavorite}
+                playlists={playlists}
+                hasActiveTrack={Boolean(activeTrack)}
+                onPlayNext={playNext}
+                onToggleTrackFavorite={toggleFavorite}
+                onAddToPlaylist={addTrackToPlaylist}
+                onCreatePlaylist={createPlaylist}
+                onSaveTrack={savePlayerMenuTrack}
+                onDeleteTrack={deleteTrack}
+                onPlayQueueTrack={playQueueTrack}
+                onToggleShuffle={toggleQueueShuffle}
+                onToggleRepeat={toggleRepeatMode}
+                onToggleAutoplay={toggleQueueAutoplay}
+                onClearQueue={clearUpcomingQueue}
+                onRemoveQueueTrack={removeQueuedTrack}
+              />
+            </Animated.View>
           ) : null}
         </Animated.View>
       </GestureHandlerRootView>

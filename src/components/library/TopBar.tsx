@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedIcon, ThemedText as Text, ThemedTouchableOpacity as TouchableOpacity, ThemedView as View, useAppearanceTheme } from '../../contexts/AppearanceThemeContext';
 
-export const TopBar = ({ onProfilePress }: { onProfilePress: () => void }) => {
+export const TopBar = ({ onSettingsPress }: { onSettingsPress: () => void }) => {
   const { colors, isDark } = useAppearanceTheme();
 
   return (
@@ -9,10 +9,10 @@ export const TopBar = ({ onProfilePress }: { onProfilePress: () => void }) => {
       <Text style={{ color: colors.text, fontSize: 34, fontWeight: '700' }}>Library</Text>
 
       <TouchableOpacity
-        onPress={onProfilePress}
+        onPress={onSettingsPress}
         activeOpacity={0.78}
         accessibilityRole="button"
-        accessibilityLabel="Open developer profile"
+        accessibilityLabel="Open settings"
         style={{ width: 48, height: 48, borderRadius: 24, overflow: 'hidden' }}
       >
         <LinearGradient colors={isDark ? ['#514A68', '#262331'] : ['#D8D2E8', '#F0EDF7']} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

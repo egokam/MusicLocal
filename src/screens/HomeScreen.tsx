@@ -32,7 +32,7 @@ import type { Track } from '../types';
 type HomeNavigation = BottomTabNavigationProp<{
   Home: undefined;
   Radio: undefined;
-  Library: { screen: 'DeveloperProfile' } | undefined;
+  Library: { screen: 'ProfileSettings' } | undefined;
   Search: undefined;
 }, 'Home'>;
 
@@ -1104,10 +1104,10 @@ export const HomeScreen = () => {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
               <Text style={{ color: 'white', fontSize: 40, lineHeight: 47, fontWeight: '800', letterSpacing: -1 }}>Home</Text>
               <TouchableOpacity
-                onPress={() => navigation.navigate('Library', { screen: 'DeveloperProfile' })}
+                onPress={() => navigation.navigate('Library', { screen: 'ProfileSettings' })}
                 activeOpacity={0.78}
                 accessibilityRole="button"
-                accessibilityLabel="Open Kamal’s profile"
+                accessibilityLabel="Open settings"
                 style={{ width: 48, height: 48, borderRadius: 24, overflow: 'hidden' }}
               >
                 <LinearGradient colors={isDark ? ['#514A68', '#262331'] : ['#D8D2E8', '#F0EDF7']} style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

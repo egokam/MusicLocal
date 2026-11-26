@@ -137,6 +137,23 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
   const focusedNestedRoute = focusedRoute?.state?.routes?.[focusedRoute.state.index ?? 0];
   const isLrcSynchronizerActive = focusedRoute?.name === 'Library'
     && focusedNestedRoute?.name === 'LrcSynchronizer';
+  const isLibraryProfilePageActive = focusedRoute?.name === 'Library'
+    && (
+      focusedNestedRoute?.name === 'ProfileSettings'
+      || focusedNestedRoute?.name === 'Account'
+      || focusedNestedRoute?.name === 'EditPassword'
+      || focusedNestedRoute?.name === 'ChangeEmail'
+      || focusedNestedRoute?.name === 'TwoFactor'
+    );
+  const hideBottomChrome = isLrcSynchronizerActive || isLibraryProfilePageActive;
+  const hideBottomChromeProgress = useSharedValue(hideBottomChrome ? 1 : 0);
+  useEffect(() => {
+    hideBottomChromeProgress.value = withTiming(hideBottomChrome ? 1 : 0, { duration: 260 });
+  }, [hideBottomChrome, hideBottomChromeProgress]);
+  const bottomChromeVisibilityStyle = useAnimatedStyle(() => ({
+    opacity: 1 - hideBottomChromeProgress.value,
+    transform: [{ translateY: interpolate(hideBottomChromeProgress.value, [0, 1], [0, 36]) }],
+  }));
   const count = mainRoutes.length;
   const islandWidth = windowWidth - 32;
   const collapsedIslandWidth = islandWidth - BAR_HEIGHT - 12;
@@ -347,10 +364,13 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
     };
   }, [activeMainIndex, estimatedSlotWidth]);
 
-  if (isLrcSynchronizerActive) return null;
-
   return (
-    <View style={styles.root} pointerEvents="box-none">
+    <Animated.View
+      pointerEvents={hideBottomChrome ? 'none' : 'box-none'}
+      accessibilityElementsHidden={hideBottomChrome}
+      importantForAccessibility={hideBottomChrome ? 'no-hide-descendants' : 'auto'}
+      style={[styles.root, bottomChromeVisibilityStyle]}
+    >
       {tabBarVisible ? <Animated.View
         pointerEvents={selectionBarVisible ? 'none' : 'auto'}
         style={StyleSheet.absoluteFill}
@@ -487,7 +507,7 @@ export const CustomTabBar = ({ state, navigation }: BottomTabBarProps) => {
           </Animated.View>
         ) : null}
       </Animated.View> : null}
-    </View>
+    </Animated.View>
   );
 };
 
