@@ -10,6 +10,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
+import { NativeBackButton } from '../components/songs/SongsHeader';
 import { getMusicApiHeaders } from '../services/MusicCatalogService';
 import type { PlaylistCoverSelection, PlaylistSummary } from '../types';
 
@@ -88,9 +89,13 @@ export const PlaylistsScreen = ({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
       <View style={{ paddingHorizontal: 20, paddingTop: 5, paddingBottom: 12, flexDirection: 'row', alignItems: 'center' }}>
-        <TouchableOpacity onPress={onBack} accessibilityLabel="Back" style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1C1E' }}>
-          <ThemedIonicons name="chevron-back" size={27} color="white" />
-        </TouchableOpacity>
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={onBack} accessibilityLabel="Back" size={48} />
+        ) : (
+          <TouchableOpacity onPress={onBack} accessibilityLabel="Back" style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1C1E' }}>
+            <ThemedIonicons name="chevron-back" size={27} color="white" />
+          </TouchableOpacity>
+        )}
         <Text style={{ flex: 1, color: 'white', fontSize: 32, fontWeight: '800', marginLeft: 14 }}>Playlists</Text>
         <TouchableOpacity
           onPress={() => setCreateVisible(true)}

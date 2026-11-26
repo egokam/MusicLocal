@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedTextInput as TextInput, ThemedView as View, ThemedPressable as Pressable, ThemedScrollView as ScrollView, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, useAppearanceTheme } from '../../contexts/AppearanceThemeContext';
 import {
   Animated,
@@ -11,16 +11,27 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import {
+  Button as NativeMenuButton,
+  ContextMenu as NativeContextMenu,
+  Divider as NativeMenuDivider,
+  Host,
+  RNHostView,
+  Section as NativeMenuSection,
+} from '@expo/ui/swift-ui';
+import { disabled } from '@expo/ui/swift-ui/modifiers';
 import * as ImagePicker from 'expo-image-picker';
 import { GlassSurface } from '../../../glass';
 import type { PlaylistSummary, Track } from '../../types';
-import type { TrackEditChanges } from '../../services/MusicCatalogService';
+import { getMusicApiHeaders, type TrackEditChanges } from '../../services/MusicCatalogService';
 import { MusicCatalogService } from '../../services/MusicCatalogService';
 import type { SongMenuAnchor } from './SongListItem';
+import { NativeBackButton } from './SongsHeader';
 
 type TrackActionsSheetProps = {
   track: Track | null;
   anchor: SongMenuAnchor;
+  initialPage?: SheetPage;
   playlistMode?: boolean;
   playerMenu?: boolean;
   visible: boolean;
@@ -37,6 +48,173 @@ type TrackActionsSheetProps = {
 };
 
 type SheetPage = 'actions' | 'edit' | 'playlist';
+
+export type TrackActionsContextMenuOptions = {
+  playlists: PlaylistSummary[];
+  hasActiveTrack: boolean;
+  playlistMode?: boolean;
+  playerMenu?: boolean;
+  onEdit: () => void;
+  onOpenPlaylistManager: () => void;
+  onPlayNext: (track: Track) => void;
+  onToggleFavorite: (track: Track) => Promise<Track>;
+  onAddToPlaylist: (playlistId: string, track: Track) => Promise<void>;
+  onDeleteTrack: (track: Track) => Promise<void>;
+  onRemoveFromPlaylist?: (track: Track) => Promise<void>;
+};
+
+export const TrackActionsContextMenu = ({
+  track,
+  children,
+  playlists,
+  hasActiveTrack,
+  playlistMode = false,
+  playerMenu = false,
+  onEdit,
+  onOpenPlaylistManager,
+  onPlayNext,
+  onToggleFavorite,
+  onAddToPlaylist,
+  onDeleteTrack,
+  onRemoveFromPlaylist,
+}: TrackActionsContextMenuOptions & { track: Track; children: ReactElement }) => {
+  const { isDark, colors } = useAppearanceTheme();
+
+  if (Platform.OS !== 'ios') return children;
+
+  const runMenuAction = async (action: () => Promise<unknown>, title: string) => {
+    try {
+      await action();
+    } catch (error) {
+      Alert.alert(title, error instanceof Error ? error.message : 'Please try again.');
+    }
+  };
+
+  const confirmDelete = () => {
+    Alert.alert(
+      'Delete from this device?',
+      `“${track.title}” and its local audio file will be removed from this device.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => void runMenuAction(() => onDeleteTrack(track), 'Could not delete track'),
+        },
+      ],
+    );
+  };
+
+  return (
+    <Host matchContents colorScheme={isDark ? 'dark' : 'light'}>
+      <NativeContextMenu>
+        <NativeContextMenu.Items>
+          {playlistMode ? (
+            <NativeMenuSection>
+              <NativeMenuButton
+                label="Remove from Playlist"
+                systemImage="minus.circle"
+                role="destructive"
+                onPress={() => {
+                  if (onRemoveFromPlaylist) {
+                    void runMenuAction(() => onRemoveFromPlaylist(track), 'Could not remove song from playlist');
+                  }
+                }}
+                modifiers={onRemoveFromPlaylist ? undefined : [disabled()]}
+              />
+              <NativeMenuButton
+                label={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                systemImage={track.isFavorite ? 'heart.slash' : 'heart'}
+                onPress={() => void runMenuAction(() => onToggleFavorite(track), 'Could not update favorite')}
+              />
+              <NativeMenuButton
+                label="Play Next"
+                systemImage="text.line.first.and.arrowtriangle.forward"
+                onPress={() => onPlayNext(track)}
+                modifiers={hasActiveTrack ? undefined : [disabled()]}
+              />
+            </NativeMenuSection>
+          ) : (
+            <>
+              <NativeMenuSection>
+                <NativeMenuButton label="Edit Track" systemImage="square.and.pencil" onPress={onEdit} />
+                {!playerMenu ? (
+                  <NativeMenuButton
+                    label={track.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                    systemImage={track.isFavorite ? 'heart.slash' : 'heart'}
+                    onPress={() => void runMenuAction(() => onToggleFavorite(track), 'Could not update favorite')}
+                  />
+                ) : null}
+              </NativeMenuSection>
+              <NativeContextMenu>
+                <NativeContextMenu.Items>
+                  {playlists.map((playlist) => (
+                    <NativeMenuButton
+                      key={playlist.id}
+                      label={playlist.name}
+                      systemImage="music.note.list"
+                      onPress={() => void runMenuAction(
+                        () => onAddToPlaylist(playlist.id, track),
+                        'Could not add to playlist',
+                      )}
+                    />
+                  ))}
+                  {playlists.length > 0 ? <NativeMenuDivider /> : null}
+                  <NativeMenuButton label="New Playlist…" systemImage="plus" onPress={onOpenPlaylistManager} />
+                </NativeContextMenu.Items>
+                <NativeContextMenu.Trigger>
+                  <NativeMenuButton label="Add to Playlist" systemImage="list.bullet" />
+                </NativeContextMenu.Trigger>
+              </NativeContextMenu>
+              <NativeMenuDivider />
+              <NativeMenuButton
+                label="Play Next"
+                systemImage="text.line.first.and.arrowtriangle.forward"
+                onPress={() => onPlayNext(track)}
+                modifiers={hasActiveTrack ? undefined : [disabled()]}
+              />
+              <NativeMenuButton label="Delete" systemImage="trash" role="destructive" onPress={confirmDelete} />
+            </>
+          )}
+        </NativeContextMenu.Items>
+        <NativeContextMenu.Trigger>
+          <RNHostView matchContents>{children}</RNHostView>
+        </NativeContextMenu.Trigger>
+        <NativeContextMenu.Preview>
+          <RNHostView matchContents>
+            <View
+              style={{
+                width: 230,
+                padding: 10,
+                borderRadius: 18,
+                overflow: 'hidden',
+                backgroundColor: isDark ? '#1C1C1E' : '#F2F2F7',
+              }}
+            >
+              {track.artwork ? (
+                <Image
+                  source={{ uri: track.artwork, ...(track.artwork.startsWith('http') ? { headers: getMusicApiHeaders() } : {}) }}
+                  resizeMode="cover"
+                  style={{ width: 210, height: 210, borderRadius: 12, backgroundColor: colors.raisedSurface }}
+                />
+              ) : (
+                <View style={{ width: 210, height: 210, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.raisedSurface }}>
+                  <ThemedIonicons name="musical-note" size={44} color="#FA5265" />
+                </View>
+              )}
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginTop: 10 }}>
+                {track.title}
+              </Text>
+              <Text numberOfLines={1} style={{ color: colors.secondaryText, fontSize: 14, marginTop: 3 }}>
+                {track.artist}
+              </Text>
+            </View>
+          </RNHostView>
+        </NativeContextMenu.Preview>
+      </NativeContextMenu>
+    </Host>
+  );
+};
 
 const ActionRow = ({
   icon,
@@ -121,6 +299,7 @@ const Field = ({
 export const TrackActionsSheet = ({
   track,
   anchor,
+  initialPage = 'actions',
   playlistMode = false,
   playerMenu = false,
   visible,
@@ -137,7 +316,7 @@ export const TrackActionsSheet = ({
 }: TrackActionsSheetProps) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { isDark, colors } = useAppearanceTheme();
-  const [page, setPage] = useState<SheetPage>('actions');
+  const [page, setPage] = useState<SheetPage>(initialPage);
   const [title, setTitle] = useState(track?.title ?? '');
   const [artist, setArtist] = useState(track?.artist ?? '');
   const [album, setAlbum] = useState(track?.album ?? '');
@@ -154,9 +333,10 @@ export const TrackActionsSheet = ({
   const [backdropDimOpacity] = useState(() => Animated.multiply(backdropOpacity, 0.32));
   const [pageOpacity] = useState(() => new Animated.Value(1));
   const dismissing = useRef(false);
+  const hasTriggerAnchor = anchor.width > 0 || anchor.height > 0;
   const safeAnchor = {
-    x: Number.isFinite(anchor.x) ? Math.max(0, Math.min(anchor.x, windowWidth)) : windowWidth / 2,
-    y: Number.isFinite(anchor.y) ? Math.max(0, Math.min(anchor.y, windowHeight)) : windowHeight / 2,
+    x: hasTriggerAnchor && Number.isFinite(anchor.x) ? Math.max(0, Math.min(anchor.x, windowWidth)) : windowWidth / 2 - 22,
+    y: hasTriggerAnchor && Number.isFinite(anchor.y) ? Math.max(0, Math.min(anchor.y, windowHeight)) : windowHeight / 2 - 22,
     width: Number.isFinite(anchor.width) ? Math.max(0, Math.min(anchor.width, windowWidth)) : 44,
     height: Number.isFinite(anchor.height) ? Math.max(0, Math.min(anchor.height, windowHeight)) : 44,
   };
@@ -164,6 +344,7 @@ export const TrackActionsSheet = ({
   const actionMenuHeight = playlistMode ? 188 : 246;
   const expandedMenuHeight = Math.round(windowHeight * 0.76);
   const expandedMenuTop = Math.max(54, (windowHeight - expandedMenuHeight) / 2);
+  const initialPageIsExpanded = initialPage !== 'actions';
   const preferredTop = safeAnchor.y + safeAnchor.height + 8;
   const actionMenuTop = Math.max(54, Math.min(
     preferredTop + actionMenuHeight <= windowHeight - 24 ? preferredTop : safeAnchor.y - actionMenuHeight - 8,
@@ -182,10 +363,10 @@ export const TrackActionsSheet = ({
       clampTransformOrigin(safeAnchor.y + safeAnchor.height / 2 - expandedMenuTop, expandedMenuHeight),
       0,
     ];
-  const [animatedTop] = useState(() => new Animated.Value(actionMenuTop));
-  const [animatedLeft] = useState(() => new Animated.Value(actionMenuLeft));
-  const [animatedWidth] = useState(() => new Animated.Value(actionCardWidth));
-  const [animatedHeight] = useState(() => new Animated.Value(actionMenuHeight));
+  const [animatedTop] = useState(() => new Animated.Value(initialPageIsExpanded ? expandedMenuTop : actionMenuTop));
+  const [animatedLeft] = useState(() => new Animated.Value(initialPageIsExpanded ? 16 : actionMenuLeft));
+  const [animatedWidth] = useState(() => new Animated.Value(initialPageIsExpanded ? windowWidth - 32 : actionCardWidth));
+  const [animatedHeight] = useState(() => new Animated.Value(initialPageIsExpanded ? expandedMenuHeight : actionMenuHeight));
   const transitioningPage = useRef(false);
 
   useEffect(() => {
@@ -425,9 +606,18 @@ export const TrackActionsSheet = ({
                 </View>
               )
             ) : (
-              <TouchableOpacity onPress={() => transitionToPage('actions')} accessibilityLabel="Back to track options" style={{ width: 34, height: 40, justifyContent: 'center' }}>
-                <ThemedIonicons name="chevron-back" size={22} color="white" />
-              </TouchableOpacity>
+              Platform.OS === 'ios' ? (
+                <NativeBackButton
+                  onPress={() => transitionToPage('actions')}
+                  accessibilityLabel="Back to track options"
+                  size={34}
+                  style={{ height: 40 }}
+                />
+              ) : (
+                <TouchableOpacity onPress={() => transitionToPage('actions')} accessibilityLabel="Back to track options" style={{ width: 34, height: 40, justifyContent: 'center' }}>
+                  <ThemedIonicons name="chevron-back" size={22} color="white" />
+                </TouchableOpacity>
+              )
             )}
             <View style={{ flex: 1, minWidth: 0, marginLeft: 9 }}>
               <Text numberOfLines={1} style={{ color: 'white', fontSize: 14, fontWeight: '700' }}>{heading}</Text>

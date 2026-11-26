@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import { ThemedActivityIndicator as ActivityIndicator, ThemedText as Text, ThemedView as View, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons } from '../../contexts/AppearanceThemeContext';
 
 import { Image } from 'expo-image';
 import type { Track } from '../../types';
 import { getMusicApiHeaders } from '../../services/MusicCatalogService';
+import { TrackActionsContextMenu, type TrackActionsContextMenuOptions } from './TrackActionsSheet';
 
 export type SongMenuAnchor = { x: number; y: number; width: number; height: number };
 
@@ -12,6 +14,7 @@ export const SongListItem = ({
   onPress,
   onDownload,
   onMore,
+  nativeActions,
   showMore = true,
   downloaded,
   downloading,
@@ -28,6 +31,7 @@ export const SongListItem = ({
   onPress: () => void;
   onDownload: () => void;
   onMore?: (anchor: SongMenuAnchor) => void;
+  nativeActions?: TrackActionsContextMenuOptions;
   showMore?: boolean;
   downloaded: boolean;
   downloading: boolean;
@@ -41,6 +45,7 @@ export const SongListItem = ({
   isLast: boolean;
 }) => {
   const [failedArtworkUri, setFailedArtworkUri] = useState<string | null>(null);
+  const morePressStartedAt = useRef(0);
 
   return (
   <View
@@ -201,6 +206,24 @@ export const SongListItem = ({
         </TouchableOpacity>
       )}
       {showMore && !selectionMode ? (
+        nativeActions ? (
+          <TrackActionsContextMenu track={track} {...nativeActions}>
+            <TouchableOpacity
+              onPressIn={() => { morePressStartedAt.current = Date.now(); }}
+              onPress={(event) => {
+                if (Platform.OS === 'ios' && Date.now() - morePressStartedAt.current >= 450) return;
+                const { pageX, pageY, locationX, locationY } = event.nativeEvent;
+                onMore?.({ x: pageX - locationX, y: pageY - locationY, width: 28, height: 40 });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`More options for ${track.title}`}
+              hitSlop={10}
+              style={{ width: 28, height: 40, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <ThemedIonicons name="ellipsis-horizontal" size={23} color="white" />
+            </TouchableOpacity>
+          </TrackActionsContextMenu>
+        ) : (
           <TouchableOpacity
             onPress={(event) => {
               const { pageX, pageY, locationX, locationY } = event.nativeEvent;
@@ -213,6 +236,7 @@ export const SongListItem = ({
           >
             <ThemedIonicons name="ellipsis-horizontal" size={23} color="white" />
           </TouchableOpacity>
+        )
       ) : null}
     </View>
   </View>

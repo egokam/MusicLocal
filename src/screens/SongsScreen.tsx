@@ -10,8 +10,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlphabetIndex } from '../components/songs/AlphabetIndex';
 import { SongListItem, type SongMenuAnchor } from '../components/songs/SongListItem';
+import type { TrackActionsContextMenuOptions } from '../components/songs/TrackActionsSheet';
 import { SongsControls } from '../components/songs/SongsControls';
-import { SongsHeader } from '../components/songs/SongsHeader';
+import { SongsHeader, type SongsHeaderMenuItem } from '../components/songs/SongsHeader';
 import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
 import { SkeletonBlock, SkeletonPulse, TrackListSkeleton } from '../components/Skeleton';
 import type { PlaylistSummary, Track } from '../types';
@@ -23,6 +24,7 @@ type SongSortMode = 'name' | 'dateAdded' | 'artist';
 
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 const SONGS_SKELETON_DELAY_MS = 300;
+const EMPTY_TRACK_MENU_ANCHOR: SongMenuAnchor = { x: 0, y: 0, width: 0, height: 0 };
 
 const normalizeSearchText = (value: string) => value.normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase();
 
@@ -173,6 +175,7 @@ export const SongsScreen = ({
   playlistMode = false,
   onRemoveFromPlaylist,
   emptyMessage = 'No songs found',
+  headerMenuItems = [],
 }: {
   title?: string;
   onBack: () => void;
@@ -208,6 +211,7 @@ export const SongsScreen = ({
   playlistMode?: boolean;
   onRemoveFromPlaylist?: (track: Track) => Promise<void>;
   emptyMessage?: string;
+  headerMenuItems?: SongsHeaderMenuItem[];
 }) => {
   const { colors } = useAppearanceTheme();
   const listRef = useRef<Animated.SectionList<Track, SongSection>>(null);
@@ -224,7 +228,11 @@ export const SongsScreen = ({
   const [showPairingForm, setShowPairingForm] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [selectedTrack, setSelectedTrack] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
+  const [selectedTrack, setSelectedTrack] = useState<{
+    track: Track;
+    anchor: SongMenuAnchor;
+    initialPage?: 'edit' | 'playlist';
+  } | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectionType, setSelectionType] = useState<'songs' | 'favorites' | 'downloads' | null>(null);
   const [selectedDownloadIds, setSelectedDownloadIds] = useState<Set<string>>(() => new Set());
@@ -626,6 +634,18 @@ export const SongsScreen = ({
                 return next;
               })}
               onMore={showTrackActions ? (anchor) => setSelectedTrack({ track: item, anchor }) : undefined}
+              nativeActions={showTrackActions ? {
+                playlists: playlists ?? [],
+                hasActiveTrack: Boolean(hasActiveTrack),
+                playlistMode,
+                onEdit: () => setSelectedTrack({ track: item, anchor: EMPTY_TRACK_MENU_ANCHOR, initialPage: 'edit' }),
+                onOpenPlaylistManager: () => setSelectedTrack({ track: item, anchor: EMPTY_TRACK_MENU_ANCHOR, initialPage: 'playlist' }),
+                onPlayNext,
+                onToggleFavorite,
+                onAddToPlaylist,
+                onDeleteTrack,
+                onRemoveFromPlaylist,
+              } satisfies TrackActionsContextMenuOptions : undefined}
               showMore={showTrackActions}
               downloaded={downloadIds.has(item.id)}
               downloading={downloadingIds.has(item.id)}
@@ -747,6 +767,29 @@ export const SongsScreen = ({
           sortAccessibilityLabel="Reverse song order"
           liquidGlass
           moreMenuItems={[
+            ...(headerMenuItems.length > 0 ? [
+              {
+                label: 'Name A–Z–#',
+                icon: sortMode === 'name' && ascending ? 'checkmark' as const : 'radio-button-off' as const,
+                onPress: () => { setSortMode('name'); setAscending(true); },
+              },
+              {
+                label: 'Name #–A–Z',
+                icon: sortMode === 'name' && !ascending ? 'checkmark' as const : 'radio-button-off' as const,
+                onPress: () => { setSortMode('name'); setAscending(false); },
+              },
+              {
+                label: 'Date Added',
+                icon: sortMode === 'dateAdded' ? 'checkmark' as const : 'radio-button-off' as const,
+                onPress: () => { setSortMode('dateAdded'); setAscending(false); },
+              },
+              {
+                label: 'Artist',
+                icon: sortMode === 'artist' ? 'checkmark' as const : 'radio-button-off' as const,
+                onPress: () => { setSortMode('artist'); setAscending(true); },
+              },
+            ] : []),
+            ...headerMenuItems,
             ...(title === 'Songs' || title === 'Favorites' ? [
               {
                 label: selectionMode && selectionType === (title === 'Favorites' ? 'favorites' : 'songs') ? 'Cancel Selection' : 'Select',
@@ -820,6 +863,7 @@ export const SongsScreen = ({
           key={selectedTrack.track.id}
           track={selectedTrack.track}
           anchor={selectedTrack.anchor}
+          initialPage={selectedTrack.initialPage}
           playlistMode={playlistMode}
           visible
           playlists={playlists}

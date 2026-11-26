@@ -2,9 +2,76 @@ import { useState, type ComponentProps } from 'react';
 import { ThemedText as Text, ThemedView as View, ThemedPressable as Pressable, ThemedTouchableOpacity as TouchableOpacity, ThemedIcon as ThemedIonicons, useAppearanceTheme } from '../../contexts/AppearanceThemeContext';
 import {
   Animated,
+  Platform,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Button as IOSButton, Divider as IOSDivider, Host, Image as IOSImage, Menu as IOSMenu } from '@expo/ui/swift-ui';
+import { accessibilityHint, accessibilityLabel, buttonBorderShape, buttonStyle, controlSize, disabled, frame, labelStyle, menuIndicator, menuStyle, tint } from '@expo/ui/swift-ui/modifiers';
 import { GlassSurface } from '../../../glass';
+
+const NATIVE_BACK_TINT = 'transparent';
+const IOS_MAJOR_VERSION = Number.parseFloat(String(Platform.Version));
+
+export const NativeBackButton = ({
+  onPress,
+  accessibilityLabel: label,
+  size = 44,
+  style,
+}: {
+  onPress: () => void;
+  accessibilityLabel: string;
+  size?: number;
+  style?: StyleProp<ViewStyle>;
+}) => {
+  const { isDark } = useAppearanceTheme();
+  if (Platform.OS !== 'ios') return null;
+
+  return (
+    <Host style={[{ width: size, height: size }, style]} colorScheme={isDark ? 'dark' : 'light'}>
+      <IOSButton
+        label="Back"
+        systemImage="chevron.left"
+        onPress={onPress}
+        modifiers={[
+          buttonStyle(IOS_MAJOR_VERSION >= 26 ? 'glassProminent' : 'borderedProminent'),
+          buttonBorderShape('circle'),
+          controlSize('large'),
+          labelStyle('iconOnly'),
+          tint(NATIVE_BACK_TINT),
+          frame({ width: size, height: size, alignment: 'center' }),
+          accessibilityLabel(label),
+          accessibilityHint('Returns to the previous screen.'),
+        ]}
+      />
+    </Host>
+  );
+};
+
+const getIOSMenuSymbol = (icon: ComponentProps<typeof Ionicons>['name']) => {
+  switch (icon) {
+    case 'play': return 'play.fill';
+    case 'shuffle': return 'shuffle';
+    case 'checkbox-outline': return 'checkmark.square';
+    case 'close': return 'xmark';
+    case 'checkmark': return 'checkmark';
+    case 'radio-button-off': return 'circle';
+    case 'add-circle-outline': return 'plus.circle';
+    case 'trash-outline': return 'trash';
+    case 'albums-outline': return 'square.stack';
+    case 'person-outline': return 'person';
+    default: return undefined;
+  }
+};
+
+export type SongsHeaderMenuItem = {
+  label: string;
+  icon: ComponentProps<typeof Ionicons>['name'];
+  onPress: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+};
 
 export const SongsHeader = ({
   onBack,
@@ -17,13 +84,7 @@ export const SongsHeader = ({
 }: {
   onBack: () => void;
   onToggleSort: () => void;
-  moreMenuItems?: {
-    label: string;
-    icon: ComponentProps<typeof Ionicons>['name'];
-    onPress: () => void;
-    disabled?: boolean;
-    destructive?: boolean;
-  }[];
+  moreMenuItems?: SongsHeaderMenuItem[];
   showSortButton?: boolean;
   showMoreButton?: boolean;
   sortAccessibilityLabel?: string;
@@ -36,6 +97,7 @@ export const SongsHeader = ({
   const [scale] = useState(() => new Animated.Value(0.001));
   const [translateY] = useState(() => new Animated.Value(-25));
   const canOpenMenu = moreMenuItems.length > 0;
+  const useIOSMenu = Platform.OS === 'ios' && canOpenMenu;
 
   const openMenu = () => {
     if (!canOpenMenu) return;
@@ -68,7 +130,7 @@ export const SongsHeader = ({
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, elevation: 20 }}>
-      {menuVisible ? (
+      {menuVisible && Platform.OS !== 'ios' ? (
         <Pressable
           accessibilityLabel="Close menu"
           onPress={() => closeMenu()}
@@ -89,11 +151,11 @@ export const SongsHeader = ({
           justifyContent: 'space-between',
         }}
       >
-        <TouchableOpacity
-          onPress={onBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back to Library"
-          style={{
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={onBack} accessibilityLabel="Back to Library" size={44} />
+        ) : (
+          <View
+            style={{
             position: 'relative',
             overflow: 'hidden',
             width: 44,
@@ -103,7 +165,7 @@ export const SongsHeader = ({
             alignItems: 'center',
             justifyContent: 'center',
           }}
-        >
+          >
           {liquidGlass ? (
             <GlassSurface
               style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 }}
@@ -112,12 +174,20 @@ export const SongsHeader = ({
               isInteractive
             />
           ) : null}
-          <ThemedIonicons name="chevron-back" size={27} color="white" />
+            <TouchableOpacity
+              onPress={onBack}
+              accessibilityRole="button"
+              accessibilityLabel="Back to Library"
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <ThemedIonicons name="chevron-back" size={27} color="white" />
+            </TouchableOpacity>
           <View
             pointerEvents="none"
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22, borderWidth: 1.2, borderColor: glassBorderColor }}
           />
-        </TouchableOpacity>
+          </View>
+        )}
 
         {showSortButton ? (
           <View
@@ -126,9 +196,9 @@ export const SongsHeader = ({
               overflow: 'hidden',
               width: showMoreButton ? undefined : 44,
               height: 44,
-              paddingHorizontal: showMoreButton ? 18 : 0,
+              paddingHorizontal: showMoreButton ? 5 : 0,
               borderRadius: 24,
-              backgroundColor: 'transparent',
+              backgroundColor: 'glass',
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: showMoreButton ? 'flex-start' : 'center',
@@ -142,32 +212,89 @@ export const SongsHeader = ({
                 isInteractive
               />
             ) : null}
-            <TouchableOpacity
-              onPress={onToggleSort}
-              accessibilityRole="button"
-              accessibilityLabel={sortAccessibilityLabel}
-              style={{
-                width: showMoreButton ? undefined : 42,
-                height: showMoreButton ? undefined : 42,
-                paddingVertical: showMoreButton ? 6 : 0,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <ThemedIonicons name="list" size={25} color="white" />
-            </TouchableOpacity>
+            {Platform.OS === 'ios' ? (
+              <Host
+                style={{ width: 44, height: 44 }}
+                alignment="center"
+                colorScheme={isDark ? 'dark' : 'light'}
+              >
+                <IOSButton
+                  onPress={onToggleSort}
+                  modifiers={[buttonStyle('plain'), accessibilityLabel(sortAccessibilityLabel)]}
+                >
+                  <IOSImage
+                    systemName="list.bullet"
+                    size={25}
+                    color={colors.text}
+                    modifiers={[frame({ width: 44, height: 44, alignment: 'center' })]}
+                  />
+                </IOSButton>
+              </Host>
+            ) : (
+              <TouchableOpacity
+                onPress={onToggleSort}
+                accessibilityRole="button"
+                accessibilityLabel={sortAccessibilityLabel}
+                style={{
+                  width: showMoreButton ? undefined : 42,
+                  height: showMoreButton ? undefined : 42,
+                  paddingVertical: showMoreButton ? 6 : 0,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <ThemedIonicons name="list" size={25} color="white" />
+              </TouchableOpacity>
+            )}
             {showMoreButton ? (
               <>
                 <View style={{ width: 22 }} />
-                <TouchableOpacity
-                  onPress={() => menuVisible ? closeMenu() : openMenu()}
-                  accessibilityRole="button"
-                  accessibilityLabel="More options"
-                  accessibilityState={{ expanded: menuVisible }}
-                  hitSlop={8}
-                >
-                  <ThemedIonicons name="ellipsis-horizontal" size={24} color="white" />
-                </TouchableOpacity>
+                {useIOSMenu ? (
+                  <Host
+                    style={{ width: 44, height: 44 }}
+                    alignment="center"
+                    colorScheme={isDark ? 'dark' : 'light'}
+                  >
+                    <IOSMenu
+                      label={(
+                        <IOSImage
+                          systemName="ellipsis"
+                          size={24}
+                          color={colors.text}
+                          modifiers={[frame({ width: 44, height: 44, alignment: 'center' })]}
+                        />
+                      )}
+                      modifiers={[
+                        buttonStyle('plain'),
+                        menuStyle('button'),
+                        menuIndicator('hidden'),
+                        accessibilityLabel('More options'),
+                      ]}
+                    >
+                      {moreMenuItems.flatMap((item, index) => [
+                        ...(index > 0 ? [<IOSDivider key={`divider-${item.label}`} />] : []),
+                        <IOSButton
+                          key={item.label}
+                          label={item.label}
+                          systemImage={getIOSMenuSymbol(item.icon)}
+                          role={item.destructive ? 'destructive' : 'default'}
+                          onPress={item.onPress}
+                          modifiers={item.disabled ? [disabled()] : undefined}
+                        />,
+                      ])}
+                    </IOSMenu>
+                  </Host>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => menuVisible ? closeMenu() : openMenu()}
+                    accessibilityRole="button"
+                    accessibilityLabel="More options"
+                    accessibilityState={{ expanded: menuVisible }}
+                    hitSlop={8}
+                  >
+                    <ThemedIonicons name="ellipsis-horizontal" size={24} color="white" />
+                  </TouchableOpacity>
+                )}
               </>
             ) : null}
             <View
@@ -178,7 +305,7 @@ export const SongsHeader = ({
         ) : null}
       </View>
 
-      {menuVisible ? (
+      {menuVisible && Platform.OS !== 'ios' ? (
         <Animated.View
           style={{
             position: 'absolute',

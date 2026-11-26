@@ -136,6 +136,8 @@ export const AlbumsScreen = ({
                   artist={album.artist}
                   artwork={album.artwork}
                   onPress={() => onOpenAlbum(album.title, album.artist)}
+                  onPlay={() => onPlayAll(album.tracks)}
+                  onShuffle={() => onShuffle(album.tracks)}
                 />
               ))}
               {item.albums.length === 1 ? <View style={{ flex: 1 }} /> : null}

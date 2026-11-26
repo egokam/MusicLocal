@@ -9,6 +9,7 @@ import {
   Linking,
   Modal,
   PanResponder,
+  Platform,
   RefreshControl,
   useWindowDimensions,
   type StyleProp,
@@ -26,6 +27,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
+import { NativeBackButton } from '../components/songs/SongsHeader';
 import { AUDIO_MIXES, GENRE_MIXES, AudiusCatalogService, type AudiusMixDefinition, type AudiusMixId, type GenreMixId } from '../services/AudiusCatalogService';
 import type { Track } from '../types';
 
@@ -1379,14 +1381,23 @@ export const HomeScreen = () => {
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, marginBottom: 18 }}>
               {selectedQuranReciter ? (
-                <TouchableOpacity
-                  onPress={goBackFromQuranReciter}
-                  accessibilityRole="button"
-                  accessibilityLabel={returnToReciterList ? 'Back to Quran reciters' : 'Back to Home'}
-                  style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#29292D', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}
-                >
-                  <Ionicons name="chevron-back" size={21} color={isDark ? 'white' : '#1C1C1E'} />
-                </TouchableOpacity>
+                Platform.OS === 'ios' ? (
+                  <NativeBackButton
+                    onPress={goBackFromQuranReciter}
+                    accessibilityLabel={returnToReciterList ? 'Back to Quran reciters' : 'Back to Home'}
+                    size={42}
+                    style={{ marginRight: 12 }}
+                  />
+                ) : (
+                  <TouchableOpacity
+                    onPress={goBackFromQuranReciter}
+                    accessibilityRole="button"
+                    accessibilityLabel={returnToReciterList ? 'Back to Quran reciters' : 'Back to Home'}
+                    style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#29292D', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}
+                  >
+                    <Ionicons name="chevron-back" size={21} color={isDark ? 'white' : '#1C1C1E'} />
+                  </TouchableOpacity>
+                )
               ) : null}
               <View style={{ flex: 1 }}>
                 <Text numberOfLines={1} style={{ color: 'white', fontSize: 25, lineHeight: 31, fontWeight: '800', letterSpacing: -0.45 }}>
