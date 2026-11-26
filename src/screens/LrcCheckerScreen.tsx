@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassSurface } from '../../glass';
 import { TrackListSkeleton } from '../components/Skeleton';
 import { LrcCheckerRow, type LrcCheckState } from '../components/library/LrcCheckerRow';
+import { NativeBackButton } from '../components/songs/SongsHeader';
 import { LrcCheckerService } from '../services/LrcCheckerService';
 import { lyricsCandidateSignature } from '../services/MusicCatalogService';
 import type { Track } from '../types';
@@ -641,15 +642,19 @@ export const LrcCheckerScreen = ({
           style={{ position: 'absolute', top: 12, left: 0, right: 0, zIndex: 20, elevation: 20 }}
         >
           <View style={{ height: 58, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <TouchableOpacity
-              onPress={onBack}
-              accessibilityRole="button"
-              accessibilityLabel="Back to Library"
-              style={{ position: 'relative', overflow: 'hidden', width: 44, height: 44, borderRadius: 22, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <GlassSurface style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 22 }} fallbackColor="rgba(28,28,30,0.84)" />
-              <ThemedIonicons name="chevron-back" size={27} color="white" />
-            </TouchableOpacity>
+            {Platform.OS === 'ios' ? (
+              <NativeBackButton onPress={onBack} accessibilityLabel="Back to Library" size={44} />
+            ) : (
+              <TouchableOpacity
+                onPress={onBack}
+                accessibilityRole="button"
+                accessibilityLabel="Back to Library"
+                style={{ position: 'relative', overflow: 'hidden', width: 44, height: 44, borderRadius: 22, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <GlassSurface style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 22 }} fallbackColor="rgba(28,28,30,0.84)" />
+                <ThemedIonicons name="chevron-back" size={27} color="white" />
+              </TouchableOpacity>
+            )}
             <View style={{ position: 'relative', overflow: 'hidden', height: 44, paddingHorizontal: 16, borderRadius: 22, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <GlassSurface style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: 22 }} fallbackColor="rgba(28,28,30,0.84)" />
               <ThemedIonicons name="time-outline" size={19} color="#FA5265" />

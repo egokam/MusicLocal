@@ -14,7 +14,8 @@ import { GlassSurface } from '../../glass';
 import { LibraryList } from '../components/library/LibraryList';
 import { TopBar } from '../components/library/TopBar';
 import { SkeletonBlock, SkeletonPulse } from '../components/Skeleton';
-import { TrackActionsSheet } from '../components/songs/TrackActionsSheet';
+import { TrackActionsContextMenu, TrackActionsSheet, type TrackActionsContextMenuOptions } from '../components/songs/TrackActionsSheet';
+import { NativeBackButton, type SongsHeaderMenuItem } from '../components/songs/SongsHeader';
 import type { SongMenuAnchor } from '../components/songs/SongListItem';
 import { usePlaybackActions } from '../contexts/PlaybackContext';
 import type { PlaylistSummary, Track } from '../types';
@@ -125,24 +126,29 @@ const RecentlyAddedTrackCard = ({
   track,
   onPlay,
   onOpenMenu,
+  nativeActions,
 }: {
   track: Track;
   onPlay: () => void;
   onOpenMenu: (anchor: SongMenuAnchor) => void;
+  nativeActions: TrackActionsContextMenuOptions;
 }) => {
   const longPressedRef = useRef(false);
+  const pressStartedAtRef = useRef(0);
   const [pressScale] = useState(() => new Animated.Value(1));
 
-  return (
+  const card = (
     <Pressable
       onPress={() => {
-        if (longPressedRef.current) {
+        const wasLongPress = Date.now() - pressStartedAtRef.current >= 450;
+        if (longPressedRef.current || (Platform.OS === 'ios' && wasLongPress)) {
           longPressedRef.current = false;
           return;
         }
         onPlay();
       }}
       onPressIn={() => {
+        pressStartedAtRef.current = Date.now();
         longPressedRef.current = false;
         Animated.timing(pressScale, {
           toValue: 0.95,
@@ -161,7 +167,7 @@ const RecentlyAddedTrackCard = ({
         }).start();
       }}
       delayLongPress={450}
-      onLongPress={(event) => {
+      onLongPress={Platform.OS === 'ios' ? undefined : (event) => {
         const { pageX, pageY, locationX, locationY } = event.nativeEvent;
         longPressedRef.current = true;
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
@@ -195,6 +201,11 @@ const RecentlyAddedTrackCard = ({
       </Animated.View>
     </Pressable>
   );
+  return (
+    <TrackActionsContextMenu track={track} {...nativeActions}>
+      {card}
+    </TrackActionsContextMenu>
+  );
 };
 
 const LibraryHomeScreen = ({
@@ -215,7 +226,11 @@ const LibraryHomeScreen = ({
     deleteTrack,
   } = usePlaybackActions();
   const { colors } = useAppearanceTheme();
-  const [selectedTrackMenu, setSelectedTrackMenu] = useState<{ track: Track; anchor: SongMenuAnchor } | null>(null);
+  const [selectedTrackMenu, setSelectedTrackMenu] = useState<{
+    track: Track;
+    anchor: SongMenuAnchor;
+    initialPage?: 'edit' | 'playlist';
+  } | null>(null);
   const libraryScrollY = useMemo(() => new Animated.Value(0), []);
   const libraryTopFadeOpacity = libraryScrollY.interpolate({
     inputRange: [0, 10, 26],
@@ -260,6 +275,16 @@ const LibraryHomeScreen = ({
                   track={track}
                   onPlay={() => playTrack(track, recentlyAddedTracks)}
                   onOpenMenu={(anchor) => setSelectedTrackMenu({ track, anchor })}
+                  nativeActions={{
+                    playlists,
+                    hasActiveTrack,
+                    onEdit: () => setSelectedTrackMenu({ track, anchor: { x: 0, y: 0, width: 0, height: 0 }, initialPage: 'edit' }),
+                    onOpenPlaylistManager: () => setSelectedTrackMenu({ track, anchor: { x: 0, y: 0, width: 0, height: 0 }, initialPage: 'playlist' }),
+                    onPlayNext: playNext,
+                    onToggleFavorite: toggleFavorite,
+                    onAddToPlaylist: addTrackToPlaylist,
+                    onDeleteTrack: deleteTrack,
+                  } satisfies TrackActionsContextMenuOptions}
                 />
               ))}
             </ScrollView>
@@ -310,6 +335,7 @@ const LibraryHomeScreen = ({
           key={selectedTrackMenu.track.id}
           track={selectedTrackMenu.track}
           anchor={selectedTrackMenu.anchor}
+          initialPage={selectedTrackMenu.initialPage}
           visible
           playlists={playlists}
           hasActiveTrack={hasActiveTrack}
@@ -558,14 +584,18 @@ const SettingsContent = ({
         pointerEvents="box-none"
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 20, elevation: 20 }}
       >
-        <TouchableOpacity
-          onPress={navigation.goBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back to Library"
-          style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
-        >
-          <ThemedIonicons name="chevron-back" size={23} color={colors.text} />
-        </TouchableOpacity>
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={navigation.goBack} accessibilityLabel="Back to Library" size={42} style={{ transform: [{ translateY: 45 }] }} />
+        ) : (
+          <TouchableOpacity
+            onPress={navigation.goBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Library"
+            style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
+          >
+            <ThemedIonicons name="chevron-back" size={23} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={{ position: 'absolute', left: 72, right: 72, textAlign: 'center', color: colors.text, fontSize: 18, fontWeight: '700', transform: [{ translateY: 45 }] }}>
           Settings
         </Text>
@@ -959,14 +989,18 @@ const AccountSubpageFrame = ({
         pointerEvents="box-none"
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', zIndex: 20, elevation: 20 }}
       >
-        <TouchableOpacity
-          onPress={onBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back to account"
-          style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
-        >
-          <ThemedIonicons name="chevron-back" size={23} color={colors.text} />
-        </TouchableOpacity>
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={onBack} accessibilityLabel="Back to account" size={42} style={{ transform: [{ translateY: 45 }] }} />
+        ) : (
+          <TouchableOpacity
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back to account"
+            style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
+          >
+            <ThemedIonicons name="chevron-back" size={23} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={{ position: 'absolute', left: 72, right: 72, textAlign: 'center', color: colors.text, fontSize: 18, fontWeight: '700', transform: [{ translateY: 45 }] }}>
           {title}
         </Text>
@@ -1401,14 +1435,18 @@ const AccountScreen = ({ navigation }: NativeStackScreenProps<LibraryStackParamL
         pointerEvents="box-none"
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 20, elevation: 20 }}
       >
-        <TouchableOpacity
-          onPress={navigation.goBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back to settings"
-          style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
-        >
-          <ThemedIonicons name="chevron-back" size={23} color={colors.text} />
-        </TouchableOpacity>
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={navigation.goBack} accessibilityLabel="Back to settings" size={42} style={{ transform: [{ translateY: 45 }] }} />
+        ) : (
+          <TouchableOpacity
+            onPress={navigation.goBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back to settings"
+            style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', transform: [{ translateY: 45 }] }}
+          >
+            <ThemedIonicons name="chevron-back" size={23} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={{ position: 'absolute', left: 72, right: 72, textAlign: 'center', color: colors.text, fontSize: 18, fontWeight: '700', transform: [{ translateY: 45 }] }}>
           Account
         </Text>
@@ -2640,15 +2678,19 @@ const AppIconPickerScreen = ({ navigation }: NativeStackScreenProps<LibraryStack
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 5, paddingBottom: 160 }}
         showsVerticalScrollIndicator={false}
       >
-        <TouchableOpacity
-          onPress={navigation.goBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back to settings"
-          activeOpacity={0.7}
-          style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', marginLeft: -8 }}
-        >
-          <ThemedIonicons name="chevron-back" size={25} color={colors.text} />
-        </TouchableOpacity>
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={navigation.goBack} accessibilityLabel="Back to settings" size={42} style={{ marginLeft: -8 }} />
+        ) : (
+          <TouchableOpacity
+            onPress={navigation.goBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back to settings"
+            activeOpacity={0.7}
+            style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', marginLeft: -8 }}
+          >
+            <ThemedIonicons name="chevron-back" size={25} color={colors.text} />
+          </TouchableOpacity>
+        )}
 
         <Text style={{ color: colors.text, fontSize: 29, fontWeight: '800', marginTop: 17, marginBottom: 22 }}>
           Change App Icon
@@ -3249,14 +3291,18 @@ const ApiLyricsScreen = ({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
       <View style={{ position: 'absolute', top: 40, left: 0, right: 0, height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', zIndex: 40, elevation: 40 }}>
-        <TouchableOpacity
-          onPress={navigation.goBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back to settings"
-          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
-        >
-          <ThemedIonicons name="chevron-back" size={23} color="white" />
-        </TouchableOpacity>
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={navigation.goBack} accessibilityLabel="Back to settings" size={42} />
+        ) : (
+          <TouchableOpacity
+            onPress={navigation.goBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back to settings"
+            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <ThemedIonicons name="chevron-back" size={23} color="white" />
+          </TouchableOpacity>
+        )}
         <Text style={{ flex: 1, color: 'white', fontSize: 17, fontWeight: '700', textAlign: 'center' }}>
           Downloaded lyrics
         </Text>
@@ -3413,14 +3459,18 @@ const ProfileWebScreen = ({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top', 'bottom']}>
       <View style={{ height: 56, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center' }}>
-        <TouchableOpacity
-          onPress={goBack}
-          accessibilityRole="button"
-          accessibilityLabel={canGoBack ? 'Back in page' : 'Back to settings'}
-          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
-        >
-          <ThemedIonicons name="chevron-back" size={23} color="white" />
-        </TouchableOpacity>
+        {Platform.OS === 'ios' ? (
+          <NativeBackButton onPress={goBack} accessibilityLabel={canGoBack ? 'Back in page' : 'Back to settings'} size={42} />
+        ) : (
+          <TouchableOpacity
+            onPress={goBack}
+            accessibilityRole="button"
+            accessibilityLabel={canGoBack ? 'Back in page' : 'Back to settings'}
+            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#1C1C1E', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <ThemedIonicons name="chevron-back" size={23} color="white" />
+          </TouchableOpacity>
+        )}
         <Text numberOfLines={1} style={{ flex: 1, color: 'white', fontSize: 16, fontWeight: '700', textAlign: 'center', marginHorizontal: 12 }}>
           {route.params.title}
         </Text>
@@ -3471,6 +3521,7 @@ const SongCatalogRoute = ({
   playlistMode = false,
   onRemoveFromPlaylist,
   onSearchOverride,
+  headerMenuItems,
 }: {
   navigation: { goBack: () => void };
   title: string;
@@ -3493,6 +3544,7 @@ const SongCatalogRoute = ({
   playlistMode?: boolean;
   onRemoveFromPlaylist?: (track: Track) => Promise<void>;
   onSearchOverride?: (query?: string) => Promise<void>;
+  headerMenuItems?: SongsHeaderMenuItem[];
 }) => {
   const actions = usePlaybackActions();
   const { loadPlaylists, apiInitializing: libraryInitializing } = actions;
@@ -3555,6 +3607,7 @@ const SongCatalogRoute = ({
       onAddPlaylistTrack={onAddPlaylistTrack}
       playlistMode={playlistMode}
       onRemoveFromPlaylist={onRemoveFromPlaylist}
+      headerMenuItems={headerMenuItems}
     />
   );
 };
@@ -3644,6 +3697,10 @@ const AlbumTracksRoute = ({
       apiInitializing={actions.apiInitializing}
       isLoadingTracks={actions.isLoadingTracks}
       loadError={actions.loadError}
+      headerMenuItems={[
+        { label: 'Play Album', icon: 'play', onPress: () => actions.playAllSongs(albumTracks) },
+        { label: 'Shuffle Album', icon: 'shuffle', onPress: () => actions.shuffleSongs(albumTracks) },
+      ]}
     />
   );
 };
