@@ -16,6 +16,7 @@ import { WebView } from 'react-native-webview';
 import type { Track } from '../types';
 import type { ImportProgress } from '../services/MusicCatalogService';
 import { OfflineMusicService } from '../services/OfflineMusicService';
+import { NativeBackButton } from '../components/songs/SongsHeader';
 
 /* eslint-disable react-hooks/immutability */
 
@@ -754,14 +755,18 @@ export const DownloaderScreen = ({
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000000' }} edges={['top']}>
       <View style={{ flex: 1 }}>
         <View style={{ position: 'absolute', zIndex: 5, top: 10, left: 16, right: 16, height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <TouchableOpacity
-            onPress={onBack}
-            accessibilityRole="button"
-            accessibilityLabel="Back to Library"
-            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <ThemedIonicons name="chevron-back" size={26} color="white" />
-          </TouchableOpacity>
+          {Platform.OS === 'ios' ? (
+            <NativeBackButton onPress={onBack} accessibilityLabel="Back to Library" size={44} />
+          ) : (
+            <TouchableOpacity
+              onPress={onBack}
+              accessibilityRole="button"
+              accessibilityLabel="Back to Library"
+              style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <ThemedIonicons name="chevron-back" size={26} color="white" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={() => Alert.alert('Downloader', 'Track accepts Spotify links and shows the available download options. File imports MP3, M4A, AAC, WAV, FLAC, OGG, and OPUS audio from your device.')}
             accessibilityRole="button"
